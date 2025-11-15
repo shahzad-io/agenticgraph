@@ -2,9 +2,9 @@
 
 namespace Shahzad\AgenticGraph;
 
+use Shahzad\AgenticGraph\Commands\AgenticGraphCommand;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
-use Shahzad\AgenticGraph\Commands\AgenticGraphCommand;
 
 class AgenticGraphServiceProvider extends PackageServiceProvider
 {
