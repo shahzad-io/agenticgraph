@@ -19,7 +19,16 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
             ->name('agenticgraph')
             ->hasConfigFile()
             ->hasViews()
-            ->hasMigration('create_agenticgraph_table')
-            ->hasCommand(AgenticGraphCommand::class);
+            ->hasMigration('create_agenticgraph_checkpoints_table')
+            ->hasMigration('create_agenticgraph_executions_table')
+            ->hasCommand(AgenticGraphCommand::class)
+            ->hasCommand(\Shahzad\AgenticGraph\Console\ListGraphsCommand::class)
+            ->hasCommand(\Shahzad\AgenticGraph\Console\VisualizeGraphCommand::class)
+            ->hasCommand(\Shahzad\AgenticGraph\Console\ExecuteGraphCommand::class)
+            ->hasCommand(\Shahzad\AgenticGraph\Console\CheckpointListCommand::class)
+            ->hasCommand(\Shahzad\AgenticGraph\Console\CheckpointResumeCommand::class)
+            ->hasCommand(\Shahzad\AgenticGraph\Console\CheckpointDeleteCommand::class)
+            ->hasCommand(\Shahzad\AgenticGraph\Console\CheckpointCleanupCommand::class)
+            ->hasCommand(\Shahzad\AgenticGraph\Console\ExecutionsListCommand::class);
     }
 }

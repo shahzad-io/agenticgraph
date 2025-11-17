@@ -30,3 +30,5 @@ phpstan.neon
 testbench.yaml
 /docs
 /coverage
+PROMPT_TEMPLATES_QUICKREF.md
+PROMPT_TEMPLATES_SUMMARY.md
