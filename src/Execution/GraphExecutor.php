@@ -34,10 +34,16 @@ class GraphExecutor
         ]);
     }
 
-    public function execute(Graph $graph, StateContract $state, bool $useBatch = false): StateContract
+    public function execute(Graph $graph, StateContract $state, bool $useBatch = false, ?string $executionId = null): StateContract
     {
-        $executionId = uniqid('exec_', true);
-        (new ExecutionRepository())->started($executionId, $graph->name, $state->toArray());
+        $executionId = $executionId ?? uniqid('exec_', true);
+        $repo = new ExecutionRepository();
+
+        // Ensure execution record exists and transition to running
+        if (!$repo->get($executionId)) {
+            $repo->queued($executionId, $graph->name, $state->toArray());
+        }
+        $repo->started($executionId, $graph->name, $state->toArray());
         Event::dispatch(new GraphExecutionStarted($executionId, $graph->name, $state, new \DateTimeImmutable()));
         $current = $graph->entryPoint;
         $start = microtime(true);
@@ -64,7 +70,17 @@ class GraphExecutor
                     break;
                 }
                 if (is_array($next)) {
+                    \Log::debug('Parallel execution detected', [
+                        'execution_id' => $executionId,
+                        'current_node' => $current,
+                        'next_nodes' => $next,
+                        'use_batch' => $useBatch,
+                    ]);
                     if ($useBatch) {
+                        \Log::debug('Dispatching parallel batch jobs', [
+                            'execution_id' => $executionId,
+                            'workers' => $next,
+                        ]);
                         $this->executeParallelViaBatch($graph, $state, $executionId, $current, $next);
                         return $state; // Async continuation, return current state
                     } else {
@@ -212,6 +228,8 @@ class GraphExecutor
         }
         Bus::batch($jobs)
             ->name("agenticgraph-parallel-{$executionId}")
+            ->onConnection(config('agenticgraph.execution.queue_connection'))
+            ->onQueue(config('agenticgraph.execution.queue_name'))
             ->then(function (Batch $batch) use ($graph, $executionId, $sourceNode, $targets) {
                 $results = [];
                 foreach ($targets as $nodeName) {
@@ -286,6 +304,7 @@ class GraphExecutor
         $visited = [];
         $maxIterations = config('agenticgraph.execution.max_iterations', 1000);
         $iterations = 0;
+        $repo = new ExecutionRepository();
 
         do {
             $iterations++;
@@ -303,6 +322,11 @@ class GraphExecutor
             try {
                 if (!$lock->block(5)) {
                     throw new \RuntimeException("Failed to acquire lock for execution {$executionId}");
+                }
+
+                // Ensure execution is in running state
+                if ($repo->getStatus($executionId) === 'queued') {
+                    $repo->started($executionId, $graph->name, $state->toArray());
                 }
 
                 $node = $graph->getNode($current);
@@ -341,6 +365,10 @@ class GraphExecutor
             }
         } while (true);
 
+        // Mark execution as completed
+        $repo->completed($executionId, $state->toArray(), 0.0);
+        Event::dispatch(new GraphExecutionCompleted($executionId, $graph->name, $state, new \DateTimeImmutable(), 0.0, []));
+
         return $state;
     }
 
@@ -350,7 +378,9 @@ class GraphExecutor
     public function executeUntil(Graph $graph, StateContract $state, callable $predicate): array
     {
         $executionId = uniqid('exec_', true);
-        (new ExecutionRepository())->started($executionId, $graph->name, $state->toArray());
+        $repo = new ExecutionRepository();
+        $repo->queued($executionId, $graph->name, $state->toArray());
+        $repo->started($executionId, $graph->name, $state->toArray());
         $current = $graph->entryPoint;
         $lastCheckpointId = null;
         while (!in_array($current, $graph->exitPoints, true)) {

@@ -38,6 +38,6 @@ class ExecuteGraphJob implements ShouldQueue, ShouldBeUnique
         if (!$graph) {
             return;
         }
-        $executor->execute($graph, $this->state, useBatch: true);
+        $executor->execute($graph, $this->state, useBatch: true, executionId: $this->executionId);
     }
 }

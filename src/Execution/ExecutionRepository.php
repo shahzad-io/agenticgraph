@@ -3,10 +3,21 @@
 namespace Shahzad\AgenticGraph\Execution;
 
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class ExecutionRepository
 {
     protected string $table = 'agenticgraph_executions';
+
+    /**
+     * Valid state transitions for execution lifecycle
+     */
+    protected array $validTransitions = [
+        'queued' => ['running', 'failed'],
+        'running' => ['completed', 'failed'],
+        'completed' => [],
+        'failed' => [],
+    ];
 
     public function queued(string $id, string $graphName, array $initialState = []): void
     {
@@ -24,24 +35,61 @@ class ExecutionRepository
                 'created_at' => now(),
             ]
         );
+
+        Log::debug('Execution queued', [
+            'execution_id' => $id,
+            'graph_name' => $graphName,
+        ]);
     }
 
     public function started(string $id, string $graphName, array $initialState = []): void
     {
-        DB::table($this->table)->updateOrInsert(
-            ['id' => $id],
-            [
+        // Verify the record exists and get current status
+        $current = DB::table($this->table)->where('id', $id)->first();
+
+        if (!$current) {
+            // If record doesn't exist, create it first (shouldn't happen in normal flow)
+            Log::warning('Execution record not found when starting, creating new record', [
+                'execution_id' => $id,
                 'graph_name' => $graphName,
-                'status' => 'running',
-                'initial_state' => json_encode($initialState),
-                'started_at' => now(),
-                'updated_at' => now(),
-            ]
-        );
+            ]);
+            $this->queued($id, $graphName, $initialState);
+        } else {
+            // Validate state transition
+            if (!$this->canTransitionTo($id, 'running')) {
+                Log::warning('Invalid state transition attempted', [
+                    'execution_id' => $id,
+                    'current_status' => $current->status,
+                    'attempted_status' => 'running',
+                ]);
+            }
+        }
+
+        // Update to running status
+        DB::table($this->table)->where('id', $id)->update([
+            'status' => 'running',
+            'started_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        Log::debug('Execution started', [
+            'execution_id' => $id,
+            'graph_name' => $graphName,
+            'previous_status' => $current?->status ?? 'new',
+        ]);
     }
 
     public function completed(string $id, array $finalState, float $duration): void
     {
+        // Verify state transition
+        if (!$this->canTransitionTo($id, 'completed')) {
+            $current = DB::table($this->table)->where('id', $id)->value('status');
+            Log::warning('Invalid state transition to completed', [
+                'execution_id' => $id,
+                'current_status' => $current,
+            ]);
+        }
+
         DB::table($this->table)->where('id', $id)->update([
             'status' => 'completed',
             'final_state' => json_encode($finalState),
@@ -49,15 +97,88 @@ class ExecutionRepository
             'completed_at' => now(),
             'updated_at' => now(),
         ]);
+
+        Log::debug('Execution completed', [
+            'execution_id' => $id,
+            'duration' => $duration,
+        ]);
     }
 
     public function failed(string $id, string $error): void
     {
+        // Verify state transition
+        if (!$this->canTransitionTo($id, 'failed')) {
+            $current = DB::table($this->table)->where('id', $id)->value('status');
+            Log::warning('Invalid state transition to failed', [
+                'execution_id' => $id,
+                'current_status' => $current,
+            ]);
+        }
+
         DB::table($this->table)->where('id', $id)->update([
             'status' => 'failed',
             'error' => $error,
             'updated_at' => now(),
         ]);
+
+        Log::error('Execution failed', [
+            'execution_id' => $id,
+            'error' => $error,
+        ]);
+    }
+
+    /**
+     * Check if a state transition is valid
+     */
+    public function canTransitionTo(string $id, string $newStatus): bool
+    {
+        $current = DB::table($this->table)->where('id', $id)->value('status');
+
+        if (!$current) {
+            // New execution can transition to any valid status
+            return isset($this->validTransitions[$newStatus]);
+        }
+
+        $allowedTransitions = $this->validTransitions[$current] ?? [];
+        return in_array($newStatus, $allowedTransitions);
+    }
+
+    /**
+     * Get current status of an execution
+     */
+    public function getStatus(string $id): ?string
+    {
+        return DB::table($this->table)->where('id', $id)->value('status');
+    }
+
+    /**
+     * Get full execution record
+     */
+    public function get(string $id): ?object
+    {
+        return DB::table($this->table)->where('id', $id)->first();
+    }
+
+    /**
+     * Get execution history (all state transitions)
+     */
+    public function getHistory(string $id): array
+    {
+        $execution = $this->get($id);
+        if (!$execution) {
+            return [];
+        }
+
+        return [
+            'id' => $execution->id,
+            'graph_name' => $execution->graph_name,
+            'status' => $execution->status,
+            'created_at' => $execution->created_at,
+            'started_at' => $execution->started_at,
+            'completed_at' => $execution->completed_at,
+            'duration' => $execution->duration,
+            'error' => $execution->error,
+        ];
     }
 
     /**

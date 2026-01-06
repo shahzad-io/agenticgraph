@@ -21,6 +21,7 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
             ->hasViews()
             ->hasMigration('create_agenticgraph_checkpoints_table')
             ->hasMigration('create_agenticgraph_executions_table')
+            ->hasMigration('improve_agenticgraph_executions_table')
             ->hasCommand(AgenticGraphCommand::class)
             ->hasCommand(\Shahzad\AgenticGraph\Console\ListGraphsCommand::class)
             ->hasCommand(\Shahzad\AgenticGraph\Console\VisualizeGraphCommand::class)
