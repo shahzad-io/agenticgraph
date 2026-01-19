@@ -58,10 +58,10 @@ abstract class PrismNode extends AbstractNode
     }
 
     /**
-     * @param array<int, \EchoLabs\Prism\Tool> $tools
-     * @return array<int, \EchoLabs\Prism\ValueObjects\ToolCall>
+     * @param array<int, \Prism\Prism\Tool> $tools
+     * @return array<int, \Prism\Prism\ValueObjects\ToolCall>
      */
-    protected function tools(string $prompt, array $tools): mixed
+    protected function tools(string $prompt, array $tools): array
     {
         $response = $this->prism()
             ->withTools($tools)

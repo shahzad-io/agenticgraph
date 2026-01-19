@@ -75,7 +75,7 @@ class ExecutionRepository
         Log::debug('Execution started', [
             'execution_id' => $id,
             'graph_name' => $graphName,
-            'previous_status' => $current?->status ?? 'new',
+            'previous_status' => $current ? $current->status : 'new',
         ]);
     }
 

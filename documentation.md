@@ -103,16 +103,71 @@ This creates two tables:
 Add to your `.env` file:
 
 ```env
-# Storage driver: database, redis, or file
-AGENTICGRAPH_STORAGE=database
+# Storage
+AGENTICGRAPH_STORAGE=redis # Storage backend for checkpoints/executions: redis, database, or file
 
-# Queue configuration
-AGENTICGRAPH_QUEUE_CONNECTION=redis
-AGENTICGRAPH_QUEUE_NAME=agenticgraph
+# Checkpoints
+AGENTICGRAPH_CHECKPOINT_ENABLED=true # Enable automatic checkpointing
+AGENTICGRAPH_CHECKPOINT_STRATEGY=every_node # every_node, conditional, manual, or error
+AGENTICGRAPH_CHECKPOINT_TTL=7 # Days to keep checkpoints
+AGENTICGRAPH_CHECKPOINT_COMPRESSION=true # Compress checkpoint payloads
+AGENTICGRAPH_CHECKPOINT_ENCRYPTION=false # Encrypt checkpoint payloads
 
-# Prism configuration (if using AI features)
-AGENTICGRAPH_PRISM_MODEL=anthropic:claude-sonnet-4
-ANTHROPIC_API_KEY=your-api-key-here
+# Execution
+AGENTICGRAPH_TIMEOUT=3600 # Max execution time per graph run (seconds)
+AGENTICGRAPH_MAX_RETRIES=3 # Max retry attempts for retryable node failures
+AGENTICGRAPH_RETRY_DELAY=1000 # Delay between retries (milliseconds)
+AGENTICGRAPH_PARALLEL=true # Allow parallel execution when routers return arrays
+AGENTICGRAPH_QUEUE_CONNECTION=database # Queue connection used for async/parallel jobs
+AGENTICGRAPH_QUEUE_NAME=agenticgraph # Queue name for AgenticGraph jobs
+AGENTICGRAPH_MAX_ITERATIONS=1000 # Safety cap for graph iterations
+
+# Locking
+AGENTICGRAPH_LOCK_DRIVER=database # Cache store for execution locks (redis or database)
+AGENTICGRAPH_LOCK_TIMEOUT=10 # Lock TTL for executions (seconds)
+AGENTICGRAPH_LOCK_PREFIX=agenticgraph # Lock key prefix
+AGENTICGRAPH_LOCK_STRATEGY=execution # Lock strategy label (currently not used by runtime)
+AGENTICGRAPH_LOCK_RETRY_INTERVAL=100 # Lock retry interval (milliseconds)
+
+# Prism
+AGENTICGRAPH_PRISM_MODEL=openai:gpt-4o # Default model in provider:model format
+AGENTICGRAPH_PRISM_CACHE=true # Cache Prism responses
+AGENTICGRAPH_PRISM_CACHE_TTL=60 # Prism cache TTL (minutes)
+AGENTICGRAPH_PRISM_TRACK_TOKENS=true # Emit token usage events
+AGENTICGRAPH_PRISM_TIMEOUT=120 # Prism request timeout (seconds)
+
+# Events and Middleware
+AGENTICGRAPH_EVENTS_ENABLED=true # Enable AgenticGraph events
+AGENTICGRAPH_MIDDLEWARE_CACHE_TTL=3600 # Cache TTL for CachingMiddleware (seconds)
+
+# Visualization
+AGENTICGRAPH_VISUALIZATION=true # Enable graph visualization output
+AGENTICGRAPH_VIZ_FORMAT=mermaid # Visualization format (mermaid)
+
+# Logging
+AGENTICGRAPH_LOG_CHANNEL=stack # Laravel log channel for AgenticGraph logs
+AGENTICGRAPH_LOG_LEVEL=info # Log level for AgenticGraph logs
+AGENTICGRAPH_LOG_STATE=false # Include state payloads in logs
+
+# Circuit Breaker
+AGENTICGRAPH_CIRCUIT_BREAKER_THRESHOLD=5 # Failures before opening the circuit
+AGENTICGRAPH_CIRCUIT_BREAKER_TIMEOUT=60 # Failure window in seconds
+AGENTICGRAPH_CIRCUIT_BREAKER_RETRY_AFTER=300 # Cooldown before retry (seconds)
+
+# Prism AI Configuration For LM Studio/Ollama
+#OPENAI_API_KEY=secretkey # API key for OpenAI-compatible servers
+#OPENAI_URL=http://192.168.1.10:1234/v1 # Base URL for OpenAI-compatible server
+#OPENAI_MODEL=qwen3-coder-30b-a3b-instruct-mlx # Model name for OpenAI-compatible server
+#AGENTICGRAPH_PRISM_MODEL=openai:qwen3-coder-30b-a3b-instruct-mlx # Prism model mapping
+
+# Works with Azure Responses API as well
+OPENAI_API_KEY=sk-key # Azure/OpenAI API key
+OPENAI_URL=azure_responses_api # Azure Responses API base URL
+OPENAI_MODEL=gpt-5o # Azure/OpenAI model name
+
+# When using multi-model configuration, can be changed directly within nodes
+GEMINI_API_KEY=key # Gemini API key
+GEMINI_DEFAULT_MODEL=gemini-2.5-flash # Default Gemini model name
 ```
 
 ### Verification
@@ -643,7 +698,7 @@ $json = json_encode($state); // Implements JsonSerializable
 
 ### Creating Custom Routers
 
-Implement `RouterInterface`:
+Implement `RouterInterface`. On `AbstractRouter`, `$routes` must be an associative array of route => label or description:
 
 ```php
 <?php
@@ -657,7 +712,11 @@ class ScoreRouter extends AbstractRouter
 {
     public function __construct()
     {
-        $this->routes = ['high_score', 'medium_score', 'low_score'];
+        $this->routes = [
+            'high_score' => 'High score route',
+            'medium_score' => 'Medium score route',
+            'low_score' => 'Low score route',
+        ];
         $this->defaultRoute = 'low_score';
     }
     
@@ -710,7 +769,11 @@ class DatabaseRouter extends AbstractRouter
     public function __construct(
         private UserRepository $userRepo
     ) {
-        $this->routes = ['premium', 'standard', 'trial'];
+        $this->routes = [
+            'premium' => 'Premium subscription users',
+            'standard' => 'Standard subscription users',
+            'trial' => 'Trial users',
+        ];
         $this->defaultRoute = 'trial';
     }
     
@@ -845,23 +908,37 @@ class SummarizeNode extends PrismNode
 
 ### Structured Output
 
-Get structured data from LLMs:
+Get structured data from LLMs using Prism schemas. For detailed schema reference, see https://prismphp.com/core-concepts/structured-output.html
 
 ```php
+use Prism\Prism\Schema\BooleanSchema;
+use Prism\Prism\Schema\EnumSchema;
+use Prism\Prism\Schema\ObjectSchema;
+use Prism\Prism\Schema\StringSchema;
+
 class ExtractInfoNode extends PrismNode
 {
     public function execute(StateContract $state): StateContract
     {
         $text = $state->get('email_body');
-        
-        $schema = [
-            'sender_name' => 'string',
-            'sender_email' => 'string',
-            'subject' => 'string',
-            'urgency' => 'low|medium|high',
-            'action_required' => 'boolean',
-        ];
-        
+
+        $schema = new ObjectSchema(
+            name: 'email_info',
+            description: 'Key details extracted from a support email',
+            properties: [
+                new StringSchema('sender_name', 'Sender name'),
+                new StringSchema('sender_email', 'Sender email address'),
+                new StringSchema('subject', 'Email subject'),
+                new EnumSchema(
+                    name: 'urgency',
+                    description: 'Urgency level',
+                    options: ['low', 'medium', 'high']
+                ),
+                new BooleanSchema('action_required', 'Whether action is required'),
+            ],
+            requiredFields: ['sender_name', 'sender_email', 'subject', 'urgency', 'action_required']
+        );
+
         $extracted = $this->structured(
             "Extract information from this email: {$text}",
             $schema
@@ -974,7 +1051,8 @@ $router = new PrismRouter([
     'general' => 'Route to general support for other inquiries',
 ], defaultRoute: 'general');
 
-$graph->addConditionalEdge('classify', $router);
+On the graph builder you can define the router as follows.
+$graph->addConditionalEdge('classify', $router); or $graph->addConditionalEdge('classify', new Router());
 ```
 
 The LLM will analyze the state and choose the most appropriate route based on the descriptions.

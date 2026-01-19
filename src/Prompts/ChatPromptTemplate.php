@@ -189,8 +189,8 @@ class ChatPromptTemplate
         $template = new self();
 
         foreach ($messages as $message) {
-            $role = $message['role'] ?? 'user';
-            $content = $message['content'] ?? '';
+            $role = $message['role'];
+            $content = $message['content'];
 
             match ($role) {
                 'system' => $template->system($content),
