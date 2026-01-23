@@ -17,6 +17,16 @@ class TestCase extends Orchestra
         );
     }
 
+    protected function tearDown(): void
+    {
+        // Reset tracing context to prevent state leakage between tests
+        if (class_exists(\Shahzad\AgenticGraph\Tracing\TraceContext::class)) {
+            \Shahzad\AgenticGraph\Tracing\TraceContext::reset();
+        }
+
+        parent::tearDown();
+    }
+
     protected function getPackageProviders($app)
     {
         $providers = [AgenticGraphServiceProvider::class];
@@ -31,6 +41,7 @@ class TestCase extends Orchestra
     {
         config()->set('database.default', 'testing');
         config()->set('agenticgraph.storage', 'database');
+        config()->set('agenticgraph.tracing.enabled', false); // Disable tracing in tests by default
         $app['config']->set('database.connections.testing', [
             'driver' => 'sqlite',
             'database' => ':memory:',
@@ -46,3 +57,4 @@ class TestCase extends Orchestra
         }
     }
 }
+
