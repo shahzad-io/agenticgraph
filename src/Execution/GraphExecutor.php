@@ -9,13 +9,16 @@ use Illuminate\Support\Facades\Event;
 use Shahzad\AgenticGraph\Contracts\NodeInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\GraphExecutionCompleted;
+use Shahzad\AgenticGraph\Events\GraphExecutionFailed;
 use Shahzad\AgenticGraph\Events\GraphExecutionStarted;
 use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
+use Shahzad\AgenticGraph\Events\NodeExecutionFailed;
 use Shahzad\AgenticGraph\Events\NodeExecutionStarted;
 use Shahzad\AgenticGraph\Graph\Graph;
 use Shahzad\AgenticGraph\Middleware\LoggingMiddleware;
 use Shahzad\AgenticGraph\Middleware\TimingMiddleware;
 use Shahzad\AgenticGraph\Middleware\ValidationMiddleware;
+use Shahzad\AgenticGraph\Tracing\TraceContext;
 
 class GraphExecutor
 {
@@ -38,6 +41,9 @@ class GraphExecutor
         $executionId = $executionId ?? uniqid('exec_', true);
         $repo = new ExecutionRepository;
 
+        // Start tracing context
+        TraceContext::startTrace($executionId);
+
         // Ensure execution record exists and transition to running
         if (! $repo->get($executionId)) {
             $repo->queued($executionId, $graph->name, $state->toArray());
@@ -46,66 +52,95 @@ class GraphExecutor
         Event::dispatch(new GraphExecutionStarted($executionId, $graph->name, $state, new \DateTimeImmutable));
         $current = $graph->entryPoint;
         $start = microtime(true);
-        while (true) {
-            $lockTimeout = (int) config('agenticgraph.lock.timeout', 10);
-            $lock = Cache::lock('agenticgraph:execution:'.$executionId, $lockTimeout);
-            try {
-                if (! $lock->block(5)) {
-                    throw new \RuntimeException(
-                        "Failed to acquire lock for execution {$executionId} after 5 seconds. ".
-                        'Another process may be holding the lock.'
-                    );
-                }
-                $node = $graph->getNode($current);
-                Event::dispatch(new NodeExecutionStarted($executionId, $current, $state, new \DateTimeImmutable));
-                $nodeStartTime = microtime(true);
-                $inputState = $state;
-                $state = $this->runNodeWithMiddleware($state, $node);
-                $nodeDuration = microtime(true) - $nodeStartTime;
-                $this->checkpoint($graph, $executionId, $current, $state);
-                Event::dispatch(new NodeExecutionCompleted($executionId, $current, $inputState, $state, $nodeDuration, []));
-                if (in_array($current, $graph->exitPoints, true)) {
-                    break;
-                }
-                $next = $this->determineNext($graph, $current, $state);
-                if ($next === null) {
-                    break;
-                }
-                if (is_array($next)) {
-                    \Log::debug('Parallel execution detected', [
-                        'execution_id' => $executionId,
-                        'current_node' => $current,
-                        'next_nodes' => $next,
-                        'use_batch' => $useBatch,
-                    ]);
-                    if ($useBatch) {
-                        \Log::debug('Dispatching parallel batch jobs', [
-                            'execution_id' => $executionId,
-                            'workers' => $next,
-                        ]);
-                        $this->executeParallelViaBatch($graph, $state, $executionId, $current, $next);
-
-                        return $state; // Async continuation, return current state
-                    } else {
-                        $state = $this->executeParallel($graph, $state, $executionId, $current, $next);
-                        $joinNext = $this->determinePostParallelNext($graph, $next, $state);
-                        $current = $joinNext ?? ($graph->exitPoints[0] ?? $current);
+        
+        try {
+            while (true) {
+                $lockTimeout = (int) config('agenticgraph.lock.timeout', 10);
+                $lock = Cache::lock('agenticgraph:execution:'.$executionId, $lockTimeout);
+                try {
+                    if (! $lock->block(5)) {
+                        throw new \RuntimeException(
+                            "Failed to acquire lock for execution {$executionId} after 5 seconds. ".
+                            'Another process may be holding the lock.'
+                        );
                     }
-                } else {
-                    $current = $next;
-                }
-            } catch (\Illuminate\Contracts\Cache\LockTimeoutException $e) {
-                (new ExecutionRepository)->failed($executionId, 'Lock timeout: '.$e->getMessage());
-                throw new \RuntimeException('Execution locked by another process', 0, $e);
-            } finally {
-                optional($lock)->release();
-            }
-        }
-        $duration = microtime(true) - $start;
-        (new ExecutionRepository)->completed($executionId, $state->toArray(), $duration);
-        Event::dispatch(new GraphExecutionCompleted($executionId, $graph->name, $state, new \DateTimeImmutable, $duration, []));
+                    
+                    // Start span for this node
+                    $spanId = TraceContext::startSpan($current);
+                    $parentSpanId = TraceContext::getParentSpanId();
+                    
+                    $node = $graph->getNode($current);
+                    $nodeStartTime = microtime(true);
+                    $inputState = $state;
+                    
+                    Event::dispatch(new NodeExecutionStarted(
+                        $executionId, $current, $state, new \DateTimeImmutable,
+                        $spanId, $parentSpanId
+                    ));
+                    
+                    $state = $this->runNodeWithMiddleware($state, $node);
+                    $nodeDuration = microtime(true) - $nodeStartTime;
+                    $this->checkpoint($graph, $executionId, $current, $state);
+                    
+                    Event::dispatch(new NodeExecutionCompleted(
+                        $executionId, $current, $inputState, $state, $nodeDuration, [],
+                        $spanId
+                    ));
+                    
+                    // End span for this node
+                    TraceContext::endSpan();
+                    
+                    if (in_array($current, $graph->exitPoints, true)) {
+                        break;
+                    }
+                    $next = $this->determineNext($graph, $current, $state);
+                    if ($next === null) {
+                        break;
+                    }
+                    if (is_array($next)) {
+                        \Log::debug('Parallel execution detected', [
+                            'execution_id' => $executionId,
+                            'current_node' => $current,
+                            'next_nodes' => $next,
+                            'use_batch' => $useBatch,
+                        ]);
+                        if ($useBatch) {
+                            \Log::debug('Dispatching parallel batch jobs', [
+                                'execution_id' => $executionId,
+                                'workers' => $next,
+                            ]);
+                            $this->executeParallelViaBatch($graph, $state, $executionId, $current, $next);
 
-        return $state;
+                            TraceContext::endTrace();
+                            return $state; // Async continuation, return current state
+                        } else {
+                            $state = $this->executeParallel($graph, $state, $executionId, $current, $next);
+                            $joinNext = $this->determinePostParallelNext($graph, $next, $state);
+                            $current = $joinNext ?? ($graph->exitPoints[0] ?? $current);
+                        }
+                    } else {
+                        $current = $next;
+                    }
+                } catch (\Illuminate\Contracts\Cache\LockTimeoutException $e) {
+                    (new ExecutionRepository)->failed($executionId, 'Lock timeout: '.$e->getMessage());
+                    throw new \RuntimeException('Execution locked by another process', 0, $e);
+                } finally {
+                    optional($lock)->release();
+                }
+            }
+            
+            $duration = microtime(true) - $start;
+            (new ExecutionRepository)->completed($executionId, $state->toArray(), $duration);
+            Event::dispatch(new GraphExecutionCompleted($executionId, $graph->name, $state, new \DateTimeImmutable, $duration, []));
+
+            return $state;
+        } catch (\Throwable $e) {
+            $duration = microtime(true) - $start;
+            Event::dispatch(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000));
+            throw $e;
+        } finally {
+            TraceContext::endTrace();
+        }
     }
 
     protected function runNodeWithMiddleware(StateContract $state, NodeInterface $node): StateContract

@@ -2,7 +2,10 @@
 
 namespace Shahzad\AgenticGraph;
 
+use Illuminate\Support\Facades\Event;
 use Shahzad\AgenticGraph\Commands\AgenticGraphCommand;
+use Shahzad\AgenticGraph\Tracing\Listeners\TracingListener;
+use Shahzad\AgenticGraph\Tracing\PulseExporter;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
 
@@ -32,4 +35,18 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
             ->hasCommand(\Shahzad\AgenticGraph\Console\CheckpointCleanupCommand::class)
             ->hasCommand(\Shahzad\AgenticGraph\Console\ExecutionsListCommand::class);
     }
+
+    public function packageBooted(): void
+    {
+        // Register PulseExporter as singleton
+        $this->app->singleton(PulseExporter::class, function ($app) {
+            return new PulseExporter;
+        });
+
+        // Register tracing event subscriber if tracing is enabled
+        if (config('agenticgraph.tracing.enabled', false)) {
+            Event::subscribe(TracingListener::class);
+        }
+    }
 }
+

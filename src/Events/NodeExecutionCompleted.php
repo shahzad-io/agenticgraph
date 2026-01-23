@@ -12,6 +12,9 @@ class NodeExecutionCompleted
         public readonly StateContract $inputState,
         public readonly StateContract $outputState,
         public readonly float $duration,
-        public readonly array $metadata
+        public readonly array $metadata,
+        // New field for tracing (backward compatible with default)
+        public readonly ?string $spanId = null,
     ) {}
 }
+

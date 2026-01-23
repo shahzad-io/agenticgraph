@@ -68,4 +68,40 @@ return [
         'timeout' => env('AGENTICGRAPH_CIRCUIT_BREAKER_TIMEOUT', 60),
         'retry_after' => env('AGENTICGRAPH_CIRCUIT_BREAKER_RETRY_AFTER', 300),
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Tracing Configuration (AgenticPulse)
+    |--------------------------------------------------------------------------
+    |
+    | Configure tracing for observability with AgenticPulse SaaS.
+    | Get your API key at https://agenticpulse.io
+    |
+    */
+    'tracing' => [
+        'enabled' => env('AGENTICGRAPH_TRACING', false),
+
+        // AgenticPulse API credentials
+        'api_key' => env('AGENTICPULSE_API_KEY'),
+        'endpoint' => env('AGENTICPULSE_ENDPOINT', 'https://api.agenticpulse.io'),
+
+        // What to capture
+        'capture' => [
+            'state' => env('AGENTICGRAPH_CAPTURE_STATE', 'diff'),
+            // 'diff' = only keys that changed (minimal, default)
+            // 'full' = complete state snapshots
+            // 'error_only' = full on error, keys on success
+
+            'prompts' => env('AGENTICGRAPH_CAPTURE_PROMPTS', false),
+            'responses' => env('AGENTICGRAPH_CAPTURE_RESPONSES', false),
+            'max_length' => env('AGENTICGRAPH_CAPTURE_MAX_LENGTH', 2000),
+        ],
+
+        // Sampling configuration
+        'sampling' => [
+            'rate' => env('AGENTICGRAPH_SAMPLE_RATE', 1.0),
+            'always_on_error' => true,
+        ],
+    ],
 ];
+
