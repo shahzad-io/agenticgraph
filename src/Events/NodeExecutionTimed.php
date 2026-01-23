@@ -7,6 +7,5 @@ class NodeExecutionTimed
     public function __construct(
         public readonly string $node,
         public readonly float $duration
-    ) {
-    }
+    ) {}
 }

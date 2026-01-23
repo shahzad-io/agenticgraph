@@ -1,12 +1,12 @@
 <?php
 
+use Illuminate\Support\Str;
+use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Execution\Checkpoint;
 use Shahzad\AgenticGraph\Graph\Graph;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
-use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\State\State;
-use Shahzad\AgenticGraph\Execution\Checkpoint;
-use Illuminate\Support\Str;
 
 class DummyNode extends AbstractNode
 {
@@ -33,10 +33,11 @@ function createLargeGraph(int $nodes = 10): Graph
     for ($i = 0; $i < $nodes; $i++) {
         $builder->addNode('node'.$i, DummyNode::class);
         if ($i > 0) {
-            $builder->addEdge('node'.($i-1), 'node'.$i);
+            $builder->addEdge('node'.($i - 1), 'node'.$i);
         }
     }
-    return $builder->setEntryPoint('node0')->addExitPoint('node'.($nodes-1))->build();
+
+    return $builder->setEntryPoint('node0')->addExitPoint('node'.($nodes - 1))->build();
 }
 
 function createTestState(array $data = []): State
@@ -46,7 +47,7 @@ function createTestState(array $data = []): State
 
 function createCheckpoint(string $graph = 'g', string $exec = 'e'): Checkpoint
 {
-    $c = new Checkpoint();
+    $c = new Checkpoint;
     $c->id = (string) Str::uuid();
     $c->graphName = $graph;
     $c->executionId = $exec;
@@ -55,6 +56,7 @@ function createCheckpoint(string $graph = 'g', string $exec = 'e'): Checkpoint
     $c->completedNodes = [];
     $c->pendingNodes = [];
     $c->metadata = [];
-    $c->createdAt = new DateTimeImmutable();
+    $c->createdAt = new DateTimeImmutable;
+
     return $c;
 }

@@ -13,19 +13,19 @@ class FileStorage implements StorageInterface
     {
         $this->dir = $dir ?? storage_path('app/agenticgraph');
 
-        if (!is_dir($this->dir)) {
-            if (!mkdir($this->dir, 0775, true) && !is_dir($this->dir)) {
+        if (! is_dir($this->dir)) {
+            if (! mkdir($this->dir, 0775, true) && ! is_dir($this->dir)) {
                 throw new \RuntimeException(
-                    "Failed to create checkpoint directory: {$this->dir}. " .
-                    "Check directory permissions."
+                    "Failed to create checkpoint directory: {$this->dir}. ".
+                    'Check directory permissions.'
                 );
             }
         }
 
-        if (!is_writable($this->dir)) {
+        if (! is_writable($this->dir)) {
             throw new \RuntimeException(
-                "Checkpoint directory is not writable: {$this->dir}. " .
-                "Check directory permissions."
+                "Checkpoint directory is not writable: {$this->dir}. ".
+                'Check directory permissions.'
             );
         }
     }
@@ -45,17 +45,18 @@ class FileStorage implements StorageInterface
             'created_at' => $checkpoint->createdAt->format('c'),
             'parent_checkpoint_id' => $checkpoint->parentCheckpointId,
         ], JSON_PRETTY_PRINT));
+
         return $checkpoint->id;
     }
 
     public function load(string $id): ?Checkpoint
     {
         $path = $this->path($id);
-        if (!file_exists($path)) {
+        if (! file_exists($path)) {
             return null;
         }
         $data = json_decode(file_get_contents($path), true) ?? [];
-        $c = new Checkpoint();
+        $c = new Checkpoint;
         $c->id = $data['id'] ?? $id;
         $c->graphName = $data['graph_name'] ?? '';
         $c->executionId = $data['execution_id'] ?? '';
@@ -66,12 +67,13 @@ class FileStorage implements StorageInterface
         $c->metadata = $data['metadata'] ?? [];
         $c->createdAt = new \DateTimeImmutable($data['created_at'] ?? 'now');
         $c->parentCheckpointId = $data['parent_checkpoint_id'] ?? null;
+
         return $c;
     }
 
     public function list(string $graphName, int $limit = 50): array
     {
-        $files = glob($this->dir . '/*.json') ?: [];
+        $files = glob($this->dir.'/*.json') ?: [];
         $filtered = [];
 
         foreach ($files as $file) {
@@ -94,6 +96,7 @@ class FileStorage implements StorageInterface
         if (file_exists($path)) {
             return unlink($path);
         }
+
         return false;
     }
 
@@ -101,17 +104,18 @@ class FileStorage implements StorageInterface
     {
         $count = 0;
         $threshold = time() - ($olderThanDays * 86400);
-        foreach (glob($this->dir . '/*.json') ?: [] as $file) {
+        foreach (glob($this->dir.'/*.json') ?: [] as $file) {
             if (filemtime($file) < $threshold) {
                 @unlink($file);
                 $count++;
             }
         }
+
         return $count;
     }
 
     protected function path(string $id): string
     {
-        return $this->dir . '/' . $id . '.json';
+        return $this->dir.'/'.$id.'.json';
     }
 }

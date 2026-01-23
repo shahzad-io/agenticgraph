@@ -25,16 +25,17 @@ class DatabaseStorage implements StorageInterface
             'parent_checkpoint_id' => $checkpoint->parentCheckpointId,
         ];
         DB::table($this->table)->updateOrInsert(['id' => $checkpoint->id], $payload);
+
         return $checkpoint->id;
     }
 
     public function load(string $id): ?Checkpoint
     {
         $row = DB::table($this->table)->where('id', $id)->first();
-        if (!$row) {
+        if (! $row) {
             return null;
         }
-        $c = new Checkpoint();
+        $c = new Checkpoint;
         $c->id = $row->id;
         $c->graphName = $row->graph_name;
         $c->executionId = $row->execution_id;
@@ -45,6 +46,7 @@ class DatabaseStorage implements StorageInterface
         $c->metadata = json_decode($row->metadata, true) ?? [];
         $c->createdAt = new \DateTimeImmutable($row->created_at);
         $c->parentCheckpointId = $row->parent_checkpoint_id;
+
         return $c;
     }
 
@@ -75,6 +77,7 @@ class DatabaseStorage implements StorageInterface
     public function cleanup(int $olderThanDays = 30): int
     {
         $threshold = now()->subDays($olderThanDays)->format('Y-m-d H:i:s');
+
         return DB::table($this->table)->where('created_at', '<', $threshold)->delete();
     }
 }

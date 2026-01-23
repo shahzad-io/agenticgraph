@@ -5,6 +5,7 @@ namespace Shahzad\AgenticGraph\Graph;
 class GraphRegistry
 {
     protected static array $graphs = [];
+
     protected static int $maxGraphs = 100; // Prevent unbounded growth
 
     public static function register(string $name, Graph $graph): void

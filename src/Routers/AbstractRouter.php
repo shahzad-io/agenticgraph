@@ -8,12 +8,13 @@ use Shahzad\AgenticGraph\Contracts\StateContract;
 abstract class AbstractRouter implements RouterInterface
 {
     protected array $routes = [];
+
     protected ?string $defaultRoute = null;
 
     public function route(StateContract $state): string|array
     {
         throw new \BadMethodCallException(
-            'Router ' . static::class . ' must implement route() method'
+            'Router '.static::class.' must implement route() method'
         );
     }
 

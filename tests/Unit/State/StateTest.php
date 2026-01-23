@@ -1,7 +1,6 @@
 <?php
 
 use Shahzad\AgenticGraph\State\State;
-use Shahzad\AgenticGraph\State\StateValidationException;
 
 it('gets and sets values immutably', function () {
     $state1 = new State(['count' => 1]);

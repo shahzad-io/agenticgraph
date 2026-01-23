@@ -28,7 +28,7 @@ class ContinueExecutionJob implements ShouldQueue
     public function handle(GraphExecutor $executor): void
     {
         $graph = GraphRegistry::get($this->graphName);
-        if (!$graph) {
+        if (! $graph) {
             return;
         }
         $executor->executeFromNode($graph, $this->state, $this->startNode, $this->executionId, useBatch: true);

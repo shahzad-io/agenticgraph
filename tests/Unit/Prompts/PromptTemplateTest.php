@@ -1,7 +1,7 @@
 <?php
 
-use Shahzad\AgenticGraph\Prompts\PromptTemplate;
 use Shahzad\AgenticGraph\Prompts\Exceptions\TemplateException;
+use Shahzad\AgenticGraph\Prompts\PromptTemplate;
 
 test('can create and format simple template', function () {
     $template = PromptTemplate::create('Hello {name}!');
@@ -117,7 +117,7 @@ test('can convert template to string', function () {
 
 test('handles multiline templates', function () {
     $template = PromptTemplate::create(
-        <<<TEMPLATE
+        <<<'TEMPLATE'
         Hello {name}!
         You have {count} messages.
         TEMPLATE

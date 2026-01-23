@@ -13,6 +13,7 @@ class LoggingMiddleware
         Log::debug('Executing node', ['node' => $node->getName()]);
         $result = $next($state);
         Log::debug('Completed node', ['node' => $node->getName()]);
+
         return $result;
     }
 }

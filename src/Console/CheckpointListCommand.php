@@ -7,6 +7,7 @@ use Illuminate\Console\Command;
 class CheckpointListCommand extends Command
 {
     protected $signature = 'agenticgraph:checkpoint:list {--graph=} {--limit=50}';
+
     protected $description = 'List checkpoints for a graph';
 
     public function handle(): int
@@ -22,6 +23,7 @@ class CheckpointListCommand extends Command
         foreach ($list as $id) {
             $this->line($id);
         }
+
         return self::SUCCESS;
     }
 }

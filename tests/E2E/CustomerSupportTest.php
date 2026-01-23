@@ -1,10 +1,9 @@
 <?php
 
 use Prism\Prism\Facades\Prism;
-use Prism\Prism\Testing\StructuredResponseFake;
 use Prism\Prism\Testing\TextResponseFake;
-use Prism\Prism\ValueObjects\Usage;
 use Prism\Prism\ValueObjects\Meta;
+use Prism\Prism\ValueObjects\Usage;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
@@ -27,6 +26,7 @@ class CSRespondNode extends PrismNode
     {
         $intent = $state->get('intent');
         $text = $this->prompt('Respond to {intent} issue', ['intent' => $intent]);
+
         return $state->set('response', $text);
     }
 }
@@ -64,8 +64,9 @@ class CSEndNode extends AbstractNode
 }
 
 it('processes customer support workflow end-to-end', function () {
-    if (!class_exists(Prism::class)) {
+    if (! class_exists(Prism::class)) {
         expect(true)->toBeTrue();
+
         return;
     }
     $routeText = TextResponseFake::make()
@@ -102,7 +103,7 @@ it('processes customer support workflow end-to-end', function () {
         ->build();
 
     $state = new State(['message' => 'I cannot log in']);
-    $result = (new GraphExecutor())->execute($graph, $state);
+    $result = (new GraphExecutor)->execute($graph, $state);
     expect($result->get('resolved'))->toBeTrue()
         ->and($result->get('response'))->toContain('Technical');
 });

@@ -1,11 +1,11 @@
 <?php
 
+use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
-use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
 use Shahzad\AgenticGraph\State\State;
-use Shahzad\AgenticGraph\Contracts\StateContract;
 
 class StartNode extends AbstractNode
 {
@@ -55,11 +55,27 @@ it('executes parallel branches and joins to respond then end', function () {
         ->addNode('b', NodeB::class)
         ->addNode('respond', RespondNode::class)
         ->addNode('end', EndNode::class)
-        ->addConditionalEdge('start', new class implements \Shahzad\AgenticGraph\Contracts\RouterInterface {
-            public function route(\Shahzad\AgenticGraph\Contracts\StateContract $state): string|array { return ['a','b']; }
-            public function getAvailableRoutes(): array { return ['a','b']; }
-            public function getDefaultRoute(): ?string { return null; }
-            public function validateRoute(string $route): bool { return in_array($route, ['a','b'], true); }
+        ->addConditionalEdge('start', new class implements \Shahzad\AgenticGraph\Contracts\RouterInterface
+        {
+            public function route(\Shahzad\AgenticGraph\Contracts\StateContract $state): string|array
+            {
+                return ['a', 'b'];
+            }
+
+            public function getAvailableRoutes(): array
+            {
+                return ['a', 'b'];
+            }
+
+            public function getDefaultRoute(): ?string
+            {
+                return null;
+            }
+
+            public function validateRoute(string $route): bool
+            {
+                return in_array($route, ['a', 'b'], true);
+            }
         })
         ->addJoin(['a', 'b'], 'respond')
         ->addEdge('respond', 'end')
@@ -69,7 +85,7 @@ it('executes parallel branches and joins to respond then end', function () {
 
     GraphRegistry::register('parallel-join', $graph);
 
-    $executor = new GraphExecutor();
+    $executor = new GraphExecutor;
     $result = $executor->execute($graph, new State(['base' => 0]));
 
     expect($result->get('started'))->toBeTrue()

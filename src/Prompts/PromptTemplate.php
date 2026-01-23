@@ -7,7 +7,9 @@ use Shahzad\AgenticGraph\Prompts\Exceptions\TemplateException;
 class PromptTemplate
 {
     protected string $template;
+
     protected array $defaultVariables;
+
     protected array $requiredVariables;
 
     public function __construct(
@@ -23,8 +25,8 @@ class PromptTemplate
     /**
      * Format the template with provided variables
      *
-     * @param array<string, mixed> $variables
-     * @return string
+     * @param  array<string, mixed>  $variables
+     *
      * @throws TemplateException
      */
     public function format(array $variables = []): string
@@ -38,7 +40,7 @@ class PromptTemplate
         return preg_replace_callback('/\{(\w+)\}/', function ($matches) use ($vars) {
             $key = $matches[1];
 
-            if (!array_key_exists($key, $vars)) {
+            if (! array_key_exists($key, $vars)) {
                 throw new TemplateException("Missing template variable: {$key}");
             }
 
@@ -48,9 +50,6 @@ class PromptTemplate
 
     /**
      * Format a value for insertion into template
-     *
-     * @param mixed $value
-     * @return string
      */
     protected function formatValue(mixed $value): string
     {
@@ -72,16 +71,17 @@ class PromptTemplate
     /**
      * Validate that all required variables are provided
      *
-     * @param array<string, mixed> $variables
+     * @param  array<string, mixed>  $variables
+     *
      * @throws TemplateException
      */
     protected function validateRequiredVariables(array $variables): void
     {
         $missing = array_diff($this->requiredVariables, array_keys($variables));
 
-        if (!empty($missing)) {
+        if (! empty($missing)) {
             throw new TemplateException(
-                'Missing required template variables: ' . implode(', ', $missing)
+                'Missing required template variables: '.implode(', ', $missing)
             );
         }
     }
@@ -94,37 +94,36 @@ class PromptTemplate
     public function getVariables(): array
     {
         preg_match_all('/\{(\w+)\}/', $this->template, $matches);
+
         return array_unique($matches[1]);
     }
 
     /**
      * Set default variables
      *
-     * @param array<string, mixed> $variables
-     * @return self
+     * @param  array<string, mixed>  $variables
      */
     public function withDefaults(array $variables): self
     {
         $this->defaultVariables = array_merge($this->defaultVariables, $variables);
+
         return $this;
     }
 
     /**
      * Set required variables
      *
-     * @param array<int, string> $variables
-     * @return self
+     * @param  array<int, string>  $variables
      */
     public function withRequired(array $variables): self
     {
         $this->requiredVariables = array_merge($this->requiredVariables, $variables);
+
         return $this;
     }
 
     /**
      * Get the raw template string
-     *
-     * @return string
      */
     public function getTemplate(): string
     {
@@ -133,9 +132,6 @@ class PromptTemplate
 
     /**
      * Create a new template instance
-     *
-     * @param string $template
-     * @return self
      */
     public static function create(string $template): self
     {
@@ -145,13 +141,11 @@ class PromptTemplate
     /**
      * Create a template from a file
      *
-     * @param string $path
-     * @return self
      * @throws TemplateException
      */
     public static function fromFile(string $path): self
     {
-        if (!file_exists($path)) {
+        if (! file_exists($path)) {
             throw new TemplateException("Template file not found: {$path}");
         }
 
@@ -166,8 +160,6 @@ class PromptTemplate
 
     /**
      * Convert template to string
-     *
-     * @return string
      */
     public function __toString(): string
     {

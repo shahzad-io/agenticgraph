@@ -2,11 +2,11 @@
 
 namespace Shahzad\AgenticGraph\Prompts;
 
+use Shahzad\AgenticGraph\Prompts\Exceptions\TemplateException;
+use Shahzad\AgenticGraph\Prompts\Messages\AssistantMessage;
 use Shahzad\AgenticGraph\Prompts\Messages\Message;
 use Shahzad\AgenticGraph\Prompts\Messages\SystemMessage;
 use Shahzad\AgenticGraph\Prompts\Messages\UserMessage;
-use Shahzad\AgenticGraph\Prompts\Messages\AssistantMessage;
-use Shahzad\AgenticGraph\Prompts\Exceptions\TemplateException;
 
 class ChatPromptTemplate
 {
@@ -16,7 +16,7 @@ class ChatPromptTemplate
     protected array $messages = [];
 
     /**
-     * @param array<int, Message> $messages
+     * @param  array<int, Message>  $messages
      */
     public function __construct(array $messages = [])
     {
@@ -26,58 +26,53 @@ class ChatPromptTemplate
     /**
      * Add a system message
      *
-     * @param string $content
-     * @param array<string, mixed> $metadata
-     * @return self
+     * @param  array<string, mixed>  $metadata
      */
     public function system(string $content, array $metadata = []): self
     {
         $this->messages[] = new SystemMessage($content, $metadata);
+
         return $this;
     }
 
     /**
      * Add a user message
      *
-     * @param string $content
-     * @param array<string, mixed> $metadata
-     * @return self
+     * @param  array<string, mixed>  $metadata
      */
     public function user(string $content, array $metadata = []): self
     {
         $this->messages[] = new UserMessage($content, $metadata);
+
         return $this;
     }
 
     /**
      * Add an assistant message (for few-shot examples)
      *
-     * @param string $content
-     * @param array<string, mixed> $metadata
-     * @return self
+     * @param  array<string, mixed>  $metadata
      */
     public function assistant(string $content, array $metadata = []): self
     {
         $this->messages[] = new AssistantMessage($content, $metadata);
+
         return $this;
     }
 
     /**
      * Add a custom message
-     *
-     * @param Message $message
-     * @return self
      */
     public function addMessage(Message $message): self
     {
         $this->messages[] = $message;
+
         return $this;
     }
 
     /**
      * Format the template with provided variables
      *
-     * @param array<string, mixed> $variables
+     * @param  array<string, mixed>  $variables
      * @return array<int, array{role: string, content: string}>
      */
     public function format(array $variables = []): array
@@ -89,7 +84,7 @@ class ChatPromptTemplate
             $content = preg_replace_callback('/\{(\w+)\}/', function ($matches) use ($variables) {
                 $key = $matches[1];
 
-                if (!array_key_exists($key, $variables)) {
+                if (! array_key_exists($key, $variables)) {
                     throw new TemplateException("Missing template variable: {$key}");
                 }
 
@@ -106,23 +101,19 @@ class ChatPromptTemplate
     /**
      * Format the template as a single string
      *
-     * @param array<string, mixed> $variables
-     * @return string
+     * @param  array<string, mixed>  $variables
      */
     public function formatAsString(array $variables = []): string
     {
         $formatted = $this->format($variables);
 
         return implode("\n\n", array_map(function ($message) {
-            return strtoupper($message['role']) . ': ' . $message['content'];
+            return strtoupper($message['role']).': '.$message['content'];
         }, $formatted));
     }
 
     /**
      * Format a value for insertion into template
-     *
-     * @param mixed $value
-     * @return string
      */
     protected function formatValue(mixed $value): string
     {
@@ -170,23 +161,20 @@ class ChatPromptTemplate
 
     /**
      * Create a new chat prompt template
-     *
-     * @return self
      */
     public static function create(): self
     {
-        return new self();
+        return new self;
     }
 
     /**
      * Create from an array of messages
      *
-     * @param array<int, array{role: string, content: string}> $messages
-     * @return self
+     * @param  array<int, array{role: string, content: string}>  $messages
      */
     public static function fromArray(array $messages): self
     {
-        $template = new self();
+        $template = new self;
 
         foreach ($messages as $message) {
             $role = $message['role'];
@@ -205,8 +193,6 @@ class ChatPromptTemplate
 
     /**
      * Convert to string representation
-     *
-     * @return string
      */
     public function __toString(): string
     {

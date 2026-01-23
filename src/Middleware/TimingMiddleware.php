@@ -14,6 +14,7 @@ class TimingMiddleware
         $result = $next($state);
         $duration = microtime(true) - $start;
         event(new NodeExecutionTimed($node->getName(), $duration));
+
         return $result;
     }
 }

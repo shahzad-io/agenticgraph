@@ -2,8 +2,8 @@
 
 namespace Shahzad\AgenticGraph\Jobs;
 
-use Illuminate\Bus\Queueable;
 use Illuminate\Bus\Batchable;
+use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
@@ -13,8 +13,8 @@ use Shahzad\AgenticGraph\Graph\Graph;
 
 class ExecuteNodeJob implements ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
     use Batchable;
+    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     public function __construct(
         public readonly string $executionId,
@@ -37,7 +37,7 @@ class ExecuteNodeJob implements ShouldQueue
             $result = $node->execute($this->state);
 
             // Store with shorter TTL since it's only needed until batch completes
-            $cacheKey = 'agenticgraph:batch:' . $this->executionId . ':' . $this->nodeName;
+            $cacheKey = 'agenticgraph:batch:'.$this->executionId.':'.$this->nodeName;
             \Illuminate\Support\Facades\Cache::put($cacheKey, $result->toArray(), 300); // 5 minutes
 
             return $result;

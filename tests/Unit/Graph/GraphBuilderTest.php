@@ -1,9 +1,9 @@
 <?php
 
-use Shahzad\AgenticGraph\Graph\GraphBuilder;
-use Shahzad\AgenticGraph\Nodes\AbstractNode;
 use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Graph\InvalidGraphException;
+use Shahzad\AgenticGraph\Nodes\AbstractNode;
 
 class GBStartNode extends AbstractNode
 {
@@ -34,7 +34,7 @@ it('builds a valid graph', function () {
 });
 
 it('throws for missing edge target', function () {
-    expect(fn() => GraphBuilder::create('bad')
+    expect(fn () => GraphBuilder::create('bad')
         ->addNode('start', GBStartNode::class)
         ->addEdge('start', 'unknown')
         ->setEntryPoint('start')

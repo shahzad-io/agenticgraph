@@ -12,7 +12,7 @@ class RedisStorage implements StorageInterface
 
     public function save(Checkpoint $checkpoint): string
     {
-        $key = $this->prefix . $checkpoint->id;
+        $key = $this->prefix.$checkpoint->id;
         $payload = json_encode([
             'id' => $checkpoint->id,
             'graph_name' => $checkpoint->graphName,
@@ -30,17 +30,18 @@ class RedisStorage implements StorageInterface
         if ($ttl > 0) {
             Redis::expire($key, $ttl);
         }
+
         return $checkpoint->id;
     }
 
     public function load(string $id): ?Checkpoint
     {
-        $payload = Redis::get($this->prefix . $id);
-        if (!$payload) {
+        $payload = Redis::get($this->prefix.$id);
+        if (! $payload) {
             return null;
         }
         $data = json_decode($payload, true) ?? [];
-        $c = new Checkpoint();
+        $c = new Checkpoint;
         $c->id = $data['id'] ?? $id;
         $c->graphName = $data['graph_name'] ?? '';
         $c->executionId = $data['execution_id'] ?? '';
@@ -51,6 +52,7 @@ class RedisStorage implements StorageInterface
         $c->metadata = $data['metadata'] ?? [];
         $c->createdAt = new \DateTimeImmutable($data['created_at'] ?? 'now');
         $c->parentCheckpointId = $data['parent_checkpoint_id'] ?? null;
+
         return $c;
     }
 
@@ -61,7 +63,7 @@ class RedisStorage implements StorageInterface
 
     public function delete(string $id): bool
     {
-        return Redis::del($this->prefix . $id) > 0;
+        return Redis::del($this->prefix.$id) > 0;
     }
 
     public function cleanup(int $olderThanDays = 30): int

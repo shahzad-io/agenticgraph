@@ -8,12 +8,13 @@ use Illuminate\Support\Facades\Validator;
 use JsonSerializable;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 
-final class State implements StateContract, JsonSerializable, Arrayable
+final class State implements Arrayable, JsonSerializable, StateContract
 {
     /**
      * @var array<string, mixed>
      */
     protected array $data;
+
     /**
      * @var array<string, mixed>
      */
@@ -25,19 +26,14 @@ final class State implements StateContract, JsonSerializable, Arrayable
         $this->metadata = $metadata;
     }
 
-    /**
-     * @return static
-     */
     public function set(string $key, mixed $value): static
     {
         $data = $this->data;
         Arr::set($data, $key, $value);
-        return new static($data, $this->metadata);
+
+        return new self($data, $this->metadata);
     }
 
-    /**
-     * @return static
-     */
     public function merge(StateContract $other): static
     {
         return new static(
@@ -49,8 +45,8 @@ final class State implements StateContract, JsonSerializable, Arrayable
     /**
      * Merge arrays with proper handling of numeric vs associative arrays
      *
-     * @param array<string, mixed> $array1
-     * @param array<string, mixed> $array2
+     * @param  array<string, mixed>  $array1
+     * @param  array<string, mixed>  $array2
      * @return array<string, mixed>
      */
     private function mergeArrays(array $array1, array $array2): array
@@ -70,6 +66,7 @@ final class State implements StateContract, JsonSerializable, Arrayable
                 $array1[$key] = $value;
             }
         }
+
         return $array1;
     }
 
@@ -83,6 +80,7 @@ final class State implements StateContract, JsonSerializable, Arrayable
         if ($validator->fails()) {
             throw new StateValidationException($validator->errors()->toJson());
         }
+
         return true;
     }
 
@@ -104,13 +102,11 @@ final class State implements StateContract, JsonSerializable, Arrayable
         return Arr::has($this->data, $key);
     }
 
-    /**
-     * @return static
-     */
     public function forget(string $key): static
     {
         $data = $this->data;
         Arr::forget($data, $key);
+
         return new static($data, $this->metadata);
     }
 
@@ -131,8 +127,7 @@ final class State implements StateContract, JsonSerializable, Arrayable
     }
 
     /**
-     * @param array<string, mixed> $data
-     * @return static
+     * @param  array<string, mixed>  $data
      */
     public static function fromArray(array $data): static
     {

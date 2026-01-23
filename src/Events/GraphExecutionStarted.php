@@ -11,6 +11,5 @@ class GraphExecutionStarted
         public readonly string $graphName,
         public readonly StateContract $initialState,
         public readonly \DateTimeImmutable $startedAt
-    ) {
-    }
+    ) {}
 }

@@ -52,13 +52,13 @@ it('pauses on human review and resumes to completion', function () {
         ->addExitPoint('human_review')
         ->build();
 
-    $executor = new GraphExecutor();
+    $executor = new GraphExecutor;
     \Shahzad\AgenticGraph\Graph\GraphRegistry::register('human_review', $graph);
     $state = new State(['message' => 'Complex billing issue']);
-    $result = $executor->executeUntil($graph, $state, fn($s) => $s->get('needs_review') === true);
+    $result = $executor->executeUntil($graph, $state, fn ($s) => $s->get('needs_review') === true);
     expect($result['checkpointId'])->not()->toBeNull();
 
-    $storage = new DatabaseStorage();
+    $storage = new DatabaseStorage;
     $checkpoint = $storage->load($result['checkpointId']);
     $checkpoint->state = $checkpoint->state->set('approved', true);
     $storage->save($checkpoint);

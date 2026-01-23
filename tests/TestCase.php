@@ -23,6 +23,7 @@ class TestCase extends Orchestra
         if (class_exists(\Prism\Prism\PrismServiceProvider::class)) {
             $providers[] = \Prism\Prism\PrismServiceProvider::class;
         }
+
         return $providers;
     }
 
@@ -40,7 +41,7 @@ class TestCase extends Orchestra
             'driver' => 'file',
             'path' => storage_path('framework/cache'),
         ]);
-        foreach (\Illuminate\Support\Facades\File::allFiles(__DIR__ . '/../database/migrations') as $migration) {
+        foreach (\Illuminate\Support\Facades\File::allFiles(__DIR__.'/../database/migrations') as $migration) {
             (include $migration->getRealPath())->up();
         }
     }

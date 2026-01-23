@@ -1,10 +1,10 @@
 <?php
 
 use Illuminate\Support\Facades\Artisan;
+use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
-use Shahzad\AgenticGraph\Contracts\StateContract;
 
 class VizNode extends AbstractNode
 {
@@ -23,7 +23,7 @@ it('writes mermaid output to file', function () {
         ->addExitPoint('end')
         ->build();
     GraphRegistry::register('viz-file', $graph);
-    $path = sys_get_temp_dir() . '/agenticgraph-viz.mmd';
+    $path = sys_get_temp_dir().'/agenticgraph-viz.mmd';
     @unlink($path);
     $code = Artisan::call('agenticgraph:visualize', ['name' => 'viz-file', '--output' => $path]);
     expect($code)->toBe(0);

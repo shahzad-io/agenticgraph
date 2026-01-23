@@ -1,9 +1,9 @@
 <?php
 
+use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
-use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Storage\DatabaseStorage;
 
@@ -34,7 +34,7 @@ it('creates checkpoint after each executed node', function () {
         ->setEntryPoint('start')
         ->addExitPoint('end')
         ->build();
-    (new GraphExecutor())->execute($graph, new State());
-    $list = (new DatabaseStorage())->list('cp-graph');
+    (new GraphExecutor)->execute($graph, new State);
+    $list = (new DatabaseStorage)->list('cp-graph');
     expect($list)->toHaveCount(3);
 });

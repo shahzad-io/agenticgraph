@@ -1,12 +1,12 @@
 <?php
 
 use Illuminate\Support\Facades\Bus;
+use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
-use Shahzad\AgenticGraph\Nodes\AbstractNode;
-use Shahzad\AgenticGraph\Contracts\StateContract;
-use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Jobs\ExecuteGraphJob;
+use Shahzad\AgenticGraph\Nodes\AbstractNode;
+use Shahzad\AgenticGraph\State\State;
 
 class SimpleNode extends AbstractNode
 {
@@ -23,7 +23,7 @@ it('dispatches async job', function () {
         ->setEntryPoint('start')
         ->addExitPoint('start')
         ->build();
-    $executor = new GraphExecutor();
-    $executor->executeAsync($graph, new State());
+    $executor = new GraphExecutor;
+    $executor->executeAsync($graph, new State);
     Bus::assertDispatched(ExecuteGraphJob::class);
 });

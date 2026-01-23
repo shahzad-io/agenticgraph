@@ -1,10 +1,10 @@
 <?php
 
 use Illuminate\Support\Facades\Artisan;
+use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
-use Shahzad\AgenticGraph\Contracts\StateContract;
 
 class CLINode extends AbstractNode
 {

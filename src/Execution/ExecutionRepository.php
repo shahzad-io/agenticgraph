@@ -47,7 +47,7 @@ class ExecutionRepository
         // Verify the record exists and get current status
         $current = DB::table($this->table)->where('id', $id)->first();
 
-        if (!$current) {
+        if (! $current) {
             // If record doesn't exist, create it first (shouldn't happen in normal flow)
             Log::warning('Execution record not found when starting, creating new record', [
                 'execution_id' => $id,
@@ -56,7 +56,7 @@ class ExecutionRepository
             $this->queued($id, $graphName, $initialState);
         } else {
             // Validate state transition
-            if (!$this->canTransitionTo($id, 'running')) {
+            if (! $this->canTransitionTo($id, 'running')) {
                 Log::warning('Invalid state transition attempted', [
                     'execution_id' => $id,
                     'current_status' => $current->status,
@@ -82,7 +82,7 @@ class ExecutionRepository
     public function completed(string $id, array $finalState, float $duration): void
     {
         // Verify state transition
-        if (!$this->canTransitionTo($id, 'completed')) {
+        if (! $this->canTransitionTo($id, 'completed')) {
             $current = DB::table($this->table)->where('id', $id)->value('status');
             Log::warning('Invalid state transition to completed', [
                 'execution_id' => $id,
@@ -107,7 +107,7 @@ class ExecutionRepository
     public function failed(string $id, string $error): void
     {
         // Verify state transition
-        if (!$this->canTransitionTo($id, 'failed')) {
+        if (! $this->canTransitionTo($id, 'failed')) {
             $current = DB::table($this->table)->where('id', $id)->value('status');
             Log::warning('Invalid state transition to failed', [
                 'execution_id' => $id,
@@ -134,12 +134,13 @@ class ExecutionRepository
     {
         $current = DB::table($this->table)->where('id', $id)->value('status');
 
-        if (!$current) {
+        if (! $current) {
             // New execution can transition to any valid status
             return isset($this->validTransitions[$newStatus]);
         }
 
         $allowedTransitions = $this->validTransitions[$current] ?? [];
+
         return in_array($newStatus, $allowedTransitions);
     }
 
@@ -165,7 +166,7 @@ class ExecutionRepository
     public function getHistory(string $id): array
     {
         $execution = $this->get($id);
-        if (!$execution) {
+        if (! $execution) {
             return [];
         }
 

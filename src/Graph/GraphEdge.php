@@ -9,8 +9,11 @@ use Shahzad\AgenticGraph\Contracts\StateContract;
 class GraphEdge implements EdgeInterface
 {
     protected string $source;
+
     protected string|array $target;
+
     protected ?RouterInterface $condition;
+
     protected array $metadata;
 
     public function __construct(string $source, string|array $target, ?RouterInterface $condition = null, array $metadata = [])

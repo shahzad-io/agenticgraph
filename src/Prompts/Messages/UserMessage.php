@@ -6,8 +6,6 @@ class UserMessage extends Message
 {
     /**
      * Get the role of this message
-     *
-     * @return string
      */
     public function getRole(): string
     {
@@ -17,9 +15,7 @@ class UserMessage extends Message
     /**
      * Create a new user message
      *
-     * @param string $content
-     * @param array<string, mixed> $metadata
-     * @return self
+     * @param  array<string, mixed>  $metadata
      */
     public static function create(string $content, array $metadata = []): self
     {

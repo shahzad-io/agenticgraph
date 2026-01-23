@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\DB;
 class ExecutionsListCommand extends Command
 {
     protected $signature = 'agenticgraph:executions {--graph=} {--status=} {--limit=20}';
+
     protected $description = 'List AgenticGraph executions';
 
     public function handle(): int
@@ -31,9 +32,10 @@ class ExecutionsListCommand extends Command
                 $row->status,
                 $row->started_at ?: '-',
                 $row->completed_at ?: '-',
-                $row->duration !== null ? number_format($row->duration, 3) . 's' : '-'
+                $row->duration !== null ? number_format($row->duration, 3).'s' : '-'
             ));
         }
+
         return self::SUCCESS;
     }
 }

@@ -1,6 +1,6 @@
 # AgenticGraph
 
-AgenticGraph is a Laravel package for building agentic workflows using a graph-based architecture with first-class PrismPHP integration for AI-powered nodes and routing. It provides execution orchestration, checkpoints, events, middleware, queue-based parallelism, and developer-friendly tooling.
+AgenticGraph is the first open-source Laravel AI orchestration package, bringing graph-based workflows to the Laravel ecosystem for the millions of PHP developers building real-world AI features. It provides a clean graph builder, PrismPHP-powered nodes, routing, checkpoints, and execution tooling so you can ship agentic systems without jumping to other stacks.
 
 ## Features
 
@@ -13,11 +13,15 @@ AgenticGraph is a Laravel package for building agentic workflows using a graph-b
 - CLI tools to list/execute/visualize graphs and manage checkpoints
 - Pest-based test suite and examples
 
+## Documentation
+
+- Full documentation: [documentation.md](documentation.md)
+- Covers configuration, .env settings, execution, routing, storage, middleware, events, checkpoints, and CLI
+
 ## Installation
 
 ```bash
 composer require shahzad/agenticgraph
-composer require prism-php/prism:^0.98.0
 ```
 
 Publish configuration and run migrations in your host app:
@@ -27,16 +31,6 @@ php artisan vendor:publish --tag=prism-config
 php artisan vendor:publish --provider="Shahzad\AgenticGraph\AgenticGraphServiceProvider"
 php artisan migrate
 ```
-
-## Configuration
-
-- App config file: `config/agenticgraph.php`
-- Key highlights:
-  - `agenticgraph.execution.*` queue name/connection, timeouts, retries
-  - `agenticgraph.lock.*` lock driver, timeout
-  - `agenticgraph.prism.*` default model, cache and token tracking
-  - `agenticgraph.checkpoint.*` enabled, strategy, ttl
-  - `agenticgraph.storage` driver: `database|redis|file`
 
 ## Quick Start
 
@@ -112,34 +106,6 @@ $router = new PrismRouter([
 - `agenticgraph:checkpoint:delete {id}`
 - `agenticgraph:checkpoint:cleanup [--days=30]`
 - `agenticgraph:executions [--graph=] [--status=] [--limit=20]`
-
-## Storage Drivers
-
-- Database (default): stores checkpoints and execution history tables
-- Redis: ephemeral checkpoints (optional)
-- File: writes JSON checkpoints to `storage/app/agenticgraph`
-
-## Events
-
-- Graph: `GraphExecutionStarted`, `GraphExecutionCompleted`
-- Node: `NodeExecutionStarted`, `NodeExecutionCompleted`, `NodeExecutionTimed`
-- Prism: `TokensUsed` for usage tracking
-
-## Middleware
-
-- Logging, Timing, Validation, Caching
-- Configure global pipeline via `agenticgraph.middleware.global`
-
-## Testing
-
-- Pest-based test suite included
-- Prism fakes used to avoid external calls
-
-Run tests:
-
-```bash
-./vendor/bin/pest
-```
 
 ## License
 

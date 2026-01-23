@@ -11,6 +11,5 @@ class NodeExecutionStarted
         public readonly string $nodeName,
         public readonly StateContract $inputState,
         public readonly \DateTimeImmutable $startedAt
-    ) {
-    }
+    ) {}
 }

@@ -2,14 +2,18 @@
 
 namespace Shahzad\AgenticGraph\Routers;
 
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
 use Prism\Prism\Facades\Prism;
 use Shahzad\AgenticGraph\Contracts\RouterInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Events\TokensUsed;
 
 class PrismRouter extends AbstractRouter implements RouterInterface
 {
-    protected ?string $model = 'anthropic:claude-sonnet-4';
+    protected ?string $model = null;
+
+    protected bool $trackTokens = true;
 
     public function __construct(array $routes, ?string $defaultRoute = null)
     {
@@ -17,13 +21,10 @@ class PrismRouter extends AbstractRouter implements RouterInterface
         $this->defaultRoute = $defaultRoute;
     }
 
-    /**
-     * @return string|array
-     */
     public function route(StateContract $state): string|array
     {
         $prompt = $this->buildPrompt($state);
-        $cacheKey = 'agenticgraph:prism:router:' . md5($prompt);
+        $cacheKey = 'agenticgraph:prism:router:'.md5($prompt);
 
         // Check cache first
         if (config('agenticgraph.prism.cache_enabled') && \Illuminate\Support\Facades\Cache::has($cacheKey)) {
@@ -31,6 +32,7 @@ class PrismRouter extends AbstractRouter implements RouterInterface
         }
 
         try {
+            $startTime = microtime(true);
             [$provider, $model] = $this->parseModel($this->model ?? (string) config('agenticgraph.prism.model'));
 
             $response = Prism::text()
@@ -39,33 +41,51 @@ class PrismRouter extends AbstractRouter implements RouterInterface
                 ->withMaxTokens(100) // Limit response size
                 ->asText();
 
+            // Dispatch token tracking event
+            if ($this->trackTokens && isset($response->usage)) {
+                $durationMs = (microtime(true) - $startTime) * 1000;
+                Event::dispatch(new TokensUsed(
+                    node: 'PrismRouter',
+                    promptTokens: $response->usage->promptTokens ?? 0,
+                    completionTokens: $response->usage->completionTokens ?? 0,
+                    totalTokens: ($response->usage->promptTokens ?? 0) + ($response->usage->completionTokens ?? 0),
+                    callType: 'router',
+                    model: "{$provider}:{$model}",
+                    durationMs: $durationMs
+                ));
+            }
+
+
             // Validate response format
             $decoded = json_decode($response->text, true);
-            if (!is_array($decoded)) {
+            if (! is_array($decoded)) {
                 Log::warning('PrismRouter received non-JSON response', [
                     'response' => $response->text,
                     'prompt' => $prompt,
                 ]);
+
                 return $this->defaultRoute ?? '';
             }
 
-            if (!isset($decoded['route'])) {
+            if (! isset($decoded['route'])) {
                 Log::warning('PrismRouter response missing route key', [
                     'response' => $decoded,
                     'expected_routes' => $this->getAvailableRoutes(),
                 ]);
+
                 return $this->defaultRoute ?? '';
             }
 
             $route = $decoded['route'];
 
             // Validate route exists
-            if (!$this->validateRoute($route)) {
+            if (! $this->validateRoute($route)) {
                 Log::warning('PrismRouter returned invalid route', [
                     'route' => $route,
                     'available_routes' => $this->getAvailableRoutes(),
                     'defaulting_to' => $this->defaultRoute,
                 ]);
+
                 return $this->defaultRoute ?? '';
             }
 
@@ -84,9 +104,9 @@ class PrismRouter extends AbstractRouter implements RouterInterface
                 'available_routes' => $this->getAvailableRoutes(),
             ]);
 
-            if (!$this->defaultRoute) {
+            if (! $this->defaultRoute) {
                 throw new \RuntimeException(
-                    "PrismRouter failed and no default route configured: " . $e->getMessage(),
+                    'PrismRouter failed and no default route configured: '.$e->getMessage(),
                     0,
                     $e
                 );
@@ -98,8 +118,9 @@ class PrismRouter extends AbstractRouter implements RouterInterface
 
     protected function buildPrompt(StateContract $state): string
     {
-        $routes = collect($this->routes)->map(fn($d, $r) => "- ${r}: ${d}")->join("\n");
-        return "Available routes:\n${routes}\n\nCurrent state:\n" . json_encode($state->toArray());
+        $routes = collect($this->routes)->map(fn ($d, $r) => "- ${r}: ${d}")->join("\n");
+
+        return "Available routes:\n${routes}\n\nCurrent state:\n".json_encode($state->toArray());
     }
 
     protected function parseModel(string $value): array
@@ -108,6 +129,7 @@ class PrismRouter extends AbstractRouter implements RouterInterface
         if (count($parts) === 2) {
             return [$parts[0], $parts[1]];
         }
+
         return ['openai', $value];
     }
 }

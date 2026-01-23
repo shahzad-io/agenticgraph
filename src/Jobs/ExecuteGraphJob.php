@@ -13,9 +13,9 @@ use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
 
-class ExecuteGraphJob implements ShouldQueue, ShouldBeUnique
+class ExecuteGraphJob implements ShouldBeUnique, ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels, Batchable;
+    use Batchable, Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     public function __construct(
         public readonly string $graphName,
@@ -35,7 +35,7 @@ class ExecuteGraphJob implements ShouldQueue, ShouldBeUnique
     public function handle(GraphExecutor $executor): void
     {
         $graph = GraphRegistry::get($this->graphName);
-        if (!$graph) {
+        if (! $graph) {
             return;
         }
         $executor->execute($graph, $this->state, useBatch: true, executionId: $this->executionId);

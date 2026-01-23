@@ -12,6 +12,7 @@ class ValidationMiddleware
         $state->validate();
         $result = $next($state);
         $result->validate();
+
         return $result;
     }
 }

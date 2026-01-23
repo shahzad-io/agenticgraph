@@ -2,14 +2,15 @@
 
 use Prism\Prism\Facades\Prism;
 use Prism\Prism\Testing\TextResponseFake;
-use Prism\Prism\ValueObjects\Usage;
 use Prism\Prism\ValueObjects\Meta;
+use Prism\Prism\ValueObjects\Usage;
 use Shahzad\AgenticGraph\Routers\PrismRouter;
 use Shahzad\AgenticGraph\State\State;
 
 it('routes via Prism structured output', function () {
-    if (!class_exists(Prism::class)) {
+    if (! class_exists(Prism::class)) {
         expect(true)->toBeTrue();
+
         return;
     }
     $fake = TextResponseFake::make()

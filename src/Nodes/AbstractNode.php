@@ -54,15 +54,9 @@ abstract class AbstractNode implements NodeInterface
         return [];
     }
 
-    public function onBefore(StateContract $state): void
-    {
-    }
+    public function onBefore(StateContract $state): void {}
 
-    public function onAfter(StateContract $state, StateContract $result): void
-    {
-    }
+    public function onAfter(StateContract $state, StateContract $result): void {}
 
-    public function onError(\Throwable $exception, StateContract $state): void
-    {
-    }
+    public function onError(\Throwable $exception, StateContract $state): void {}
 }

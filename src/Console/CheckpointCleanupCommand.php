@@ -7,6 +7,7 @@ use Illuminate\Console\Command;
 class CheckpointCleanupCommand extends Command
 {
     protected $signature = 'agenticgraph:checkpoint:cleanup {--days=30}';
+
     protected $description = 'Cleanup old checkpoints';
 
     public function handle(): int
@@ -19,6 +20,7 @@ class CheckpointCleanupCommand extends Command
         };
         $count = $storage->cleanup($days);
         $this->line((string) $count);
+
         return self::SUCCESS;
     }
 }

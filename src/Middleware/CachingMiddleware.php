@@ -15,15 +15,15 @@ class CachingMiddleware
         $nodeFile = $reflection->getFileName();
         $nodeVersion = $nodeFile ? filemtime($nodeFile) : 0;
 
-        $key = 'agenticgraph:node:' .
-               $node->getName() . ':' .
-               $nodeVersion . ':' .
+        $key = 'agenticgraph:node:'.
+               $node->getName().':'.
+               $nodeVersion.':'.
                md5(json_encode($state->toArray()));
 
         $ttl = config('agenticgraph.middleware.cache_ttl', 3600);
 
         // Check if node should be cached (could be a property on node)
-        if (method_exists($node, 'isCacheable') && !$node->isCacheable()) {
+        if (method_exists($node, 'isCacheable') && ! $node->isCacheable()) {
             return $next($state);
         }
 

@@ -1,10 +1,10 @@
 <?php
 
 use Shahzad\AgenticGraph\Prompts\ChatPromptTemplate;
+use Shahzad\AgenticGraph\Prompts\Exceptions\TemplateException;
+use Shahzad\AgenticGraph\Prompts\Messages\AssistantMessage;
 use Shahzad\AgenticGraph\Prompts\Messages\SystemMessage;
 use Shahzad\AgenticGraph\Prompts\Messages\UserMessage;
-use Shahzad\AgenticGraph\Prompts\Messages\AssistantMessage;
-use Shahzad\AgenticGraph\Prompts\Exceptions\TemplateException;
 
 test('can create empty chat template', function () {
     $template = ChatPromptTemplate::create();

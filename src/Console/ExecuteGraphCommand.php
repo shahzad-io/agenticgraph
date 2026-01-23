@@ -10,14 +10,16 @@ use Shahzad\AgenticGraph\State\State;
 class ExecuteGraphCommand extends Command
 {
     protected $signature = 'agenticgraph:execute {name} {--state=}';
+
     protected $description = 'Execute an AgenticGraph graph synchronously with an optional JSON state';
 
     public function handle(): int
     {
         $name = $this->argument('name');
         $graph = GraphRegistry::get($name);
-        if (!$graph) {
+        if (! $graph) {
             $this->error("Graph not found: {$name}");
+
             return self::FAILURE;
         }
         $stateJson = $this->option('state') ?: '{}';
@@ -25,6 +27,7 @@ class ExecuteGraphCommand extends Command
         $executor = app(GraphExecutor::class);
         $result = $executor->execute($graph, new State($data));
         $this->line(json_encode($result->toArray(), JSON_PRETTY_PRINT));
+
         return self::SUCCESS;
     }
 }

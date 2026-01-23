@@ -5,6 +5,7 @@ namespace Shahzad\AgenticGraph\Prompts\Messages;
 abstract class Message
 {
     protected string $content;
+
     protected array $metadata;
 
     public function __construct(string $content, array $metadata = [])
@@ -15,15 +16,11 @@ abstract class Message
 
     /**
      * Get the role of this message
-     *
-     * @return string
      */
     abstract public function getRole(): string;
 
     /**
      * Get the message content
-     *
-     * @return string
      */
     public function getContent(): string
     {
@@ -42,14 +39,11 @@ abstract class Message
 
     /**
      * Set message metadata
-     *
-     * @param string $key
-     * @param mixed $value
-     * @return self
      */
     public function withMetadata(string $key, mixed $value): self
     {
         $this->metadata[$key] = $value;
+
         return $this;
     }
 
@@ -69,11 +63,9 @@ abstract class Message
 
     /**
      * Convert message to string
-     *
-     * @return string
      */
     public function __toString(): string
     {
-        return strtoupper($this->getRole()) . ': ' . $this->content;
+        return strtoupper($this->getRole()).': '.$this->content;
     }
 }

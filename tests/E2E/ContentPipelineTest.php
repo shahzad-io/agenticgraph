@@ -2,8 +2,8 @@
 
 use Prism\Prism\Facades\Prism;
 use Prism\Prism\Testing\TextResponseFake;
-use Prism\Prism\ValueObjects\Usage;
 use Prism\Prism\ValueObjects\Meta;
+use Prism\Prism\ValueObjects\Usage;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
@@ -24,6 +24,7 @@ class CPGenerateNode extends PrismNode
     public function execute(StateContract $state): StateContract
     {
         $text = $this->prompt('Generate content about {topic}', ['topic' => $state->get('topic')]);
+
         return $state->set('content', $text)->set('word_count', strlen($text));
     }
 }
@@ -37,8 +38,9 @@ class CPEndNode extends AbstractNode
 }
 
 it('generates content end-to-end', function () {
-    if (!class_exists(Prism::class)) {
+    if (! class_exists(Prism::class)) {
         expect(true)->toBeTrue();
+
         return;
     }
     $fakeResponse = TextResponseFake::make()->withText('Laravel Testing Content')->withUsage(new Usage(10, 20))->withMeta(new Meta('fake-1', 'fake-model'));
@@ -53,7 +55,7 @@ it('generates content end-to-end', function () {
         ->addExitPoint('end')
         ->build();
     $state = new State(['topic' => 'Laravel Testing']);
-    $result = (new GraphExecutor())->execute($graph, $state);
+    $result = (new GraphExecutor)->execute($graph, $state);
     expect($result->get('content'))->toContain('Laravel')
         ->and($result->get('word_count'))->toBeGreaterThan(10);
 });

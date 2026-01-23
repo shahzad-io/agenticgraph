@@ -12,7 +12,7 @@ class AgenticGraph
 {
     public function registry(): GraphRegistry
     {
-        return new GraphRegistry();
+        return new GraphRegistry;
     }
 
     public function executor(): GraphExecutor

@@ -1,9 +1,9 @@
 <?php
 
+use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
-use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\State\State;
 
 class FlakyNode extends AbstractNode
@@ -16,6 +16,7 @@ class FlakyNode extends AbstractNode
         if (self::$attempt < 3) {
             throw new RuntimeException('Temporary failure');
         }
+
         return $state->set('attempt', self::$attempt);
     }
 }
@@ -36,6 +37,6 @@ it('retries flaky node until success', function () {
         ->setEntryPoint('flaky')
         ->addExitPoint('end')
         ->build();
-    $result = (new GraphExecutor())->execute($graph, new State());
+    $result = (new GraphExecutor)->execute($graph, new State);
     expect($result->get('attempt'))->toBe(3);
 });

@@ -13,6 +13,5 @@ class GraphExecutionCompleted
         public readonly \DateTimeImmutable $completedAt,
         public readonly float $duration,
         public readonly array $statistics
-    ) {
-    }
+    ) {}
 }

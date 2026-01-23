@@ -13,6 +13,5 @@ class NodeExecutionCompleted
         public readonly StateContract $outputState,
         public readonly float $duration,
         public readonly array $metadata
-    ) {
-    }
+    ) {}
 }

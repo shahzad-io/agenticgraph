@@ -7,6 +7,7 @@ use Illuminate\Console\Command;
 class CheckpointDeleteCommand extends Command
 {
     protected $signature = 'agenticgraph:checkpoint:delete {id}';
+
     protected $description = 'Delete a checkpoint by ID';
 
     public function handle(): int
@@ -19,6 +20,7 @@ class CheckpointDeleteCommand extends Command
         };
         $ok = $storage->delete($id);
         $this->line($ok ? 'Deleted' : 'Not found');
+
         return $ok ? self::SUCCESS : self::FAILURE;
     }
 }

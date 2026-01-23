@@ -18,6 +18,7 @@ class StateManager
                 $modified[$k] = ['from' => $v, 'to' => $b[$k]];
             }
         }
+
         return ['added' => $added, 'modified' => $modified, 'removed' => $removed];
     }
 
@@ -28,7 +29,7 @@ class StateManager
             ->where('execution_id', $executionId)
             ->orderBy('created_at')
             ->get()
-            ->map(fn($row) => [
+            ->map(fn ($row) => [
                 'id' => $row->id,
                 'node' => $row->current_node,
                 'created_at' => $row->created_at,
@@ -48,7 +49,7 @@ class StateManager
 
         $checkpoint = $storage->load($checkpointId);
 
-        if (!$checkpoint) {
+        if (! $checkpoint) {
             throw new \RuntimeException("Checkpoint not found: {$checkpointId}");
         }
 
@@ -69,6 +70,7 @@ class StateManager
     public static function decrypt(string $payload): StateContract
     {
         $data = json_decode(base64_decode($payload), true) ?: [];
+
         return new State($data);
     }
 
@@ -81,15 +83,17 @@ class StateManager
     {
         $json = gzuncompress($payload);
         $data = $json ? json_decode($json, true) : [];
+
         return new State($data);
     }
 
     public static function mergeAll(array $states): StateContract
     {
-        $result = new State();
+        $result = new State;
         foreach ($states as $state) {
             $result = $result->merge($state);
         }
+
         return $result;
     }
 }

@@ -4,6 +4,4 @@ namespace Shahzad\AgenticGraph\Graph;
 
 use RuntimeException;
 
-class InvalidGraphException extends RuntimeException
-{
-}
+class InvalidGraphException extends RuntimeException {}

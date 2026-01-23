@@ -34,8 +34,8 @@ it('continues execution from a node', function () {
         ->addExitPoint('end')
         ->build();
     GraphRegistry::register('ce-graph', $graph);
-    $job = new ContinueExecutionJob('ce-graph', 'exec-2', new State(), 'a');
-    $job->handle(new GraphExecutor());
-    $list = (new DatabaseStorage())->list('ce-graph');
+    $job = new ContinueExecutionJob('ce-graph', 'exec-2', new State, 'a');
+    $job->handle(new GraphExecutor);
+    $list = (new DatabaseStorage)->list('ce-graph');
     expect($list)->not()->toBeEmpty();
 });
