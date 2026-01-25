@@ -14,7 +14,7 @@ yarn-error.log
 .phpunit.result.cache
 /build
 
-#custom
+custom
 
 # IDE Helper
 _ide_helper.php
