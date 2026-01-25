@@ -2,6 +2,7 @@
 
 namespace Shahzad\AgenticGraph\Tracing;
 
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -28,6 +29,65 @@ class PulseExporter
         $this->endpoint = config('agenticgraph.tracing.endpoint');
         $this->apiKey = config('agenticgraph.tracing.api_key');
         $this->enabled = config('agenticgraph.tracing.enabled', false) && ! empty($this->apiKey);
+    }
+
+    private function bufferStore(): \Illuminate\Contracts\Cache\Repository
+    {
+        $store = config('agenticgraph.tracing.buffer.store');
+
+        return $store ? Cache::store($store) : Cache::store();
+    }
+
+    private function bufferTtlSeconds(): int
+    {
+        return (int) config('agenticgraph.tracing.buffer.ttl_seconds', 3600);
+    }
+
+    private function bufferKey(string $traceId, string $type): string
+    {
+        return "agenticpulse:trace:{$traceId}:{$type}";
+    }
+
+    private function appendBuffered(string $traceId, string $type, array $item): void
+    {
+        $store = $this->bufferStore();
+        $key = $this->bufferKey($traceId, $type);
+        $ttl = $this->bufferTtlSeconds();
+        $items = $store->get($key, []);
+        if (! is_array($items)) {
+            $items = [];
+        }
+        $items[] = $item;
+        $store->put($key, $items, $ttl);
+    }
+
+    private function getBufferedItems(string $traceId, string $type): array
+    {
+        $store = $this->bufferStore();
+        $items = $store->get($this->bufferKey($traceId, $type), []);
+
+        return is_array($items) ? $items : [];
+    }
+
+    private function clearBufferedItems(string $traceId, string $type): void
+    {
+        $store = $this->bufferStore();
+        $store->forget($this->bufferKey($traceId, $type));
+    }
+
+    private function mergeById(array $items): array
+    {
+        $byId = [];
+        $others = [];
+        foreach ($items as $item) {
+            if (is_array($item) && array_key_exists('id', $item) && $item['id'] !== null) {
+                $byId[(string) $item['id']] = $item;
+            } else {
+                $others[] = $item;
+            }
+        }
+
+        return array_values(array_merge($byId, $others));
     }
 
     /**
@@ -66,6 +126,10 @@ class PulseExporter
         }
 
         $this->spans[] = $span;
+        $traceId = $span['trace_id'] ?? null;
+        if ($traceId) {
+            $this->appendBuffered($traceId, 'spans', $span);
+        }
     }
 
     /**
@@ -78,6 +142,10 @@ class PulseExporter
         }
 
         $this->llmCalls[] = $call;
+        $traceId = $call['trace_id'] ?? null;
+        if ($traceId) {
+            $this->appendBuffered($traceId, 'llm_calls', $call);
+        }
     }
 
     /**
@@ -128,10 +196,15 @@ class PulseExporter
             return;
         }
 
+        $localSpans = array_filter($this->spans, fn ($s) => ($s['trace_id'] ?? '') === $traceId);
+        $localCalls = array_filter($this->llmCalls, fn ($c) => ($c['trace_id'] ?? '') === $traceId);
+        $bufferedSpans = $this->getBufferedItems($traceId, 'spans');
+        $bufferedCalls = $this->getBufferedItems($traceId, 'llm_calls');
+
         $payload = [
             'trace' => $this->traces[$traceId],
-            'spans' => array_filter($this->spans, fn ($s) => ($s['trace_id'] ?? '') === $traceId),
-            'llm_calls' => array_filter($this->llmCalls, fn ($c) => ($c['trace_id'] ?? '') === $traceId),
+            'spans' => $this->mergeById(array_merge($localSpans, $bufferedSpans)),
+            'llm_calls' => $this->mergeById(array_merge($localCalls, $bufferedCalls)),
         ];
 
         // Dispatch async to avoid blocking the response
@@ -155,6 +228,8 @@ class PulseExporter
             }
         })->afterResponse();
 
+        $this->clearBufferedItems($traceId, 'spans');
+        $this->clearBufferedItems($traceId, 'llm_calls');
         $this->reset();
     }
 

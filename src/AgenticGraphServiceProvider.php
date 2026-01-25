@@ -49,4 +49,3 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
         }
     }
 }
-

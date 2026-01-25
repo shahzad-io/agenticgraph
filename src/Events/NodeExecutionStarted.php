@@ -16,4 +16,3 @@ class NodeExecutionStarted
         public readonly ?string $parentSpanId = null,
     ) {}
 }
-

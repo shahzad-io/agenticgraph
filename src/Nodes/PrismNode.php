@@ -53,7 +53,7 @@ abstract class PrismNode extends AbstractNode
         $startTime = microtime(true);
         $config = $this->model ?? (string) config('agenticgraph.prism.model');
         [$provider, $model] = $this->parseModel($config);
-        
+
         $response = Prism::structured()
             ->using($provider, $model)
             ->withSchema($schema)
@@ -85,7 +85,7 @@ abstract class PrismNode extends AbstractNode
         $startTime = microtime(true);
         $config = $this->model ?? (string) config('agenticgraph.prism.model');
         [$provider, $model] = $this->parseModel($config);
-        
+
         $response = $this->prism()
             ->withTools($tools)
             ->withPrompt($prompt)

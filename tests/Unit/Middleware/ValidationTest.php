@@ -40,7 +40,7 @@ class ValidatedState implements StateContract
             throw new \Shahzad\AgenticGraph\State\StateValidationException($v->errors()->toJson());
         }
 
-return true;
+        return true;
     }
 
     public function get(string $key, mixed $default = null): mixed

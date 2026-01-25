@@ -17,4 +17,3 @@ class NodeExecutionCompleted
         public readonly ?string $spanId = null,
     ) {}
 }
-

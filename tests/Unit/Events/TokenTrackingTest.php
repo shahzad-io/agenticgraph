@@ -37,18 +37,18 @@ class ToolsTestNode extends PrismNode
 it('emits TokensUsed event from structured() with callType', function () {
     Event::fake();
     config()->set('agenticgraph.prism.cache_enabled', false);
-    
+
     // Create a fake structured response with usage
     $fake = StructuredResponseFake::make()
         ->withStructured(['result' => 'test analysis'])
         ->withUsage(new Usage(50, 30))
         ->withMeta(new Meta('id', 'model'));
-    
+
     Prism::fake([$fake]);
-    
+
     $node = new StructuredTestNode;
     $result = $node->execute(new State);
-    
+
     Event::assertDispatched(TokensUsed::class, function (TokensUsed $e) {
         return $e->callType === 'structured'
             && $e->promptTokens === 50
@@ -62,18 +62,18 @@ it('emits TokensUsed event from structured() with callType', function () {
 it('emits TokensUsed event from tools() with callType', function () {
     Event::fake();
     config()->set('agenticgraph.prism.cache_enabled', false);
-    
+
     $fake = TextResponseFake::make()
         ->withText('I will use the tool')
         ->withToolCalls([])
         ->withUsage(new Usage(25, 15))
         ->withMeta(new Meta('id', 'model'));
-    
+
     Prism::fake([$fake]);
-    
+
     $node = new ToolsTestNode;
     $result = $node->execute(new State);
-    
+
     Event::assertDispatched(TokensUsed::class, function (TokensUsed $e) {
         return $e->callType === 'tools'
             && $e->promptTokens === 25
@@ -89,7 +89,7 @@ it('TokensUsed event has backward compatible defaults', function () {
         completionTokens: 20,
         totalTokens: 30
     );
-    
+
     // Verify defaults for new optional fields
     expect($event->callType)->toBe('text');
     expect($event->model)->toBeNull();
@@ -106,7 +106,7 @@ it('TokensUsed event accepts all new fields', function () {
         model: 'openai:gpt-4o',
         durationMs: 150.5
     );
-    
+
     expect($event->callType)->toBe('structured');
     expect($event->model)->toBe('openai:gpt-4o');
     expect($event->durationMs)->toBe(150.5);

@@ -55,7 +55,6 @@ class PrismRouter extends AbstractRouter implements RouterInterface
                 ));
             }
 
-
             // Validate response format
             $decoded = json_decode($response->text, true);
             if (! is_array($decoded)) {

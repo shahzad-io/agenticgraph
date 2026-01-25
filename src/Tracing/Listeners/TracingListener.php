@@ -19,6 +19,10 @@ class TracingListener
 {
     protected PulseExporter $exporter;
 
+    protected array $spanStarts = [];
+
+    protected array $spanParents = [];
+
     public function __construct(PulseExporter $exporter)
     {
         $this->exporter = $exporter;
@@ -54,6 +58,8 @@ class TracingListener
             array_keys($event->finalState->toArray()),
             $event->duration * 1000 // Convert to ms
         );
+        $this->spanStarts = [];
+        $this->spanParents = [];
     }
 
     /**
@@ -70,6 +76,8 @@ class TracingListener
             $event->exception,
             $event->durationMs
         );
+        $this->spanStarts = [];
+        $this->spanParents = [];
     }
 
     /**
@@ -77,8 +85,16 @@ class TracingListener
      */
     public function onNodeStarted(NodeExecutionStarted $event): void
     {
-        // Span is already tracked via TraceContext in GraphExecutor
-        // This listener can add additional metadata if needed
+        if (! $this->exporter->isEnabled()) {
+            return;
+        }
+
+        if ($event->spanId === null) {
+            return;
+        }
+
+        $this->spanStarts[$event->spanId] = $event->startedAt;
+        $this->spanParents[$event->spanId] = $event->parentSpanId;
     }
 
     /**
@@ -92,14 +108,18 @@ class TracingListener
 
         $inputKeys = array_keys($event->inputState->toArray());
         $outputKeys = array_keys($event->outputState->toArray());
+        $startedAt = $event->spanId ? ($this->spanStarts[$event->spanId] ?? null) : null;
+        $endedAt = $startedAt ? $startedAt->modify('+'.$event->duration.' seconds') : null;
 
         $this->exporter->addSpan([
             'id' => $event->spanId,
             'trace_id' => $event->executionId,
-            'parent_id' => null, // Could be enhanced with parent tracking
+            'parent_id' => $event->spanId ? ($this->spanParents[$event->spanId] ?? null) : null,
             'node_name' => $event->nodeName,
+            'node_type' => $event->metadata['node_type'] ?? null,
             'status' => 'success',
-            'started_at' => null, // Set from NodeExecutionStarted if needed
+            'started_at' => $startedAt?->format(DATE_ATOM),
+            'ended_at' => $endedAt?->format(DATE_ATOM),
             'duration_ms' => $event->duration * 1000,
             'state_diff' => [
                 'added' => array_diff($outputKeys, $inputKeys),
@@ -117,18 +137,23 @@ class TracingListener
             return;
         }
 
+        $startedAt = $event->spanId ? ($this->spanStarts[$event->spanId] ?? null) : null;
+        $endedAt = $startedAt ? $startedAt->modify('+'.($event->durationMs / 1000).' seconds') : null;
+
         $this->exporter->addSpan([
             'id' => $event->spanId,
             'trace_id' => $event->executionId,
+            'parent_id' => $event->spanId ? ($this->spanParents[$event->spanId] ?? null) : null,
             'node_name' => $event->nodeName,
             'status' => 'failed',
+            'started_at' => $startedAt?->format(DATE_ATOM),
+            'ended_at' => $endedAt?->format(DATE_ATOM) ?? now()->toIso8601String(),
             'duration_ms' => $event->durationMs,
             'error' => [
                 'type' => get_class($event->exception),
                 'message' => $event->exception->getMessage(),
             ],
-            'retry_attempt' => $event->retryAttempt,
-            'will_retry' => $event->willRetry,
+            'retry_count' => $event->retryAttempt,
         ]);
     }
 
@@ -152,6 +177,8 @@ class TracingListener
             'completion_tokens' => $event->completionTokens,
             'total_tokens' => $event->totalTokens,
             'duration_ms' => $event->durationMs,
+            'created_at' => now()->toIso8601String(),
+            'cost_usd' => 0,
         ]);
     }
 
