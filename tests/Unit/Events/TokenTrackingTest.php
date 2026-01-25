@@ -2,10 +2,16 @@
 
 use Illuminate\Support\Facades\Event;
 use Prism\Prism\Facades\Prism;
+use Prism\Prism\Testing\EmbeddingsResponseFake;
+use Prism\Prism\Testing\ImageResponseFake;
 use Prism\Prism\Testing\StructuredResponseFake;
 use Prism\Prism\Testing\TextResponseFake;
+use Prism\Prism\ValueObjects\EmbeddingsUsage;
+use Prism\Prism\ValueObjects\GeneratedImage;
 use Prism\Prism\ValueObjects\Meta;
 use Prism\Prism\ValueObjects\Usage;
+use Prism\Prism\ValueObjects\Media\Audio;
+use Prism\Prism\ValueObjects\Media\Image;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\TokensUsed;
 use Shahzad\AgenticGraph\Nodes\PrismNode;
@@ -31,6 +37,36 @@ class ToolsTestNode extends PrismNode
         $result = $this->tools('Use a tool', $tools);
 
         return $state->set('tool_calls', $result);
+    }
+}
+
+class EmbeddingsTokenNode extends PrismNode
+{
+    public function execute(StateContract $state): StateContract
+    {
+        $this->embeddingsFromInput('Track tokens');
+
+        return $state;
+    }
+}
+
+class ImageTokenNode extends PrismNode
+{
+    public function execute(StateContract $state): StateContract
+    {
+        $this->generateImage('Generate', [Image::fromUrl('https://example.com/image.png')]);
+
+        return $state;
+    }
+}
+
+class AudioTokenNode extends PrismNode
+{
+    public function execute(StateContract $state): StateContract
+    {
+        $this->audioToText(Audio::fromUrl('https://example.com/audio.mp3'));
+
+        return $state;
     }
 }
 
@@ -79,6 +115,64 @@ it('emits TokensUsed event from tools() with callType', function () {
             && $e->promptTokens === 25
             && $e->completionTokens === 15
             && $e->totalTokens === 40;
+    });
+});
+
+it('emits TokensUsed event from embeddings helper', function () {
+    Event::fake();
+    config()->set('agenticgraph.prism.cache_enabled', false);
+
+    $fake = EmbeddingsResponseFake::make()
+        ->withUsage(new EmbeddingsUsage(24));
+    Prism::fake([$fake]);
+
+    $node = new EmbeddingsTokenNode;
+    $node->execute(new State);
+
+    Event::assertDispatched(TokensUsed::class, function (TokensUsed $e) {
+        return $e->callType === 'embeddings'
+            && $e->promptTokens === 24
+            && $e->completionTokens === 0
+            && $e->totalTokens === 24;
+    });
+});
+
+it('emits TokensUsed event from image generation helper', function () {
+    Event::fake();
+    config()->set('agenticgraph.prism.cache_enabled', false);
+
+    $fake = ImageResponseFake::make()
+        ->withImages([new GeneratedImage('https://example.com/fake.png', null)])
+        ->withUsage(new Usage(12, 3))
+        ->withMeta(new Meta('id', 'model'));
+    Prism::fake([$fake]);
+
+    $node = new ImageTokenNode;
+    $node->execute(new State);
+
+    Event::assertDispatched(TokensUsed::class, function (TokensUsed $e) {
+        return $e->callType === 'image'
+            && $e->promptTokens === 12
+            && $e->completionTokens === 3
+            && $e->totalTokens === 15;
+    });
+});
+
+it('emits TokensUsed event from audio transcription helper', function () {
+    Event::fake();
+    config()->set('agenticgraph.prism.cache_enabled', false);
+
+    $fake = new \Prism\Prism\Audio\TextResponse('hi', new Usage(7, 2));
+    Prism::fake([$fake]);
+
+    $node = new AudioTokenNode;
+    $node->execute(new State);
+
+    Event::assertDispatched(TokensUsed::class, function (TokensUsed $e) {
+        return $e->callType === 'audio'
+            && $e->promptTokens === 7
+            && $e->completionTokens === 2
+            && $e->totalTokens === 9;
     });
 });
 

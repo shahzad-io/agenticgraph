@@ -22,6 +22,11 @@ return [
         'model' => env('AGENTICGRAPH_PRISM_MODEL', 'anthropic:claude-sonnet-4'),
         'cache_enabled' => env('AGENTICGRAPH_PRISM_CACHE', true),
         'cache_ttl' => env('AGENTICGRAPH_PRISM_CACHE_TTL', 60),
+        'embeddings' => [
+            'provider' => env('AGENTICGRAPH_PRISM_EMBEDDINGS_PROVIDER'),
+            'model' => env('AGENTICGRAPH_PRISM_EMBEDDINGS_MODEL'),
+            'api_key' => env('AGENTICGRAPH_PRISM_EMBEDDINGS_API_KEY'),
+        ],
     ],
 
     'middleware' => [
