@@ -20,6 +20,8 @@ AgenticGraph is the first open-source Laravel AI orchestration package, bringing
 
 ## Installation
 
+Requirements: PHP 8.2+, Laravel 11 or 12.
+
 ```bash
 composer require shahzad/agenticgraph
 ```
@@ -28,6 +30,7 @@ Publish configuration and run migrations in your host app:
 
 ```bash
 php artisan vendor:publish --tag=prism-config
+php artisan vendor:publish --tag=relay-config
 php artisan vendor:publish --provider="Shahzad\AgenticGraph\AgenticGraphServiceProvider"
 php artisan migrate
 ```

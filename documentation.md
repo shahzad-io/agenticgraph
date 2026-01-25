@@ -62,7 +62,7 @@
 ### Requirements
 
 - PHP 8.2 or higher
-- Laravel 10.x, 11.x, or 12.x
+- Laravel 11.x or 12.x
 - Database (MySQL 8.0+, PostgreSQL 13+, or SQLite 3.35+)
 - Redis 6+ (optional, for caching and locks)
 
@@ -72,9 +72,9 @@
 composer require shahzad/agenticgraph
 ```
 
-### Step 2: No need to Install PrismPHP (for AI features)
+### Step 2: PrismPHP and Relay Included
 
-this already comes inside agenticgraph package
+PrismPHP and Relay are installed automatically as dependencies for AI features and MCP tooling.
 
 ```
 
@@ -86,6 +86,9 @@ php artisan vendor:publish --provider="Shahzad\AgenticGraph\AgenticGraphServiceP
 
 # Publish Prism config (if using AI features)
 php artisan vendor:publish --tag=prism-config
+
+# Publish Relay config (for MCP tools)
+php artisan vendor:publish --tag=relay-config
 ```
 
 ### Step 4: Run Migrations
