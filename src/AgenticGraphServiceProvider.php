@@ -6,8 +6,8 @@ namespace Shahzad\AgenticGraph;
 
 use Illuminate\Support\Facades\Event;
 use Shahzad\AgenticGraph\Adapters\PrismFacadeClient;
-use Shahzad\AgenticGraph\Contracts\PrismClient;
 use Shahzad\AgenticGraph\Commands\AgenticGraphCommand;
+use Shahzad\AgenticGraph\Contracts\PrismClient;
 use Shahzad\AgenticGraph\Tracing\Listeners\TracingListener;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
 use Spatie\LaravelPackageTools\Package;

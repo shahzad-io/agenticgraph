@@ -6,19 +6,21 @@ namespace Shahzad\AgenticGraph\Nodes;
 
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Events\Dispatcher;
-use Prism\Prism\Audio\PendingRequest as PendingAudioRequest;
 use Prism\Prism\Audio\AudioResponse;
+use Prism\Prism\Audio\PendingRequest as PendingAudioRequest;
 use Prism\Prism\Audio\TextResponse as AudioTextResponse;
 use Prism\Prism\Contracts\Message;
 use Prism\Prism\Embeddings\PendingRequest as PendingEmbeddingsRequest;
 use Prism\Prism\Embeddings\Response as EmbeddingsResponse;
+use Prism\Prism\Enums\ToolChoice;
 use Prism\Prism\Images\PendingRequest as PendingImageRequest;
 use Prism\Prism\Images\Response as ImageResponse;
 use Prism\Prism\Text\PendingRequest as PendingTextRequest;
-use Prism\Prism\ValueObjects\EmbeddingsUsage;
 use Prism\Prism\ValueObjects\Media\Audio as AudioMedia;
+use Prism\Relay\Facades\Relay;
 use Shahzad\AgenticGraph\Contracts\PrismClient;
 use Shahzad\AgenticGraph\Events\TokensUsed;
+use Shahzad\AgenticGraph\Mcp\McpRequest;
 use Shahzad\AgenticGraph\Prompts\ChatPromptTemplate;
 use Shahzad\AgenticGraph\Prompts\PromptTemplate;
 
@@ -339,6 +341,36 @@ abstract class PrismNode extends AbstractNode
         }
 
         return $response->toolCalls;
+    }
+
+    protected function withMcp(string $serverName, array $options = []): McpRequest
+    {
+        $config = $this->model ?? (string) config('agenticgraph.prism.model');
+        [$provider, $model] = $this->parseModel($config);
+
+        $tools = $options['tools'] ?? Relay::tools($serverName);
+        if (! is_array($tools)) {
+            $tools = [];
+        }
+
+        $request = $this->prism()->withTools($tools);
+
+        $toolChoice = $options['toolChoice'] ?? ToolChoice::Any;
+        $request->withToolChoice($toolChoice);
+
+        $maxSteps = $options['maxSteps'] ?? null;
+        if (is_int($maxSteps)) {
+            $request->withMaxSteps($maxSteps);
+        }
+
+        return new McpRequest(
+            $request,
+            $provider,
+            $model,
+            $this->getName(),
+            $this->trackTokens,
+            $this->events()
+        );
     }
 
     protected function withModel(string $model): static

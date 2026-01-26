@@ -5,10 +5,11 @@ declare(strict_types=1);
 namespace Shahzad\AgenticGraph\Execution;
 
 use Illuminate\Bus\Batch;
-use Illuminate\Contracts\Bus\Dispatcher as BusDispatcher;
 use Illuminate\Cache\CacheManager;
+use Illuminate\Contracts\Bus\Dispatcher as BusDispatcher;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Support\Facades\Bus;
+use Psr\Log\LoggerInterface;
 use Shahzad\AgenticGraph\Contracts\NodeInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Contracts\StorageInterface;
@@ -26,7 +27,6 @@ use Shahzad\AgenticGraph\Storage\DatabaseStorage;
 use Shahzad\AgenticGraph\Storage\FileStorage;
 use Shahzad\AgenticGraph\Storage\RedisStorage;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
-use Psr\Log\LoggerInterface;
 
 class GraphExecutor
 {
@@ -51,8 +51,7 @@ class GraphExecutor
         ?BusDispatcher $bus = null,
         ?LoggerInterface $logger = null,
         ?ExecutionRepository $repo = null
-    )
-    {
+    ) {
         $this->globalMiddleware = config('agenticgraph.middleware.global', [
             LoggingMiddleware::class,
             TimingMiddleware::class,

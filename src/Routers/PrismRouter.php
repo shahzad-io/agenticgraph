@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph\Routers;
 
-use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
+use Illuminate\Contracts\Events\Dispatcher;
 use Psr\Log\LoggerInterface;
 use Shahzad\AgenticGraph\Contracts\PrismClient;
 use Shahzad\AgenticGraph\Contracts\RouterInterface;
