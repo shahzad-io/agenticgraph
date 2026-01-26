@@ -18,6 +18,10 @@ return [
         'timeout' => env('AGENTICGRAPH_LOCK_TIMEOUT', 10),
     ],
 
+    'logging' => [
+        'enabled' => env('AGENTICGRAPH_LOGGING', true),
+    ],
+
     'prism' => [
         'model' => env('AGENTICGRAPH_PRISM_MODEL', 'anthropic:claude-sonnet-4'),
         'cache_enabled' => env('AGENTICGRAPH_PRISM_CACHE', true),

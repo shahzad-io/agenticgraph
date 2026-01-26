@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Shahzad\AgenticGraph\Middleware;
 
 use Illuminate\Support\Facades\Log;
@@ -10,9 +12,13 @@ class LoggingMiddleware
 {
     public function handle(StateContract $state, NodeInterface $node, \Closure $next): StateContract
     {
-        Log::debug('Executing node', ['node' => $node->getName()]);
+        if ((bool) config('agenticgraph.logging.enabled', true)) {
+            Log::debug('Executing node', ['node' => $node->getName()]);
+        }
         $result = $next($state);
-        Log::debug('Completed node', ['node' => $node->getName()]);
+        if ((bool) config('agenticgraph.logging.enabled', true)) {
+            Log::debug('Completed node', ['node' => $node->getName()]);
+        }
 
         return $result;
     }

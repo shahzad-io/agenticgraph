@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Shahzad\AgenticGraph\Tracing;
 
 use Illuminate\Support\Facades\Cache;
@@ -215,16 +217,20 @@ class PulseExporter
                     ->post("{$this->endpoint}/v1/ingest", $payload);
 
                 if ($response->failed()) {
-                    Log::warning('AgenticPulse ingest failed', [
-                        'status' => $response->status(),
-                        'body' => $response->body(),
-                    ]);
+                    if ((bool) config('agenticgraph.logging.enabled', true)) {
+                        Log::warning('AgenticPulse ingest failed', [
+                            'status' => $response->status(),
+                            'body' => $response->body(),
+                        ]);
+                    }
                 }
             } catch (\Throwable $e) {
                 // Silent fail - don't break the user's application
-                Log::debug('AgenticPulse ingest error', [
-                    'error' => $e->getMessage(),
-                ]);
+                if ((bool) config('agenticgraph.logging.enabled', true)) {
+                    Log::debug('AgenticPulse ingest error', [
+                        'error' => $e->getMessage(),
+                    ]);
+                }
             }
         })->afterResponse();
 
@@ -245,6 +251,12 @@ class PulseExporter
 
     /**
      * Get the current buffer (for testing).
+     *
+     * @return array{
+     *     traces: array<string, mixed>,
+     *     spans: array<int, array>,
+     *     llm_calls: array<int, array>
+     * }
      */
     public function getBuffer(): array
     {

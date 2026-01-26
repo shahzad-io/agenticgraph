@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Shahzad\AgenticGraph\Storage;
 
 use Illuminate\Support\Facades\Redis;
@@ -56,6 +58,9 @@ class RedisStorage implements StorageInterface
         return $c;
     }
 
+    /**
+     * @return array<int, string>
+     */
     public function list(string $graphName, int $limit = 50): array
     {
         return []; // Redis listing not implemented for brevity

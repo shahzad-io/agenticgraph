@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Shahzad\AgenticGraph\Middleware;
 
 use Illuminate\Support\Facades\Cache;
@@ -52,10 +54,12 @@ class CircuitBreakerMiddleware
             // Open circuit if threshold exceeded
             if ($failures >= $this->failureThreshold) {
                 Cache::put($key.':opened_at', time(), $this->retryAfter);
-                Log::error("Circuit breaker OPENED for node {$node->getName()}", [
-                    'failures' => $failures,
-                    'threshold' => $this->failureThreshold,
-                ]);
+                if ((bool) config('agenticgraph.logging.enabled', true)) {
+                    Log::error("Circuit breaker OPENED for node {$node->getName()}", [
+                        'failures' => $failures,
+                        'threshold' => $this->failureThreshold,
+                    ]);
+                }
             }
 
             throw $e;

@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Shahzad\AgenticGraph\Contracts;
 
 use Shahzad\AgenticGraph\Execution\Checkpoint;
@@ -10,6 +12,9 @@ interface StorageInterface
 
     public function load(string $id): ?Checkpoint;
 
+    /**
+     * @return array<int, mixed>
+     */
     public function list(string $graphName, int $limit = 50): array;
 
     public function delete(string $id): bool;

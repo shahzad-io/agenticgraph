@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Shahzad\AgenticGraph\Jobs;
 
 use Illuminate\Bus\Batchable;
@@ -87,11 +89,13 @@ class ExecuteNodeJob implements ShouldQueue
                 false
             ));
             $node->onError($e, $this->state);
-            Log::error('ExecuteNodeJob failed', [
-                'execution_id' => $this->executionId,
-                'node' => $this->nodeName,
-                'error' => $e->getMessage(),
-            ]);
+            if ((bool) config('agenticgraph.logging.enabled', true)) {
+                Log::error('ExecuteNodeJob failed', [
+                    'execution_id' => $this->executionId,
+                    'node' => $this->nodeName,
+                    'error' => $e->getMessage(),
+                ]);
+            }
             throw $e;
         } finally {
             TraceContext::endSpan();

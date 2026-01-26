@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Shahzad\AgenticGraph\Graph;
 
 use Shahzad\AgenticGraph\Contracts\EdgeInterface;
@@ -40,6 +42,9 @@ class Graph
         return $this->nodes[$name];
     }
 
+    /**
+     * @return array<int, EdgeInterface>
+     */
     public function getEdgesFrom(string $nodeName): array
     {
         return array_values(array_filter($this->edges, fn (EdgeInterface $e) => $e->getSource() === $nodeName));
@@ -105,7 +110,9 @@ class Graph
         foreach ($this->nodes as $nodeName => $node) {
             $outgoing = $this->getEdgesFrom($nodeName);
             if (empty($outgoing) && ! in_array($nodeName, $this->exitPoints, true)) {
-                \Illuminate\Support\Facades\Log::warning("Node '{$nodeName}' has no outgoing edges and is not an exit point");
+                if ((bool) config('agenticgraph.logging.enabled', true)) {
+                    \Illuminate\Support\Facades\Log::warning("Node '{$nodeName}' has no outgoing edges and is not an exit point");
+                }
             }
         }
 
@@ -171,6 +178,18 @@ class Graph
         return $reachable;
     }
 
+    /**
+     * @return array{
+     *     name: string,
+     *     description: string,
+     *     entry: string,
+     *     exits: array<int, string>,
+     *     nodes: array<int, string>,
+     *     edges: array<int, array{source: string, target: string|array, metadata: array}>,
+     *     metadata: array<string, mixed>,
+     *     joins: array<string, string>
+     * }
+     */
     public function toArray(): array
     {
         return [

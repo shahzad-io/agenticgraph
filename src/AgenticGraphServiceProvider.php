@@ -1,8 +1,12 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Shahzad\AgenticGraph;
 
 use Illuminate\Support\Facades\Event;
+use Shahzad\AgenticGraph\Adapters\PrismFacadeClient;
+use Shahzad\AgenticGraph\Contracts\PrismClient;
 use Shahzad\AgenticGraph\Commands\AgenticGraphCommand;
 use Shahzad\AgenticGraph\Tracing\Listeners\TracingListener;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
@@ -38,6 +42,8 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
 
     public function packageBooted(): void
     {
+        $this->app->bind(PrismClient::class, PrismFacadeClient::class);
+
         // Register PulseExporter as singleton
         $this->app->singleton(PulseExporter::class, function ($app) {
             return new PulseExporter;

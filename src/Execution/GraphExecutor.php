@@ -1,13 +1,17 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Shahzad\AgenticGraph\Execution;
 
 use Illuminate\Bus\Batch;
+use Illuminate\Contracts\Bus\Dispatcher as BusDispatcher;
+use Illuminate\Cache\CacheManager;
+use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Support\Facades\Bus;
-use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Event;
 use Shahzad\AgenticGraph\Contracts\NodeInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Contracts\StorageInterface;
 use Shahzad\AgenticGraph\Events\GraphExecutionCompleted;
 use Shahzad\AgenticGraph\Events\GraphExecutionFailed;
 use Shahzad\AgenticGraph\Events\GraphExecutionStarted;
@@ -18,7 +22,11 @@ use Shahzad\AgenticGraph\Graph\Graph;
 use Shahzad\AgenticGraph\Middleware\LoggingMiddleware;
 use Shahzad\AgenticGraph\Middleware\TimingMiddleware;
 use Shahzad\AgenticGraph\Middleware\ValidationMiddleware;
+use Shahzad\AgenticGraph\Storage\DatabaseStorage;
+use Shahzad\AgenticGraph\Storage\FileStorage;
+use Shahzad\AgenticGraph\Storage\RedisStorage;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
+use Psr\Log\LoggerInterface;
 
 class GraphExecutor
 {
@@ -27,19 +35,40 @@ class GraphExecutor
      */
     protected array $globalMiddleware;
 
-    public function __construct()
+    private Dispatcher $events;
+
+    private CacheManager $cache;
+
+    private BusDispatcher $bus;
+
+    private LoggerInterface $logger;
+
+    private ExecutionRepository $repo;
+
+    public function __construct(
+        ?Dispatcher $events = null,
+        ?CacheManager $cache = null,
+        ?BusDispatcher $bus = null,
+        ?LoggerInterface $logger = null,
+        ?ExecutionRepository $repo = null
+    )
     {
         $this->globalMiddleware = config('agenticgraph.middleware.global', [
             LoggingMiddleware::class,
             TimingMiddleware::class,
             ValidationMiddleware::class,
         ]);
+        $this->events = $events ?? app(Dispatcher::class);
+        $this->cache = $cache ?? app(CacheManager::class);
+        $this->bus = $bus ?? (Bus::getFacadeRoot() ?? app(BusDispatcher::class));
+        $this->logger = $logger ?? app(LoggerInterface::class);
+        $this->repo = $repo ?? app(ExecutionRepository::class);
     }
 
     public function execute(Graph $graph, StateContract $state, bool $useBatch = false, ?string $executionId = null): StateContract
     {
         $executionId = $executionId ?? uniqid('exec_', true);
-        $repo = new ExecutionRepository;
+        $repo = $this->repo;
 
         // Start tracing context
         TraceContext::startTrace($executionId);
@@ -49,14 +78,14 @@ class GraphExecutor
             $repo->queued($executionId, $graph->name, $state->toArray());
         }
         $repo->started($executionId, $graph->name, $state->toArray());
-        Event::dispatch(new GraphExecutionStarted($executionId, $graph->name, $state, new \DateTimeImmutable));
+        $this->events->dispatch(new GraphExecutionStarted($executionId, $graph->name, $state, new \DateTimeImmutable));
         $current = $graph->entryPoint;
         $start = microtime(true);
 
         try {
             while (true) {
                 $lockTimeout = (int) config('agenticgraph.lock.timeout', 10);
-                $lock = Cache::lock('agenticgraph:execution:'.$executionId, $lockTimeout);
+                $lock = $this->cache->lock('agenticgraph:execution:'.$executionId, $lockTimeout);
                 try {
                     if (! $lock->block(5)) {
                         throw new \RuntimeException(
@@ -65,25 +94,18 @@ class GraphExecutor
                         );
                     }
 
-                    // Start span for this node
-                    $spanId = TraceContext::startSpan($current);
-                    $parentSpanId = TraceContext::getParentSpanId();
-
-                    $node = $graph->getNode($current);
-                    $nodeStartTime = microtime(true);
-                    $inputState = $state;
-
-                    Event::dispatch(new NodeExecutionStarted(
-                        $executionId, $current, $state, new \DateTimeImmutable,
-                        $spanId, $parentSpanId
-                    ));
-
-                    $state = $this->runNodeWithMiddleware($state, $node, $executionId, $current, $spanId);
-                    $nodeDuration = microtime(true) - $nodeStartTime;
+                    $nodeResult = $this->executeNode($graph, $executionId, $current, $state);
+                    $state = $nodeResult['state'];
+                    $spanId = $nodeResult['spanId'];
                     $this->checkpoint($graph, $executionId, $current, $state);
 
-                    Event::dispatch(new NodeExecutionCompleted(
-                        $executionId, $current, $inputState, $state, $nodeDuration, ['node_type' => $node::class],
+                    $this->events->dispatch(new NodeExecutionCompleted(
+                        $executionId,
+                        $current,
+                        $nodeResult['inputState'],
+                        $state,
+                        $nodeResult['duration'],
+                        ['node_type' => $nodeResult['node']::class],
                         $spanId
                     ));
 
@@ -98,17 +120,21 @@ class GraphExecutor
                         break;
                     }
                     if (is_array($next)) {
-                        \Log::debug('Parallel execution detected', [
-                            'execution_id' => $executionId,
-                            'current_node' => $current,
-                            'next_nodes' => $next,
-                            'use_batch' => $useBatch,
-                        ]);
-                        if ($useBatch) {
-                            \Log::debug('Dispatching parallel batch jobs', [
+                        if ((bool) config('agenticgraph.logging.enabled', true)) {
+                            $this->logger->debug('Parallel execution detected', [
                                 'execution_id' => $executionId,
-                                'workers' => $next,
+                                'current_node' => $current,
+                                'next_nodes' => $next,
+                                'use_batch' => $useBatch,
                             ]);
+                        }
+                        if ($useBatch) {
+                            if ((bool) config('agenticgraph.logging.enabled', true)) {
+                                $this->logger->debug('Dispatching parallel batch jobs', [
+                                    'execution_id' => $executionId,
+                                    'workers' => $next,
+                                ]);
+                            }
                             $this->executeParallelViaBatch($graph, $state, $executionId, $current, $next, $spanId);
 
                             TraceContext::endTrace();
@@ -123,7 +149,7 @@ class GraphExecutor
                         $current = $next;
                     }
                 } catch (\Illuminate\Contracts\Cache\LockTimeoutException $e) {
-                    (new ExecutionRepository)->failed($executionId, 'Lock timeout: '.$e->getMessage());
+                    $this->repo->failed($executionId, 'Lock timeout: '.$e->getMessage());
                     throw new \RuntimeException('Execution locked by another process', 0, $e);
                 } finally {
                     optional($lock)->release();
@@ -131,13 +157,13 @@ class GraphExecutor
             }
 
             $duration = microtime(true) - $start;
-            (new ExecutionRepository)->completed($executionId, $state->toArray(), $duration);
-            Event::dispatch(new GraphExecutionCompleted($executionId, $graph->name, $state, new \DateTimeImmutable, $duration, []));
+            $this->repo->completed($executionId, $state->toArray(), $duration);
+            $this->events->dispatch(new GraphExecutionCompleted($executionId, $graph->name, $state, new \DateTimeImmutable, $duration, []));
 
             return $state;
         } catch (\Throwable $e) {
             $duration = microtime(true) - $start;
-            Event::dispatch(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000));
+            $this->events->dispatch(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000));
             throw $e;
         } finally {
             TraceContext::endTrace();
@@ -173,7 +199,7 @@ class GraphExecutor
                         $attempts++;
                         $durationMs = (microtime(true) - $attemptStart) * 1000;
                         $willRetry = $attempts <= $max && $node->shouldRetry($e);
-                        Event::dispatch(new NodeExecutionFailed(
+                        $this->events->dispatch(new NodeExecutionFailed(
                             $executionId,
                             $spanId,
                             $nodeName,
@@ -217,7 +243,7 @@ class GraphExecutor
     public function executeAsync(Graph $graph, StateContract $state): string
     {
         $executionId = uniqid('exec_', true);
-        (new ExecutionRepository)->queued($executionId, $graph->name, $state->toArray());
+        $this->repo->queued($executionId, $graph->name, $state->toArray());
         dispatch(new \Shahzad\AgenticGraph\Jobs\ExecuteGraphJob($graph->name, $executionId, $state));
 
         return $executionId;
@@ -225,11 +251,7 @@ class GraphExecutor
 
     public function resume(string $checkpointId): ?StateContract
     {
-        $storage = match (config('agenticgraph.storage')) {
-            'redis' => app(\Shahzad\AgenticGraph\Storage\RedisStorage::class),
-            'file' => app(\Shahzad\AgenticGraph\Storage\FileStorage::class),
-            default => app(\Shahzad\AgenticGraph\Storage\DatabaseStorage::class),
-        };
+        $storage = $this->resolveStorage();
         $checkpoint = $storage->load($checkpointId);
         if (! $checkpoint) {
             return null;
@@ -256,7 +278,7 @@ class GraphExecutor
             $spanId = TraceContext::startSpan($nodeName);
             $inputState = $state;
             $nodeStartTime = microtime(true);
-            Event::dispatch(new NodeExecutionStarted(
+            $this->events->dispatch(new NodeExecutionStarted(
                 $executionId, $nodeName, $state, new \DateTimeImmutable,
                 $spanId, $parentSpanId
             ));
@@ -266,7 +288,7 @@ class GraphExecutor
                 TraceContext::endSpan();
             }
             $nodeDuration = microtime(true) - $nodeStartTime;
-            Event::dispatch(new NodeExecutionCompleted(
+            $this->events->dispatch(new NodeExecutionCompleted(
                 $executionId, $nodeName, $inputState, $resultState, $nodeDuration, ['node_type' => $node::class],
                 $spanId
             ));
@@ -290,24 +312,26 @@ class GraphExecutor
         foreach ($targets as $nodeName) {
             $jobs[] = new \Shahzad\AgenticGraph\Jobs\ExecuteNodeJob($executionId, $nodeName, $state, $graph, $parentSpanId);
         }
-        Bus::batch($jobs)
+        $this->bus->batch($jobs)
             ->name("agenticgraph-parallel-{$executionId}")
             ->onConnection(config('agenticgraph.execution.queue_connection'))
             ->onQueue(config('agenticgraph.execution.queue_name'))
             ->then(function (Batch $batch) use ($graph, $executionId, $sourceNode, $targets) {
+                $cache = app(CacheManager::class);
+                $executor = app(self::class);
                 $results = [];
                 foreach ($targets as $nodeName) {
                     $key = 'agenticgraph:batch:'.$executionId.':'.$nodeName;
-                    $resultData = Cache::get($key);
+                    $resultData = $cache->get($key);
                     if (! $resultData) {
                         throw new \RuntimeException("Missing batch result for node: {$nodeName}");
                     }
                     $results[] = \Shahzad\AgenticGraph\State\State::fromArray($resultData);
-                    Cache::forget($key); // Clean up after reading
+                    $cache->forget($key);
                 }
                 $merged = \Shahzad\AgenticGraph\State\StateManager::mergeAll($results);
-                $this->checkpoint($graph, $executionId, $sourceNode, $merged);
-                $next = $this->determinePostParallelNext($graph, $targets, $merged);
+                $executor->checkpoint($graph, $executionId, $sourceNode, $merged);
+                $next = $executor->determinePostParallelNext($graph, $targets, $merged);
                 dispatch(new \Shahzad\AgenticGraph\Jobs\ContinueExecutionJob(
                     $graph->name,
                     $executionId,
@@ -317,7 +341,7 @@ class GraphExecutor
                     ->onQueue(config('agenticgraph.execution.queue_name'));
             })
             ->catch(function (Batch $batch, \Throwable $e) use ($executionId) {
-                (new ExecutionRepository)->failed($executionId, $e->getMessage());
+                app(ExecutionRepository::class)->failed($executionId, $e->getMessage());
                 throw $e;
             })
             ->dispatch();
@@ -366,7 +390,7 @@ class GraphExecutor
         $visited = [];
         $maxIterations = config('agenticgraph.execution.max_iterations', 1000);
         $iterations = 0;
-        $repo = new ExecutionRepository;
+        $repo = $this->repo;
 
         try {
             do {
@@ -381,7 +405,7 @@ class GraphExecutor
                 $visited[] = $current;
 
                 $lockTimeout = (int) config('agenticgraph.lock.timeout', 10);
-                $lock = Cache::lock('agenticgraph:execution:'.$executionId, $lockTimeout);
+                $lock = $this->cache->lock('agenticgraph:execution:'.$executionId, $lockTimeout);
                 try {
                     if (! $lock->block(5)) {
                         throw new \RuntimeException("Failed to acquire lock for execution {$executionId}");
@@ -391,22 +415,17 @@ class GraphExecutor
                         $repo->started($executionId, $graph->name, $state->toArray());
                     }
 
-                    $spanId = TraceContext::startSpan($current);
-                    $parentSpanId = TraceContext::getParentSpanId();
-
-                    $node = $graph->getNode($current);
-                    Event::dispatch(new NodeExecutionStarted(
-                        $executionId, $current, $state, new \DateTimeImmutable,
-                        $spanId, $parentSpanId
-                    ));
-                    $nodeStartTime = microtime(true);
-                    $inputState = $state;
-                    $state = $this->runNodeWithMiddleware($state, $node, $executionId, $current, $spanId);
-                    $nodeDuration = microtime(true) - $nodeStartTime;
+                    $nodeResult = $this->executeNode($graph, $executionId, $current, $state);
+                    $state = $nodeResult['state'];
                     $this->checkpoint($graph, $executionId, $current, $state);
-                    Event::dispatch(new NodeExecutionCompleted(
-                        $executionId, $current, $inputState, $state, $nodeDuration, ['node_type' => $node::class],
-                        $spanId
+                    $this->events->dispatch(new NodeExecutionCompleted(
+                        $executionId,
+                        $current,
+                        $nodeResult['inputState'],
+                        $state,
+                        $nodeResult['duration'],
+                        ['node_type' => $nodeResult['node']::class],
+                        $nodeResult['spanId']
                     ));
                     TraceContext::endSpan();
 
@@ -421,11 +440,11 @@ class GraphExecutor
 
                     if (is_array($next)) {
                         if ($useBatch) {
-                            $this->executeParallelViaBatch($graph, $state, $executionId, $current, $next, $spanId);
+                            $this->executeParallelViaBatch($graph, $state, $executionId, $current, $next, $nodeResult['spanId']);
 
                             return $state;
                         } else {
-                            $state = $this->executeParallel($graph, $state, $executionId, $current, $next, $spanId);
+                            $state = $this->executeParallel($graph, $state, $executionId, $current, $next, $nodeResult['spanId']);
                             $joinNext = $this->determinePostParallelNext($graph, $next, $state);
                             $current = $joinNext ?? ($graph->exitPoints[0] ?? $current);
                         }
@@ -433,7 +452,7 @@ class GraphExecutor
                         $current = $next;
                     }
                 } catch (\Illuminate\Contracts\Cache\LockTimeoutException $e) {
-                    (new ExecutionRepository)->failed($executionId, 'Lock timeout: '.$e->getMessage());
+                    $this->repo->failed($executionId, 'Lock timeout: '.$e->getMessage());
                     throw new \RuntimeException('Execution locked by another process', 0, $e);
                 } finally {
                     optional($lock)->release();
@@ -441,7 +460,7 @@ class GraphExecutor
             } while (true);
 
             $repo->completed($executionId, $state->toArray(), 0.0);
-            Event::dispatch(new GraphExecutionCompleted($executionId, $graph->name, $state, new \DateTimeImmutable, 0.0, []));
+            $this->events->dispatch(new GraphExecutionCompleted($executionId, $graph->name, $state, new \DateTimeImmutable, 0.0, []));
 
             return $state;
         } finally {
@@ -455,7 +474,7 @@ class GraphExecutor
     public function executeUntil(Graph $graph, StateContract $state, callable $predicate): array
     {
         $executionId = uniqid('exec_', true);
-        $repo = new ExecutionRepository;
+        $repo = $this->repo;
         $repo->queued($executionId, $graph->name, $state->toArray());
         $repo->started($executionId, $graph->name, $state->toArray());
         TraceContext::startTrace($executionId);
@@ -463,23 +482,19 @@ class GraphExecutor
         $lastCheckpointId = null;
         try {
             while (! in_array($current, $graph->exitPoints, true)) {
-                $lock = Cache::lock('agenticgraph:execution:'.$executionId, (int) config('agenticgraph.lock.timeout'));
+                $lock = $this->cache->lock('agenticgraph:execution:'.$executionId, (int) config('agenticgraph.lock.timeout'));
                 try {
                     $lock->block(5);
-                    $spanId = TraceContext::startSpan($current);
-                    $parentSpanId = TraceContext::getParentSpanId();
-                    $node = $graph->getNode($current);
-                    Event::dispatch(new NodeExecutionStarted(
-                        $executionId, $current, $state, new \DateTimeImmutable,
-                        $spanId, $parentSpanId
-                    ));
-                    $nodeStartTime = microtime(true);
-                    $inputState = $state;
-                    $state = $this->runNodeWithMiddleware($state, $node, $executionId, $current, $spanId);
-                    $nodeDuration = microtime(true) - $nodeStartTime;
-                    Event::dispatch(new NodeExecutionCompleted(
-                        $executionId, $current, $inputState, $state, $nodeDuration, ['node_type' => $node::class],
-                        $spanId
+                    $nodeResult = $this->executeNode($graph, $executionId, $current, $state);
+                    $state = $nodeResult['state'];
+                    $this->events->dispatch(new NodeExecutionCompleted(
+                        $executionId,
+                        $current,
+                        $nodeResult['inputState'],
+                        $state,
+                        $nodeResult['duration'],
+                        ['node_type' => $nodeResult['node']::class],
+                        $nodeResult['spanId']
                     ));
                     TraceContext::endSpan();
                     $next = $this->determineNext($graph, $current, $state);
@@ -491,19 +506,14 @@ class GraphExecutor
                         $checkpoint->state = $state;
                         $checkpoint->currentNode = $nextNode;
                         $checkpoint->createdAt = new \DateTimeImmutable;
-                        $storage = match (config('agenticgraph.storage')) {
-                            'redis' => app(\Shahzad\AgenticGraph\Storage\RedisStorage::class),
-                            'file' => app(\Shahzad\AgenticGraph\Storage\FileStorage::class),
-                            default => app(\Shahzad\AgenticGraph\Storage\DatabaseStorage::class),
-                        };
-                        $lastCheckpointId = (new CheckpointManager($storage))->save($executionId, $checkpoint);
+                        $lastCheckpointId = (new CheckpointManager($this->resolveStorage()))->save($executionId, $checkpoint);
                         break;
                     }
                     if ($next === null) {
                         break;
                     }
                     if (is_array($next)) {
-                        $state = $this->executeParallel($graph, $state, $executionId, $current, $next, $spanId);
+                        $state = $this->executeParallel($graph, $state, $executionId, $current, $next, $nodeResult['spanId']);
                         $current = $this->determinePostParallelNext($graph, $next, $state) ?? ($graph->exitPoints[0] ?? $current);
                     } else {
                         $current = $next;
@@ -530,11 +540,53 @@ class GraphExecutor
         $checkpoint->state = $state;
         $checkpoint->currentNode = $currentNode;
         $checkpoint->createdAt = new \DateTimeImmutable;
-        $storage = match (config('agenticgraph.storage')) {
-            'redis' => app(\Shahzad\AgenticGraph\Storage\RedisStorage::class),
-            'file' => app(\Shahzad\AgenticGraph\Storage\FileStorage::class),
-            default => app(\Shahzad\AgenticGraph\Storage\DatabaseStorage::class),
+        (new CheckpointManager($this->resolveStorage()))->save($executionId, $checkpoint);
+    }
+
+    /**
+     * @return array{
+     *     state: StateContract,
+     *     spanId: string|null,
+     *     inputState: StateContract,
+     *     node: NodeInterface,
+     *     duration: float
+     * }
+     */
+    private function executeNode(Graph $graph, string $executionId, string $nodeName, StateContract $state, ?string $parentSpanId = null): array
+    {
+        $spanId = TraceContext::startSpan($nodeName);
+        $effectiveParentSpanId = $parentSpanId ?? TraceContext::getParentSpanId();
+        $node = $graph->getNode($nodeName);
+        $nodeStartTime = microtime(true);
+        $inputState = $state;
+
+        $this->events->dispatch(new NodeExecutionStarted(
+            $executionId,
+            $nodeName,
+            $state,
+            new \DateTimeImmutable,
+            $spanId,
+            $effectiveParentSpanId
+        ));
+
+        $state = $this->runNodeWithMiddleware($state, $node, $executionId, $nodeName, $spanId);
+        $nodeDuration = microtime(true) - $nodeStartTime;
+
+        return [
+            'state' => $state,
+            'spanId' => $spanId,
+            'inputState' => $inputState,
+            'node' => $node,
+            'duration' => $nodeDuration,
+        ];
+    }
+
+    private function resolveStorage(): StorageInterface
+    {
+        return match (config('agenticgraph.storage')) {
+            'redis' => app(RedisStorage::class),
+            'file' => app(FileStorage::class),
+            default => app(DatabaseStorage::class),
         };
-        (new CheckpointManager($storage))->save($executionId, $checkpoint);
     }
 }

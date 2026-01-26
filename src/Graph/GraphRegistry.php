@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Shahzad\AgenticGraph\Graph;
 
 class GraphRegistry
@@ -12,10 +14,12 @@ class GraphRegistry
     {
         // Prevent memory leaks by limiting registry size
         if (count(self::$graphs) >= self::$maxGraphs) {
-            \Illuminate\Support\Facades\Log::warning('GraphRegistry is full, clearing old entries', [
-                'count' => count(self::$graphs),
-                'max' => self::$maxGraphs,
-            ]);
+            if ((bool) config('agenticgraph.logging.enabled', true)) {
+                \Illuminate\Support\Facades\Log::warning('GraphRegistry is full, clearing old entries', [
+                    'count' => count(self::$graphs),
+                    'max' => self::$maxGraphs,
+                ]);
+            }
             self::clear();
         }
 
@@ -27,6 +31,9 @@ class GraphRegistry
         return self::$graphs[$name] ?? null;
     }
 
+    /**
+     * @return array<string, Graph>
+     */
     public static function all(): array
     {
         return self::$graphs;

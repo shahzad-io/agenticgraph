@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Shahzad\AgenticGraph\Storage;
 
 use Shahzad\AgenticGraph\Contracts\StorageInterface;
@@ -71,6 +73,9 @@ class FileStorage implements StorageInterface
         return $c;
     }
 
+    /**
+     * @return array<int, string>
+     */
     public function list(string $graphName, int $limit = 50): array
     {
         $files = glob($this->dir.'/*.json') ?: [];
@@ -106,8 +111,12 @@ class FileStorage implements StorageInterface
         $threshold = time() - ($olderThanDays * 86400);
         foreach (glob($this->dir.'/*.json') ?: [] as $file) {
             if (filemtime($file) < $threshold) {
-                @unlink($file);
-                $count++;
+                if (! is_writable($file)) {
+                    continue;
+                }
+                if (unlink($file)) {
+                    $count++;
+                }
             }
         }
 

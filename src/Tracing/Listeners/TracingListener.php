@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Shahzad\AgenticGraph\Tracing\Listeners;
 
 use Shahzad\AgenticGraph\Events\GraphExecutionCompleted;

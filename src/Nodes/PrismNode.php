@@ -1,27 +1,35 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Shahzad\AgenticGraph\Nodes;
 
-use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Event;
+use Illuminate\Contracts\Cache\Repository as CacheRepository;
+use Illuminate\Contracts\Events\Dispatcher;
 use Prism\Prism\Audio\PendingRequest as PendingAudioRequest;
 use Prism\Prism\Audio\AudioResponse;
 use Prism\Prism\Audio\TextResponse as AudioTextResponse;
 use Prism\Prism\Contracts\Message;
 use Prism\Prism\Embeddings\PendingRequest as PendingEmbeddingsRequest;
 use Prism\Prism\Embeddings\Response as EmbeddingsResponse;
-use Prism\Prism\Facades\Prism;
 use Prism\Prism\Images\PendingRequest as PendingImageRequest;
 use Prism\Prism\Images\Response as ImageResponse;
 use Prism\Prism\Text\PendingRequest as PendingTextRequest;
 use Prism\Prism\ValueObjects\EmbeddingsUsage;
 use Prism\Prism\ValueObjects\Media\Audio as AudioMedia;
+use Shahzad\AgenticGraph\Contracts\PrismClient;
 use Shahzad\AgenticGraph\Events\TokensUsed;
 use Shahzad\AgenticGraph\Prompts\ChatPromptTemplate;
 use Shahzad\AgenticGraph\Prompts\PromptTemplate;
 
 abstract class PrismNode extends AbstractNode
 {
+    private ?CacheRepository $cache = null;
+
+    private ?Dispatcher $events = null;
+
+    protected ?PrismClient $prismClient = null;
+
     protected ?string $model = null;
 
     protected ?int $cacheTtl = null;
@@ -33,7 +41,7 @@ abstract class PrismNode extends AbstractNode
         $config = $this->model ?? (string) config('agenticgraph.prism.model');
         [$provider, $model] = $this->parseModel($config);
 
-        return Prism::text()->using($provider, $model);
+        return $this->prismClient()->text()->using($provider, $model);
     }
 
     protected function embeddings(): PendingEmbeddingsRequest
@@ -66,7 +74,7 @@ abstract class PrismNode extends AbstractNode
             $providerConfig['api_key'] = $embeddingsApiKey;
         }
 
-        return Prism::embeddings()->using($provider, $model, $providerConfig);
+        return $this->prismClient()->embeddings()->using($provider, $model, $providerConfig);
     }
 
     protected function image(): PendingImageRequest
@@ -74,7 +82,7 @@ abstract class PrismNode extends AbstractNode
         $config = $this->model ?? (string) config('agenticgraph.prism.model');
         [$provider, $model] = $this->parseModel($config);
 
-        return Prism::image()->using($provider, $model);
+        return $this->prismClient()->image()->using($provider, $model);
     }
 
     protected function audio(): PendingAudioRequest
@@ -82,7 +90,7 @@ abstract class PrismNode extends AbstractNode
         $config = $this->model ?? (string) config('agenticgraph.prism.model');
         [$provider, $model] = $this->parseModel($config);
 
-        return Prism::audio()->using($provider, $model);
+        return $this->prismClient()->audio()->using($provider, $model);
     }
 
     /**
@@ -94,19 +102,19 @@ abstract class PrismNode extends AbstractNode
         $prompt = $this->interpolate($template, $variables);
         $useCache = $this->shouldCache() && $additionalContent === [];
         $cacheKey = $useCache ? $this->getCacheKey($prompt) : null;
-        if ($useCache && Cache::has($cacheKey)) {
-            return Cache::get($cacheKey);
+        if ($useCache && $this->cache()->has($cacheKey)) {
+            return $this->cache()->get($cacheKey);
         }
         $config = $this->model ?? (string) config('agenticgraph.prism.model');
         [$provider, $model] = $this->parseModel($config);
         $response = $this->prism()->withPrompt($prompt, $additionalContent)->asText();
         $text = $response->text;
         if ($useCache) {
-            Cache::put($cacheKey, $text, ($this->cacheTtl ?? (int) config('agenticgraph.prism.cache_ttl')) * 60);
+            $this->cache()->put($cacheKey, $text, ($this->cacheTtl ?? (int) config('agenticgraph.prism.cache_ttl')) * 60);
         }
         if ($this->trackTokens && isset($response->usage)) {
             $durationMs = (microtime(true) - $startTime) * 1000;
-            Event::dispatch(new TokensUsed(
+            $this->events()->dispatch(new TokensUsed(
                 node: $this->getName(),
                 promptTokens: $response->usage->promptTokens ?? 0,
                 completionTokens: $response->usage->completionTokens ?? 0,
@@ -137,7 +145,7 @@ abstract class PrismNode extends AbstractNode
 
         if ($this->trackTokens && isset($response->usage)) {
             $durationMs = (microtime(true) - $startTime) * 1000;
-            Event::dispatch(new TokensUsed(
+            $this->events()->dispatch(new TokensUsed(
                 node: $this->getName(),
                 promptTokens: $response->usage->promptTokens ?? 0,
                 completionTokens: $response->usage->completionTokens ?? 0,
@@ -177,7 +185,7 @@ abstract class PrismNode extends AbstractNode
         if ($this->trackTokens) {
             $tokens = $response->usage->tokens ?? 0;
             $durationMs = (microtime(true) - $startTime) * 1000;
-            Event::dispatch(new TokensUsed(
+            $this->events()->dispatch(new TokensUsed(
                 node: $this->getName(),
                 promptTokens: $tokens,
                 completionTokens: 0,
@@ -210,7 +218,7 @@ abstract class PrismNode extends AbstractNode
 
         if ($this->trackTokens && isset($response->usage)) {
             $durationMs = (microtime(true) - $startTime) * 1000;
-            Event::dispatch(new TokensUsed(
+            $this->events()->dispatch(new TokensUsed(
                 node: $this->getName(),
                 promptTokens: $response->usage->promptTokens ?? 0,
                 completionTokens: $response->usage->completionTokens ?? 0,
@@ -242,7 +250,7 @@ abstract class PrismNode extends AbstractNode
 
         if ($this->trackTokens && isset($response->usage)) {
             $durationMs = (microtime(true) - $startTime) * 1000;
-            Event::dispatch(new TokensUsed(
+            $this->events()->dispatch(new TokensUsed(
                 node: $this->getName(),
                 promptTokens: $response->usage->promptTokens ?? 0,
                 completionTokens: $response->usage->completionTokens ?? 0,
@@ -280,7 +288,7 @@ abstract class PrismNode extends AbstractNode
         $config = $this->model ?? (string) config('agenticgraph.prism.model');
         [$provider, $model] = $this->parseModel($config);
 
-        $response = Prism::structured()
+        $response = $this->prismClient()->structured()
             ->using($provider, $model)
             ->withSchema($schema)
             ->withPrompt($prompt)
@@ -288,7 +296,7 @@ abstract class PrismNode extends AbstractNode
 
         if ($this->trackTokens && isset($response->usage)) {
             $durationMs = (microtime(true) - $startTime) * 1000;
-            Event::dispatch(new TokensUsed(
+            $this->events()->dispatch(new TokensUsed(
                 node: $this->getName(),
                 promptTokens: $response->usage->promptTokens ?? 0,
                 completionTokens: $response->usage->completionTokens ?? 0,
@@ -319,7 +327,7 @@ abstract class PrismNode extends AbstractNode
 
         if ($this->trackTokens && isset($response->usage)) {
             $durationMs = (microtime(true) - $startTime) * 1000;
-            Event::dispatch(new TokensUsed(
+            $this->events()->dispatch(new TokensUsed(
                 node: $this->getName(),
                 promptTokens: $response->usage->promptTokens ?? 0,
                 completionTokens: $response->usage->completionTokens ?? 0,
@@ -400,8 +408,8 @@ abstract class PrismNode extends AbstractNode
         $useCache = $this->shouldCache() && $additionalContent === [];
         $cacheKey = $useCache ? $this->getCacheKey($prompt) : null;
 
-        if ($useCache && Cache::has($cacheKey)) {
-            return Cache::get($cacheKey);
+        if ($useCache && $this->cache()->has($cacheKey)) {
+            return $this->cache()->get($cacheKey);
         }
 
         $config = $this->model ?? (string) config('agenticgraph.prism.model');
@@ -410,12 +418,12 @@ abstract class PrismNode extends AbstractNode
         $text = $response->text;
 
         if ($useCache) {
-            Cache::put($cacheKey, $text, ($this->cacheTtl ?? (int) config('agenticgraph.prism.cache_ttl')) * 60);
+            $this->cache()->put($cacheKey, $text, ($this->cacheTtl ?? (int) config('agenticgraph.prism.cache_ttl')) * 60);
         }
 
         if ($this->trackTokens && isset($response->usage)) {
             $durationMs = (microtime(true) - $startTime) * 1000;
-            Event::dispatch(new TokensUsed(
+            $this->events()->dispatch(new TokensUsed(
                 node: $this->getName(),
                 promptTokens: $response->usage->promptTokens ?? 0,
                 completionTokens: $response->usage->completionTokens ?? 0,
@@ -442,8 +450,8 @@ abstract class PrismNode extends AbstractNode
         $useCache = $this->shouldCache() && $additionalContent === [];
         $cacheKey = $useCache ? $this->getCacheKey($prompt) : null;
 
-        if ($useCache && Cache::has($cacheKey)) {
-            return Cache::get($cacheKey);
+        if ($useCache && $this->cache()->has($cacheKey)) {
+            return $this->cache()->get($cacheKey);
         }
 
         $config = $this->model ?? (string) config('agenticgraph.prism.model');
@@ -452,12 +460,12 @@ abstract class PrismNode extends AbstractNode
         $text = $response->text;
 
         if ($useCache) {
-            Cache::put($cacheKey, $text, ($this->cacheTtl ?? (int) config('agenticgraph.prism.cache_ttl')) * 60);
+            $this->cache()->put($cacheKey, $text, ($this->cacheTtl ?? (int) config('agenticgraph.prism.cache_ttl')) * 60);
         }
 
         if ($this->trackTokens && isset($response->usage)) {
             $durationMs = (microtime(true) - $startTime) * 1000;
-            Event::dispatch(new TokensUsed(
+            $this->events()->dispatch(new TokensUsed(
                 node: $this->getName(),
                 promptTokens: $response->usage->promptTokens ?? 0,
                 completionTokens: $response->usage->completionTokens ?? 0,
@@ -469,5 +477,32 @@ abstract class PrismNode extends AbstractNode
         }
 
         return $text;
+    }
+
+    protected function cache(): CacheRepository
+    {
+        if ($this->cache === null) {
+            $this->cache = app(CacheRepository::class);
+        }
+
+        return $this->cache;
+    }
+
+    protected function events(): Dispatcher
+    {
+        if ($this->events === null) {
+            $this->events = app(Dispatcher::class);
+        }
+
+        return $this->events;
+    }
+
+    protected function prismClient(): PrismClient
+    {
+        if ($this->prismClient !== null) {
+            return $this->prismClient;
+        }
+
+        return app(PrismClient::class);
     }
 }

@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Shahzad\AgenticGraph\Routers;
 
 use Shahzad\AgenticGraph\Contracts\RouterInterface;

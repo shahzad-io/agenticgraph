@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Shahzad\AgenticGraph\Nodes;
 
 use Shahzad\AgenticGraph\Contracts\NodeInterface;

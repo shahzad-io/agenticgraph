@@ -1,12 +1,18 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Shahzad\AgenticGraph\Execution;
 
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
+use Illuminate\Database\DatabaseManager;
+use Psr\Log\LoggerInterface;
 
 class ExecutionRepository
 {
+    private DatabaseManager $db;
+
+    private LoggerInterface $logger;
+
     protected string $table = 'agenticgraph_executions';
 
     /**
@@ -19,9 +25,15 @@ class ExecutionRepository
         'failed' => [],
     ];
 
+    public function __construct(?DatabaseManager $db = null, ?LoggerInterface $logger = null)
+    {
+        $this->db = $db ?? app(DatabaseManager::class);
+        $this->logger = $logger ?? app(LoggerInterface::class);
+    }
+
     public function queued(string $id, string $graphName, array $initialState = []): void
     {
-        DB::table($this->table)->updateOrInsert(
+        $this->db->table($this->table)->updateOrInsert(
             ['id' => $id],
             [
                 'graph_name' => $graphName,
@@ -36,61 +48,71 @@ class ExecutionRepository
             ]
         );
 
-        Log::debug('Execution queued', [
-            'execution_id' => $id,
-            'graph_name' => $graphName,
-        ]);
+        if ((bool) config('agenticgraph.logging.enabled', true)) {
+            $this->logger->debug('Execution queued', [
+                'execution_id' => $id,
+                'graph_name' => $graphName,
+            ]);
+        }
     }
 
     public function started(string $id, string $graphName, array $initialState = []): void
     {
         // Verify the record exists and get current status
-        $current = DB::table($this->table)->where('id', $id)->first();
+        $current = $this->db->table($this->table)->where('id', $id)->first();
 
         if (! $current) {
             // If record doesn't exist, create it first (shouldn't happen in normal flow)
-            Log::warning('Execution record not found when starting, creating new record', [
-                'execution_id' => $id,
-                'graph_name' => $graphName,
-            ]);
+            if ((bool) config('agenticgraph.logging.enabled', true)) {
+                $this->logger->warning('Execution record not found when starting, creating new record', [
+                    'execution_id' => $id,
+                    'graph_name' => $graphName,
+                ]);
+            }
             $this->queued($id, $graphName, $initialState);
         } else {
             // Validate state transition
             if (! $this->canTransitionTo($id, 'running')) {
-                Log::warning('Invalid state transition attempted', [
-                    'execution_id' => $id,
-                    'current_status' => $current->status,
-                    'attempted_status' => 'running',
-                ]);
+                if ((bool) config('agenticgraph.logging.enabled', true)) {
+                    $this->logger->warning('Invalid state transition attempted', [
+                        'execution_id' => $id,
+                        'current_status' => $current->status,
+                        'attempted_status' => 'running',
+                    ]);
+                }
             }
         }
 
         // Update to running status
-        DB::table($this->table)->where('id', $id)->update([
+        $this->db->table($this->table)->where('id', $id)->update([
             'status' => 'running',
             'started_at' => now(),
             'updated_at' => now(),
         ]);
 
-        Log::debug('Execution started', [
-            'execution_id' => $id,
-            'graph_name' => $graphName,
-            'previous_status' => $current ? $current->status : 'new',
-        ]);
+        if ((bool) config('agenticgraph.logging.enabled', true)) {
+            $this->logger->debug('Execution started', [
+                'execution_id' => $id,
+                'graph_name' => $graphName,
+                'previous_status' => $current ? $current->status : 'new',
+            ]);
+        }
     }
 
     public function completed(string $id, array $finalState, float $duration): void
     {
         // Verify state transition
         if (! $this->canTransitionTo($id, 'completed')) {
-            $current = DB::table($this->table)->where('id', $id)->value('status');
-            Log::warning('Invalid state transition to completed', [
-                'execution_id' => $id,
-                'current_status' => $current,
-            ]);
+            $current = $this->db->table($this->table)->where('id', $id)->value('status');
+            if ((bool) config('agenticgraph.logging.enabled', true)) {
+                $this->logger->warning('Invalid state transition to completed', [
+                    'execution_id' => $id,
+                    'current_status' => $current,
+                ]);
+            }
         }
 
-        DB::table($this->table)->where('id', $id)->update([
+        $this->db->table($this->table)->where('id', $id)->update([
             'status' => 'completed',
             'final_state' => json_encode($finalState),
             'duration' => $duration,
@@ -98,33 +120,39 @@ class ExecutionRepository
             'updated_at' => now(),
         ]);
 
-        Log::debug('Execution completed', [
-            'execution_id' => $id,
-            'duration' => $duration,
-        ]);
+        if ((bool) config('agenticgraph.logging.enabled', true)) {
+            $this->logger->debug('Execution completed', [
+                'execution_id' => $id,
+                'duration' => $duration,
+            ]);
+        }
     }
 
     public function failed(string $id, string $error): void
     {
         // Verify state transition
         if (! $this->canTransitionTo($id, 'failed')) {
-            $current = DB::table($this->table)->where('id', $id)->value('status');
-            Log::warning('Invalid state transition to failed', [
-                'execution_id' => $id,
-                'current_status' => $current,
-            ]);
+            $current = $this->db->table($this->table)->where('id', $id)->value('status');
+            if ((bool) config('agenticgraph.logging.enabled', true)) {
+                $this->logger->warning('Invalid state transition to failed', [
+                    'execution_id' => $id,
+                    'current_status' => $current,
+                ]);
+            }
         }
 
-        DB::table($this->table)->where('id', $id)->update([
+        $this->db->table($this->table)->where('id', $id)->update([
             'status' => 'failed',
             'error' => $error,
             'updated_at' => now(),
         ]);
 
-        Log::error('Execution failed', [
-            'execution_id' => $id,
-            'error' => $error,
-        ]);
+        if ((bool) config('agenticgraph.logging.enabled', true)) {
+            $this->logger->error('Execution failed', [
+                'execution_id' => $id,
+                'error' => $error,
+            ]);
+        }
     }
 
     /**
@@ -132,7 +160,7 @@ class ExecutionRepository
      */
     public function canTransitionTo(string $id, string $newStatus): bool
     {
-        $current = DB::table($this->table)->where('id', $id)->value('status');
+        $current = $this->db->table($this->table)->where('id', $id)->value('status');
 
         if (! $current) {
             // New execution can transition to any valid status
@@ -149,7 +177,7 @@ class ExecutionRepository
      */
     public function getStatus(string $id): ?string
     {
-        return DB::table($this->table)->where('id', $id)->value('status');
+        return $this->db->table($this->table)->where('id', $id)->value('status');
     }
 
     /**
@@ -157,11 +185,22 @@ class ExecutionRepository
      */
     public function get(string $id): ?object
     {
-        return DB::table($this->table)->where('id', $id)->first();
+        return $this->db->table($this->table)->where('id', $id)->first();
     }
 
     /**
      * Get execution history (all state transitions)
+     *
+     * @return array{}|array{
+     *     id: string,
+     *     graph_name: string,
+     *     status: string,
+     *     created_at: mixed,
+     *     started_at: mixed,
+     *     completed_at: mixed,
+     *     duration: float|int|null,
+     *     error: string|null
+     * }
      */
     public function getHistory(string $id): array
     {
@@ -189,7 +228,7 @@ class ExecutionRepository
     {
         $threshold = now()->subDays($olderThanDays);
 
-        $query = DB::table($this->table)
+        $query = $this->db->table($this->table)
             ->where('completed_at', '<', $threshold);
 
         if ($status) {
@@ -204,12 +243,14 @@ class ExecutionRepository
 
     /**
      * Get execution statistics
+     *
+     * @return array<string, object>
      */
     public function getStats(string $graphName, int $days = 7): array
     {
         $since = now()->subDays($days);
 
-        return DB::table($this->table)
+        return $this->db->table($this->table)
             ->where('graph_name', $graphName)
             ->where('created_at', '>=', $since)
             ->selectRaw('
@@ -227,12 +268,14 @@ class ExecutionRepository
 
     /**
      * Find stuck executions (running for too long)
+     *
+     * @return array<int, object>
      */
     public function findStuckExecutions(int $olderThanMinutes = 60): array
     {
         $threshold = now()->subMinutes($olderThanMinutes);
 
-        return DB::table($this->table)
+        return $this->db->table($this->table)
             ->where('status', 'running')
             ->where('started_at', '<', $threshold)
             ->get()

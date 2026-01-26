@@ -1,14 +1,22 @@
 <?php
 
+declare(strict_types=1);
 namespace Shahzad\AgenticGraph\Storage;
 
-use Illuminate\Support\Facades\DB;
+use Illuminate\Database\DatabaseManager;
 use Shahzad\AgenticGraph\Contracts\StorageInterface;
 use Shahzad\AgenticGraph\Execution\Checkpoint;
 
 class DatabaseStorage implements StorageInterface
 {
+    private DatabaseManager $db;
+
     protected string $table = 'agenticgraph_checkpoints';
+
+    public function __construct(?DatabaseManager $db = null)
+    {
+        $this->db = $db ?? app(DatabaseManager::class);
+    }
 
     public function save(Checkpoint $checkpoint): string
     {
@@ -24,14 +32,14 @@ class DatabaseStorage implements StorageInterface
             'created_at' => $checkpoint->createdAt->format('Y-m-d H:i:s'),
             'parent_checkpoint_id' => $checkpoint->parentCheckpointId,
         ];
-        DB::table($this->table)->updateOrInsert(['id' => $checkpoint->id], $payload);
+        $this->db->table($this->table)->updateOrInsert(['id' => $checkpoint->id], $payload);
 
         return $checkpoint->id;
     }
 
     public function load(string $id): ?Checkpoint
     {
-        $row = DB::table($this->table)->where('id', $id)->first();
+        $row = $this->db->table($this->table)->where('id', $id)->first();
         if (! $row) {
             return null;
         }
@@ -50,9 +58,12 @@ class DatabaseStorage implements StorageInterface
         return $c;
     }
 
+    /**
+     * @return array<int, array{id: string, execution_id: string, current_node: string, created_at: mixed}>
+     */
     public function list(string $graphName, int $limit = 50, int $offset = 0): array
     {
-        return DB::table($this->table)
+        return $this->db->table($this->table)
             ->where('graph_name', $graphName)
             ->orderByDesc('created_at')
             ->limit($limit)
@@ -71,13 +82,13 @@ class DatabaseStorage implements StorageInterface
 
     public function delete(string $id): bool
     {
-        return DB::table($this->table)->where('id', $id)->delete() > 0;
+        return $this->db->table($this->table)->where('id', $id)->delete() > 0;
     }
 
     public function cleanup(int $olderThanDays = 30): int
     {
         $threshold = now()->subDays($olderThanDays)->format('Y-m-d H:i:s');
 
-        return DB::table($this->table)->where('created_at', '<', $threshold)->delete();
+        return $this->db->table($this->table)->where('created_at', '<', $threshold)->delete();
     }
 }
