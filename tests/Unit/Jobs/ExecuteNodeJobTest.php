@@ -21,8 +21,9 @@ it('caches node job output', function () {
         ->setEntryPoint('n')
         ->addExitPoint('n')
         ->build();
-    $job = new ExecuteNodeJob('exec-1', 'n', new State, $graph);
-    $job->handle();
+    app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->register('test-graph', $graph);
+    $job = new ExecuteNodeJob('exec-1', 'n', (new State)->toArray(), 'test-graph');
+    $job->handle(app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class));
     $cached = Cache::get('agenticgraph:batch:exec-1:n');
     expect($cached)->toBeArray()->and($cached['ok'])->toBeTrue();
 });

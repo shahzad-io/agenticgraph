@@ -61,7 +61,7 @@ class RedisStorage implements StorageInterface
     /**
      * @return array<int, string>
      */
-    public function list(string $graphName, int $limit = 50): array
+    public function list(string $graphName, int $limit = 50, int $offset = 0): array
     {
         return []; // Redis listing not implemented for brevity
     }

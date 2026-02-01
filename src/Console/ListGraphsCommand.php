@@ -13,9 +13,9 @@ class ListGraphsCommand extends Command
 
     protected $description = 'List registered AgenticGraph graphs';
 
-    public function handle(): int
+    public function handle(GraphRegistry $registry): int
     {
-        $graphs = GraphRegistry::all();
+        $graphs = $registry->all();
         if (empty($graphs)) {
             $this->warn('No graphs registered');
 

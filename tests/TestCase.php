@@ -19,10 +19,8 @@ class TestCase extends Orchestra
 
     protected function tearDown(): void
     {
-        // Reset tracing context to prevent state leakage between tests
-        if (class_exists(\Shahzad\AgenticGraph\Tracing\TraceContext::class)) {
-            \Shahzad\AgenticGraph\Tracing\TraceContext::reset();
-        }
+        // Clear any TraceContext instance from container to prevent state leakage between tests
+        app()->forgetInstance(\Shahzad\AgenticGraph\Tracing\TraceContext::class);
 
         parent::tearDown();
     }
@@ -47,10 +45,11 @@ class TestCase extends Orchestra
             'database' => ':memory:',
             'prefix' => '',
         ]);
-        $app['config']->set('cache.default', 'file');
-        $app['config']->set('cache.stores.file', [
-            'driver' => 'file',
-            'path' => storage_path('framework/cache'),
+        // Use array cache driver for tests (supports object storage without serialization)
+        $app['config']->set('cache.default', 'array');
+        $app['config']->set('cache.stores.array', [
+            'driver' => 'array',
+            'serialize' => false,
         ]);
         foreach (\Illuminate\Support\Facades\File::allFiles(__DIR__.'/../database/migrations') as $migration) {
             (include $migration->getRealPath())->up();

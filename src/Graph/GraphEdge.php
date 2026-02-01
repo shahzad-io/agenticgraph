@@ -12,12 +12,18 @@ class GraphEdge implements EdgeInterface
 {
     protected string $source;
 
+    /** @var string|array<int, string> */
     protected string|array $target;
 
     protected ?RouterInterface $condition;
 
+    /** @var array<string, mixed> */
     protected array $metadata;
 
+    /**
+     * @param  string|array<int, string>  $target
+     * @param  array<string, mixed>  $metadata
+     */
     public function __construct(string $source, string|array $target, ?RouterInterface $condition = null, array $metadata = [])
     {
         $this->source = $source;

@@ -8,8 +8,12 @@ abstract class Message
 {
     protected string $content;
 
+    /** @var array<string, mixed> */
     protected array $metadata;
 
+    /**
+     * @param  array<string, mixed>  $metadata
+     */
     public function __construct(string $content, array $metadata = [])
     {
         $this->content = $content;
@@ -52,7 +56,7 @@ abstract class Message
     /**
      * Convert message to array format
      *
-     * @return array{role: string, content: string, metadata: array}
+     * @return array<string, mixed>
      */
     public function toArray(): array
     {

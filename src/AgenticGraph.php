@@ -14,7 +14,7 @@ class AgenticGraph
 {
     public function registry(): GraphRegistry
     {
-        return new GraphRegistry;
+        return app(GraphRegistry::class);
     }
 
     public function executor(): GraphExecutor
@@ -29,12 +29,12 @@ class AgenticGraph
 
     public function register(string $name, Graph $graph): void
     {
-        GraphRegistry::register($name, $graph);
+        app(GraphRegistry::class)->register($name, $graph);
     }
 
     public function get(string $name): ?Graph
     {
-        return GraphRegistry::get($name);
+        return app(GraphRegistry::class)->get($name);
     }
 
     public function execute(Graph $graph, StateContract $state): StateContract
@@ -52,6 +52,9 @@ class AgenticGraph
         return $this->executor()->resume($checkpointId);
     }
 
+    /**
+     * @return array{executionId: string, checkpointId: string|null}
+     */
     public function executeUntil(Graph $graph, StateContract $state, callable $predicate): array
     {
         return $this->executor()->executeUntil($graph, $state, $predicate);

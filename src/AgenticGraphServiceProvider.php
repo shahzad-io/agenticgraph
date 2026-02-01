@@ -4,10 +4,17 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph;
 
+use Illuminate\Contracts\Events\Dispatcher;
+use Illuminate\Database\DatabaseManager;
 use Illuminate\Support\Facades\Event;
 use Shahzad\AgenticGraph\Adapters\PrismFacadeClient;
 use Shahzad\AgenticGraph\Commands\AgenticGraphCommand;
 use Shahzad\AgenticGraph\Contracts\PrismClient;
+use Shahzad\AgenticGraph\Execution\CheckpointManager;
+use Shahzad\AgenticGraph\State\StateManager;
+use Shahzad\AgenticGraph\Storage\DatabaseStorage;
+use Shahzad\AgenticGraph\Storage\FileStorage;
+use Shahzad\AgenticGraph\Storage\RedisStorage;
 use Shahzad\AgenticGraph\Tracing\Listeners\TracingListener;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
 use Spatie\LaravelPackageTools\Package;
@@ -26,9 +33,8 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
             ->name('agenticgraph')
             ->hasConfigFile()
             ->hasViews()
-            ->hasMigration('create_agenticgraph_checkpoints_table')
             ->hasMigration('create_agenticgraph_executions_table')
-            ->hasMigration('improve_agenticgraph_executions_table')
+            ->hasMigration('create_agenticgraph_checkpoints_table')
             ->hasCommand(AgenticGraphCommand::class)
             ->hasCommand(\Shahzad\AgenticGraph\Console\ListGraphsCommand::class)
             ->hasCommand(\Shahzad\AgenticGraph\Console\VisualizeGraphCommand::class)
@@ -44,14 +50,81 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
     {
         $this->app->bind(PrismClient::class, PrismFacadeClient::class);
 
+        // Bind StorageInterface to the configured storage driver
+        $this->app->bind(\Shahzad\AgenticGraph\Contracts\StorageInterface::class, function ($app) {
+            return match (config('agenticgraph.storage')) {
+                'redis' => $app->make(RedisStorage::class),
+                'file' => $app->make(FileStorage::class),
+                default => $app->make(DatabaseStorage::class),
+            };
+        });
+
+        // Register GraphRegistry as singleton with cache backend
+        $this->app->singleton(\Shahzad\AgenticGraph\Graph\GraphRegistry::class, function ($app) {
+            return new \Shahzad\AgenticGraph\Graph\GraphRegistry($app['cache.store']);
+        });
+
         // Register PulseExporter as singleton
         $this->app->singleton(PulseExporter::class, function ($app) {
             return new PulseExporter;
         });
 
-        // Register tracing event subscriber if tracing is enabled
+        // Register StateManager as singleton with dependencies
+        $this->app->singleton(StateManager::class, function ($app) {
+            $storage = match (config('agenticgraph.storage')) {
+                'redis' => $app->make(RedisStorage::class),
+                'file' => $app->make(FileStorage::class),
+                default => $app->make(DatabaseStorage::class),
+            };
+
+            return new StateManager(
+                $app->make(DatabaseManager::class),
+                $storage,
+                $app->make(Dispatcher::class)
+            );
+        });
+
+        // Register CheckpointManager as singleton with dependencies
+        $this->app->singleton(CheckpointManager::class, function ($app) {
+            $storage = match (config('agenticgraph.storage')) {
+                'redis' => $app->make(RedisStorage::class),
+                'file' => $app->make(FileStorage::class),
+                default => $app->make(DatabaseStorage::class),
+            };
+
+            return new CheckpointManager(
+                $storage,
+                $app->make(DatabaseManager::class),
+                $app->make(Dispatcher::class),
+                (int) config('agenticgraph.checkpoint.frequency', 1),
+                (int) config('agenticgraph.checkpoint.max_state_size', 10485760)
+            );
+        });
+
+        // Register tracing instrumentation if tracing is enabled
         if (config('agenticgraph.tracing.enabled', false)) {
-            Event::subscribe(TracingListener::class);
+            $this->registerTracing();
         }
+    }
+
+    /**
+     * Register tracing instrumentation (lazy-loaded only when tracing is enabled)
+     */
+    private function registerTracing(): void
+    {
+        // Register event subscribers
+        Event::subscribe(TracingListener::class);
+        Event::subscribe(\Shahzad\AgenticGraph\Tracing\Instrumentation\HttpClientInstrumentation::class);
+
+        // Register database instrumentation as singleton
+        $this->app->singleton(\Shahzad\AgenticGraph\Tracing\Instrumentation\DatabaseInstrumentation::class, function ($app) {
+            return new \Shahzad\AgenticGraph\Tracing\Instrumentation\DatabaseInstrumentation(
+                $app[PulseExporter::class],
+                (float) config('agenticgraph.tracing.db.slow_threshold_ms', 1000)
+            );
+        });
+
+        // Register the database query listener
+        $this->app[\Shahzad\AgenticGraph\Tracing\Instrumentation\DatabaseInstrumentation::class]->register($this->app['events']);
     }
 }

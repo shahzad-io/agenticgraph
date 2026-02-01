@@ -10,6 +10,9 @@ use Illuminate\Support\Facades\Validator;
 use JsonSerializable;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 
+/**
+ * @implements Arrayable<string, mixed>
+ */
 final class State implements Arrayable, JsonSerializable, StateContract
 {
     /**
@@ -22,6 +25,10 @@ final class State implements Arrayable, JsonSerializable, StateContract
      */
     protected array $metadata;
 
+    /**
+     * @param  array<string, mixed>  $data
+     * @param  array<string, mixed>  $metadata
+     */
     public function __construct(array $data = [], array $metadata = [])
     {
         $this->data = $data;
@@ -45,23 +52,39 @@ final class State implements Arrayable, JsonSerializable, StateContract
     }
 
     /**
-     * Merge arrays with proper handling of numeric vs associative arrays
+     * Maximum recursion depth for array merging to prevent infinite loops.
+     */
+    private const MAX_MERGE_DEPTH = 10;
+
+    /**
+     * Merge arrays with proper handling of numeric vs associative arrays.
+     * Includes depth limit to prevent infinite recursion on circular references.
      *
      * @param  array<string, mixed>  $array1
      * @param  array<string, mixed>  $array2
+     * @param  int  $depth  Current recursion depth
      * @return array<string, mixed>
      */
-    private function mergeArrays(array $array1, array $array2): array
+    private function mergeArrays(array $array1, array $array2, int $depth = 0): array
     {
+        // Prevent infinite recursion
+        if ($depth >= self::MAX_MERGE_DEPTH) {
+            return $array2;
+        }
+
         foreach ($array2 as $key => $value) {
-            if (is_array($value) && isset($array1[$key]) && is_array($array1[$key])) {
+            // Handle objects - convert to array if possible, otherwise replace
+            if (is_object($value)) {
+                // If value is an object, replace completely (don't try to merge)
+                $array1[$key] = $value;
+            } elseif (is_array($value) && isset($array1[$key]) && is_array($array1[$key])) {
                 // If both are arrays, check if they're numeric (lists) or associative
                 if (array_is_list($array1[$key]) && array_is_list($value)) {
                     // For numeric arrays, replace completely (don't merge)
                     $array1[$key] = $value;
                 } else {
                     // For associative arrays, merge recursively
-                    $array1[$key] = $this->mergeArrays($array1[$key], $value);
+                    $array1[$key] = $this->mergeArrays($array1[$key], $value, $depth + 1);
                 }
             } else {
                 // For non-array values, replace

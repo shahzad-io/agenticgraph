@@ -4,10 +4,17 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph\Events;
 
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Queue\SerializesModels;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 
-class NodeExecutionCompleted
+class NodeExecutionCompleted implements ShouldQueue
 {
+    use SerializesModels;
+
+    /**
+     * @param  array<string, mixed>  $metadata
+     */
     public function __construct(
         public readonly string $executionId,
         public readonly string $nodeName,
@@ -17,5 +24,7 @@ class NodeExecutionCompleted
         public readonly array $metadata,
         // New field for tracing (backward compatible with default)
         public readonly ?string $spanId = null,
+        public readonly ?\DateTimeImmutable $startedAt = null,
+        public readonly ?string $parentSpanId = null,
     ) {}
 }

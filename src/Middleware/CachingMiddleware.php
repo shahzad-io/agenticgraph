@@ -10,17 +10,31 @@ use Shahzad\AgenticGraph\Contracts\StateContract;
 
 class CachingMiddleware
 {
+    /** @var array<string, int> Cache of class => file mtime */
+    private static array $nodeVersionCache = [];
+
     public function handle(StateContract $state, NodeInterface $node, \Closure $next): StateContract
     {
-        // Include node class file modification time in cache key
-        $reflection = new \ReflectionClass($node);
-        $nodeFile = $reflection->getFileName();
-        $nodeVersion = $nodeFile ? filemtime($nodeFile) : 0;
+        $nodeClass = $node::class;
 
-        $key = 'agenticgraph:node:'.
-               $node->getName().':'.
-               $nodeVersion.':'.
-               md5(json_encode($state->toArray()));
+        // Cache node version lookup to avoid repeated reflection
+        if (! isset(self::$nodeVersionCache[$nodeClass])) {
+            $reflection = new \ReflectionClass($node);
+            $nodeFile = $reflection->getFileName();
+            self::$nodeVersionCache[$nodeClass] = $nodeFile ? filemtime($nodeFile) : 0;
+        }
+
+        $nodeVersion = self::$nodeVersionCache[$nodeClass];
+
+        // Use faster hash for state (xxh3 is significantly faster than md5+json_encode)
+        $stateHash = $this->hashState($state);
+
+        $key = sprintf(
+            'agenticgraph:node:%s:%d:%s',
+            $node->getName(),
+            $nodeVersion,
+            $stateHash
+        );
 
         $ttl = config('agenticgraph.middleware.cache_ttl', 3600);
 
@@ -32,5 +46,30 @@ class CachingMiddleware
         return Cache::remember($key, $ttl, function () use ($state, $next) {
             return $next($state);
         });
+    }
+
+    /**
+     * Hash state using fast xxHash algorithm.
+     * Falls back to md5+serialize if xxh3 is not available.
+     */
+    private function hashState(StateContract $state): string
+    {
+        $data = $state->toArray();
+
+        // Use xxHash3 for fast hashing (available in PHP 8.1+)
+        if (function_exists('hash') && in_array('xxh3', hash_algos(), true)) {
+            return hash('xxh3', serialize($data));
+        }
+
+        // Fallback to md5+serialize for older PHP versions
+        return md5(serialize($data));
+    }
+
+    /**
+     * Clear version cache (useful in tests or after deployment).
+     */
+    public static function clearVersionCache(): void
+    {
+        self::$nodeVersionCache = [];
     }
 }

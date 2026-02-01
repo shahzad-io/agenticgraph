@@ -3,7 +3,6 @@
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
-use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
 use Shahzad\AgenticGraph\State\State;
 
@@ -83,7 +82,7 @@ it('executes parallel branches and joins to respond then end', function () {
         ->addExitPoint('end')
         ->build();
 
-    GraphRegistry::register('parallel-join', $graph);
+    app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->register('parallel-join', $graph);
 
     $executor = new GraphExecutor;
     $result = $executor->execute($graph, new State(['base' => 0]));

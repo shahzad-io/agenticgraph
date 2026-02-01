@@ -10,10 +10,16 @@ class PromptTemplate
 {
     protected string $template;
 
+    /** @var array<string, mixed> */
     protected array $defaultVariables;
 
+    /** @var array<int, string> */
     protected array $requiredVariables;
 
+    /**
+     * @param  array<string, mixed>  $defaultVariables
+     * @param  array<int, string>  $requiredVariables
+     */
     public function __construct(
         string $template,
         array $defaultVariables = [],

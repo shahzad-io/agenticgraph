@@ -188,9 +188,11 @@ it('TokensUsed event has backward compatible defaults', function () {
     expect($event->callType)->toBe('text');
     expect($event->model)->toBeNull();
     expect($event->durationMs)->toBeNull();
+    expect($event->endedAt)->toBeNull();
 });
 
 it('TokensUsed event accepts all new fields', function () {
+    $endedAt = new \DateTimeImmutable;
     $event = new TokensUsed(
         node: 'TestNode',
         promptTokens: 10,
@@ -198,10 +200,12 @@ it('TokensUsed event accepts all new fields', function () {
         totalTokens: 30,
         callType: 'structured',
         model: 'openai:gpt-4o',
-        durationMs: 150.5
+        durationMs: 150.5,
+        endedAt: $endedAt
     );
 
     expect($event->callType)->toBe('structured');
     expect($event->model)->toBe('openai:gpt-4o');
     expect($event->durationMs)->toBe(150.5);
+    expect($event->endedAt)->toBe($endedAt);
 });

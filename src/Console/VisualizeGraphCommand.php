@@ -13,10 +13,10 @@ class VisualizeGraphCommand extends Command
 
     protected $description = 'Visualize an AgenticGraph graph to Mermaid or DOT';
 
-    public function handle(): int
+    public function handle(GraphRegistry $registry): int
     {
         $name = $this->argument('name');
-        $graph = GraphRegistry::get($name);
+        $graph = $registry->get($name);
         if (! $graph) {
             $this->error("Graph not found: {$name}");
 

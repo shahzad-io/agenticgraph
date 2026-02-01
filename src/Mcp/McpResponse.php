@@ -36,6 +36,9 @@ final class McpResponse
         return implode("\n\n", $parts);
     }
 
+    /**
+     * @return array<int, array<string, mixed>>
+     */
     public function toolResults(): array
     {
         $toolResults = $this->getToolResultsRaw();
@@ -43,6 +46,9 @@ final class McpResponse
         return array_map(fn ($item) => $this->normalizeToolResult($item), $toolResults);
     }
 
+    /**
+     * @return array<int, array<string, mixed>>
+     */
     public function toolCalls(): array
     {
         $toolCalls = $this->getToolCallsRaw();
@@ -57,6 +63,9 @@ final class McpResponse
         return is_string($text) ? trim($text) : '';
     }
 
+    /**
+     * @return array<int, mixed>
+     */
     private function getToolResultsRaw(): array
     {
         $toolResults = $this->getValue($this->response, 'toolResults');
@@ -72,6 +81,9 @@ final class McpResponse
         return $this->extractFromSteps('toolResults');
     }
 
+    /**
+     * @return array<int, mixed>
+     */
     private function getToolCallsRaw(): array
     {
         $toolCalls = $this->getValue($this->response, 'toolCalls');
@@ -87,6 +99,9 @@ final class McpResponse
         return $this->extractFromSteps('toolCalls');
     }
 
+    /**
+     * @return array<int, mixed>
+     */
     private function extractFromSteps(string $key): array
     {
         $steps = $this->getValue($this->response, 'steps');
@@ -113,6 +128,9 @@ final class McpResponse
         return $items;
     }
 
+    /**
+     * @return array<string, mixed>
+     */
     private function normalizeToolResult(mixed $item): array
     {
         return [
@@ -124,6 +142,9 @@ final class McpResponse
         ];
     }
 
+    /**
+     * @return array<string, mixed>
+     */
     private function normalizeToolCall(mixed $item): array
     {
         if (is_object($item) && method_exists($item, 'arguments')) {

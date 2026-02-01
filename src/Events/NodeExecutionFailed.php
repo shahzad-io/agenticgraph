@@ -4,13 +4,17 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph\Events;
 
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Queue\SerializesModels;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 
 /**
  * Dispatched when a node execution fails (before retry or final failure).
  */
-class NodeExecutionFailed
+class NodeExecutionFailed implements ShouldQueue
 {
+    use SerializesModels;
+
     public function __construct(
         public readonly string $executionId,
         public readonly ?string $spanId,
@@ -20,5 +24,7 @@ class NodeExecutionFailed
         public readonly float $durationMs,
         public readonly int $retryAttempt,
         public readonly bool $willRetry,
+        public readonly ?\DateTimeImmutable $startedAt = null,
+        public readonly ?string $parentSpanId = null,
     ) {}
 }

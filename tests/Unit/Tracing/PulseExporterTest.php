@@ -81,3 +81,38 @@ it('completes trace with correct status', function () {
     $buffer = $exporter->getBuffer();
     expect($buffer['traces']['exec_789']['status'])->toBe('running');
 });
+
+it('flags spans outside the trace window', function () {
+    $exporter = new class extends PulseExporter
+    {
+        public function findOutside(array $trace, array $spans): array
+        {
+            return $this->findSpansOutsideTraceWindow($trace, $spans);
+        }
+    };
+
+    $traceStart = new \DateTimeImmutable('2026-01-31T22:00:53+00:00');
+    $trace = [
+        'started_at' => $traceStart->format(DATE_ATOM),
+        'ended_at' => $traceStart->modify('+7 seconds')->format(DATE_ATOM),
+        'duration_ms' => 7000,
+    ];
+
+    $spans = [
+        [
+            'id' => 'span_ok',
+            'started_at' => $traceStart->format(DATE_ATOM),
+            'ended_at' => $traceStart->modify('+1 seconds')->format(DATE_ATOM),
+        ],
+        [
+            'id' => 'span_bad',
+            'started_at' => $traceStart->modify('+2 days')->format(DATE_ATOM),
+            'ended_at' => $traceStart->modify('+2 days +1 seconds')->format(DATE_ATOM),
+        ],
+    ];
+
+    $invalid = $exporter->findOutside($trace, $spans);
+
+    expect($invalid)->toHaveCount(1);
+    expect($invalid[0]['id'])->toBe('span_bad');
+});

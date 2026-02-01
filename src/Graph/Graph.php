@@ -15,16 +15,28 @@ class Graph
 
     public readonly string $entryPoint;
 
+    /** @var array<int, string> */
     public readonly array $exitPoints;
 
+    /** @var array<string, NodeInterface> */
     public readonly array $nodes;
 
+    /** @var array<int, EdgeInterface> */
     public readonly array $edges;
 
+    /** @var array<string, mixed> */
     public readonly array $metadata;
 
+    /** @var array<string, string> Key is "node1|node2", value is join target */
     public readonly array $joins;
 
+    /**
+     * @param  array<int, string>  $exitPoints
+     * @param  array<string, NodeInterface>  $nodes
+     * @param  array<int, EdgeInterface>  $edges
+     * @param  array<string, mixed>  $metadata
+     * @param  array<string, string>  $joins
+     */
     public function __construct(string $name, string $description, string $entryPoint, array $exitPoints, array $nodes, array $edges, array $metadata = [], array $joins = [])
     {
         $this->name = $name;
@@ -179,16 +191,7 @@ class Graph
     }
 
     /**
-     * @return array{
-     *     name: string,
-     *     description: string,
-     *     entry: string,
-     *     exits: array<int, string>,
-     *     nodes: array<int, string>,
-     *     edges: array<int, array{source: string, target: string|array, metadata: array}>,
-     *     metadata: array<string, mixed>,
-     *     joins: array<string, string>
-     * }
+     * @return array<string, mixed>
      */
     public function toArray(): array
     {

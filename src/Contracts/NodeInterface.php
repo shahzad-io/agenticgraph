@@ -20,6 +20,9 @@ interface NodeInterface
 
     public function shouldRetry(\Throwable $exception): bool;
 
+    /**
+     * @return array<int, string>
+     */
     public function getTags(): array;
 
     public function onBefore(StateContract $state): void;

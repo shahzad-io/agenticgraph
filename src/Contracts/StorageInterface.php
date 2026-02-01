@@ -15,7 +15,7 @@ interface StorageInterface
     /**
      * @return array<int, mixed>
      */
-    public function list(string $graphName, int $limit = 50): array;
+    public function list(string $graphName, int $limit = 50, int $offset = 0): array;
 
     public function delete(string $id): bool;
 

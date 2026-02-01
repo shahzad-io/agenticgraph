@@ -4,13 +4,20 @@ use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
 
 it('registers and retrieves graphs', function () {
+    $registry = app(GraphRegistry::class);
+
     $graph = GraphBuilder::create('reg')
         ->addNode('start', GraphRegistryTestNode::class)
         ->setEntryPoint('start')
         ->addExitPoint('start')
         ->build();
-    GraphRegistry::register('reg', $graph);
-    expect(GraphRegistry::get('reg'))->not()->toBeNull()->and(GraphRegistry::all())->toHaveKey('reg');
+
+    $registry->register('reg', $graph);
+
+    expect($registry->get('reg'))->not()->toBeNull()
+        ->and($registry->all())->toHaveKey('reg')
+        ->and($registry->has('reg'))->toBeTrue()
+        ->and($registry->count())->toBeGreaterThan(0);
 });
 
 class GraphRegistryTestNode extends \Shahzad\AgenticGraph\Nodes\AbstractNode

@@ -20,9 +20,11 @@ use Prism\Prism\ValueObjects\Media\Audio as AudioMedia;
 use Prism\Relay\Facades\Relay;
 use Shahzad\AgenticGraph\Contracts\PrismClient;
 use Shahzad\AgenticGraph\Events\TokensUsed;
+use Shahzad\AgenticGraph\Events\ToolCallCaptured;
 use Shahzad\AgenticGraph\Mcp\McpRequest;
 use Shahzad\AgenticGraph\Prompts\ChatPromptTemplate;
 use Shahzad\AgenticGraph\Prompts\PromptTemplate;
+use Shahzad\AgenticGraph\Tracing\TraceContext;
 
 abstract class PrismNode extends AbstractNode
 {
@@ -38,12 +40,58 @@ abstract class PrismNode extends AbstractNode
 
     protected bool $trackTokens = true;
 
+    private bool $suppressAutoTracking = false;
+
+    private bool $wrappedMcpTools = false;
+
     protected function prism(): PendingTextRequest
     {
         $config = $this->model ?? (string) config('agenticgraph.prism.model');
         [$provider, $model] = $this->parseModel($config);
+        $startTime = microtime(true);
+        $timeout = (int) config('agenticgraph.api.timeout', 30);
+        $connectTimeout = (int) config('agenticgraph.api.connect_timeout', 10);
+        $request = $this->prismClient()->text()
+            ->using($provider, $model)
+            ->withClientOptions([
+                'timeout' => $timeout,
+                'connect_timeout' => $connectTimeout,
+            ]);
+        $request->onComplete(function ($pending, $messages, $response) use ($startTime, $provider, $model) {
+            if ($this->suppressAutoTracking) {
+                return;
+            }
+            if (! $this->trackTokens) {
+                return;
+            }
+            $usage = $this->resolveUsage($response);
+            if ($usage === null) {
+                return;
+            }
+            $durationMs = (microtime(true) - $startTime) * 1000;
+            $callType = 'text';
+            $toolCalls = [];
+            if (is_object($response) && property_exists($response, 'toolCalls')) {
+                $toolCalls = $response->toolCalls ?? [];
+            } elseif (is_array($response) && array_key_exists('toolCalls', $response)) {
+                $toolCalls = $response['toolCalls'] ?? [];
+            }
+            if (is_array($toolCalls) && $toolCalls !== []) {
+                $callType = 'tools';
+                $this->dispatchToolCalls($toolCalls, 'prism');
+            }
+            $this->events()->dispatch(TokensUsed::fromLlmCall(
+                node: $this->getName(),
+                callStartMicrotime: $startTime,
+                callDurationMs: $durationMs,
+                promptTokens: $usage['promptTokens'],
+                completionTokens: $usage['completionTokens'],
+                callType: $callType,
+                model: "{$provider}:{$model}"
+            ));
+        });
 
-        return $this->prismClient()->text()->using($provider, $model);
+        return $request;
     }
 
     protected function embeddings(): PendingEmbeddingsRequest
@@ -97,6 +145,7 @@ abstract class PrismNode extends AbstractNode
 
     /**
      * @param  array<string, mixed>  $variables
+     * @param  array<int, \Prism\Prism\ValueObjects\Media\Media|\Prism\Prism\ValueObjects\Media\Text>  $additionalContent
      */
     protected function prompt(string $template, array $variables = [], array $additionalContent = []): string
     {
@@ -109,21 +158,26 @@ abstract class PrismNode extends AbstractNode
         }
         $config = $this->model ?? (string) config('agenticgraph.prism.model');
         [$provider, $model] = $this->parseModel($config);
+        $this->suppressAutoTracking = true;
         $response = $this->prism()->withPrompt($prompt, $additionalContent)->asText();
+        $this->suppressAutoTracking = false;
         $text = $response->text;
         if ($useCache) {
             $this->cache()->put($cacheKey, $text, ($this->cacheTtl ?? (int) config('agenticgraph.prism.cache_ttl')) * 60);
         }
-        if ($this->trackTokens && isset($response->usage)) {
+        if ($this->trackTokens) {
+            $usage = $this->resolveUsage($response);
+        }
+        if ($this->trackTokens && $usage !== null) {
             $durationMs = (microtime(true) - $startTime) * 1000;
-            $this->events()->dispatch(new TokensUsed(
+            $this->events()->dispatch(TokensUsed::fromLlmCall(
                 node: $this->getName(),
-                promptTokens: $response->usage->promptTokens ?? 0,
-                completionTokens: $response->usage->completionTokens ?? 0,
-                totalTokens: ($response->usage->promptTokens ?? 0) + ($response->usage->completionTokens ?? 0),
+                callStartMicrotime: $startTime,
+                callDurationMs: $durationMs,
+                promptTokens: $usage['promptTokens'],
+                completionTokens: $usage['completionTokens'],
                 callType: 'text',
-                model: "{$provider}:{$model}",
-                durationMs: $durationMs
+                model: "{$provider}:{$model}"
             ));
         }
 
@@ -139,22 +193,27 @@ abstract class PrismNode extends AbstractNode
         $config = $this->model ?? (string) config('agenticgraph.prism.model');
         [$provider, $model] = $this->parseModel($config);
 
+        $this->suppressAutoTracking = true;
         $response = $this->prism()
             ->withMessages($messages)
             ->asText();
+        $this->suppressAutoTracking = false;
 
         $text = $response->text;
 
-        if ($this->trackTokens && isset($response->usage)) {
+        if ($this->trackTokens) {
+            $usage = $this->resolveUsage($response);
+        }
+        if ($this->trackTokens && $usage !== null) {
             $durationMs = (microtime(true) - $startTime) * 1000;
-            $this->events()->dispatch(new TokensUsed(
+            $this->events()->dispatch(TokensUsed::fromLlmCall(
                 node: $this->getName(),
-                promptTokens: $response->usage->promptTokens ?? 0,
-                completionTokens: $response->usage->completionTokens ?? 0,
-                totalTokens: ($response->usage->promptTokens ?? 0) + ($response->usage->completionTokens ?? 0),
+                callStartMicrotime: $startTime,
+                callDurationMs: $durationMs,
+                promptTokens: $usage['promptTokens'],
+                completionTokens: $usage['completionTokens'],
                 callType: 'text',
-                model: "{$provider}:{$model}",
-                durationMs: $durationMs
+                model: "{$provider}:{$model}"
             ));
         }
 
@@ -187,14 +246,14 @@ abstract class PrismNode extends AbstractNode
         if ($this->trackTokens) {
             $tokens = $response->usage->tokens ?? 0;
             $durationMs = (microtime(true) - $startTime) * 1000;
-            $this->events()->dispatch(new TokensUsed(
+            $this->events()->dispatch(TokensUsed::fromLlmCall(
                 node: $this->getName(),
+                callStartMicrotime: $startTime,
+                callDurationMs: $durationMs,
                 promptTokens: $tokens,
                 completionTokens: 0,
-                totalTokens: $tokens,
                 callType: 'embeddings',
-                model: "{$provider}:{$model}",
-                durationMs: $durationMs
+                model: "{$provider}:{$model}"
             ));
         }
 
@@ -220,14 +279,14 @@ abstract class PrismNode extends AbstractNode
 
         if ($this->trackTokens && isset($response->usage)) {
             $durationMs = (microtime(true) - $startTime) * 1000;
-            $this->events()->dispatch(new TokensUsed(
+            $this->events()->dispatch(TokensUsed::fromLlmCall(
                 node: $this->getName(),
+                callStartMicrotime: $startTime,
+                callDurationMs: $durationMs,
                 promptTokens: $response->usage->promptTokens ?? 0,
                 completionTokens: $response->usage->completionTokens ?? 0,
-                totalTokens: ($response->usage->promptTokens ?? 0) + ($response->usage->completionTokens ?? 0),
                 callType: 'image',
-                model: "{$provider}:{$model}",
-                durationMs: $durationMs
+                model: "{$provider}:{$model}"
             ));
         }
 
@@ -252,14 +311,14 @@ abstract class PrismNode extends AbstractNode
 
         if ($this->trackTokens && isset($response->usage)) {
             $durationMs = (microtime(true) - $startTime) * 1000;
-            $this->events()->dispatch(new TokensUsed(
+            $this->events()->dispatch(TokensUsed::fromLlmCall(
                 node: $this->getName(),
+                callStartMicrotime: $startTime,
+                callDurationMs: $durationMs,
                 promptTokens: $response->usage->promptTokens ?? 0,
                 completionTokens: $response->usage->completionTokens ?? 0,
-                totalTokens: ($response->usage->promptTokens ?? 0) + ($response->usage->completionTokens ?? 0),
                 callType: 'audio',
-                model: "{$provider}:{$model}",
-                durationMs: $durationMs
+                model: "{$provider}:{$model}"
             ));
         }
 
@@ -296,16 +355,19 @@ abstract class PrismNode extends AbstractNode
             ->withPrompt($prompt)
             ->asStructured();
 
-        if ($this->trackTokens && isset($response->usage)) {
+        if ($this->trackTokens) {
+            $usage = $this->resolveUsage($response);
+        }
+        if ($this->trackTokens && $usage !== null) {
             $durationMs = (microtime(true) - $startTime) * 1000;
-            $this->events()->dispatch(new TokensUsed(
+            $this->events()->dispatch(TokensUsed::fromLlmCall(
                 node: $this->getName(),
-                promptTokens: $response->usage->promptTokens ?? 0,
-                completionTokens: $response->usage->completionTokens ?? 0,
-                totalTokens: ($response->usage->promptTokens ?? 0) + ($response->usage->completionTokens ?? 0),
+                callStartMicrotime: $startTime,
+                callDurationMs: $durationMs,
+                promptTokens: $usage['promptTokens'],
+                completionTokens: $usage['completionTokens'],
                 callType: 'structured',
-                model: "{$provider}:{$model}",
-                durationMs: $durationMs
+                model: "{$provider}:{$model}"
             ));
         }
 
@@ -322,27 +384,37 @@ abstract class PrismNode extends AbstractNode
         $config = $this->model ?? (string) config('agenticgraph.prism.model');
         [$provider, $model] = $this->parseModel($config);
 
+        $this->suppressAutoTracking = true;
         $response = $this->prism()
             ->withTools($tools)
             ->withPrompt($prompt)
             ->asText();
+        $this->suppressAutoTracking = false;
 
-        if ($this->trackTokens && isset($response->usage)) {
+        $this->dispatchToolCalls($response->toolCalls ?? [], 'prism');
+
+        if ($this->trackTokens) {
+            $usage = $this->resolveUsage($response);
+        }
+        if ($this->trackTokens && $usage !== null) {
             $durationMs = (microtime(true) - $startTime) * 1000;
-            $this->events()->dispatch(new TokensUsed(
+            $this->events()->dispatch(TokensUsed::fromLlmCall(
                 node: $this->getName(),
-                promptTokens: $response->usage->promptTokens ?? 0,
-                completionTokens: $response->usage->completionTokens ?? 0,
-                totalTokens: ($response->usage->promptTokens ?? 0) + ($response->usage->completionTokens ?? 0),
+                callStartMicrotime: $startTime,
+                callDurationMs: $durationMs,
+                promptTokens: $usage['promptTokens'],
+                completionTokens: $usage['completionTokens'],
                 callType: 'tools',
-                model: "{$provider}:{$model}",
-                durationMs: $durationMs
+                model: "{$provider}:{$model}"
             ));
         }
 
         return $response->toolCalls;
     }
 
+    /**
+     * @param  array<string, mixed>  $options
+     */
     protected function withMcp(string $serverName, array $options = []): McpRequest
     {
         $config = $this->model ?? (string) config('agenticgraph.prism.model');
@@ -353,7 +425,11 @@ abstract class PrismNode extends AbstractNode
             $tools = [];
         }
 
-        $request = $this->prism()->withTools($tools);
+        $tools = $this->wrapMcpTools($tools);
+        $captureToolCalls = ! $this->wrappedMcpTools;
+        // Do not use $this->prism() here as it attaches a tracking hook,
+        // and McpRequest handles tracking itself.
+        $request = $this->prismClient()->text()->using($provider, $model)->withTools($tools);
 
         $toolChoice = $options['toolChoice'] ?? ToolChoice::Any;
         $request->withToolChoice($toolChoice);
@@ -369,7 +445,8 @@ abstract class PrismNode extends AbstractNode
             $model,
             $this->getName(),
             $this->trackTokens,
-            $this->events()
+            $this->events(),
+            $captureToolCalls
         );
     }
 
@@ -402,8 +479,16 @@ abstract class PrismNode extends AbstractNode
     protected function getCacheKey(string $prompt): string
     {
         $model = $this->model ?? config('agenticgraph.prism.model', 'default');
+        $nodeClass = static::class;
+        $version = config('agenticgraph.cache.version', 'v1');
 
-        return 'agenticgraph:prism:'.md5($model.'|'.$prompt);
+        // Include node class and version to prevent cache key collisions
+        return sprintf(
+            'agenticgraph:prism:%s:%s:%s',
+            $version,
+            $nodeClass,
+            md5($model.'|'.$prompt)
+        );
     }
 
     /**
@@ -418,6 +503,9 @@ abstract class PrismNode extends AbstractNode
         }, $template);
     }
 
+    /**
+     * @return array{0: string, 1: string}
+     */
     protected function parseModel(string $value): array
     {
         $parts = explode(':', $value, 2);
@@ -428,10 +516,306 @@ abstract class PrismNode extends AbstractNode
         return ['openai', $value];
     }
 
+    protected function trackTokensFromResponse(mixed $response, string $callType, float $startTime): void
+    {
+        if (! $this->trackTokens) {
+            return;
+        }
+
+        $usage = $this->resolveUsage($response);
+        if ($usage === null) {
+            return;
+        }
+
+        $durationMs = (microtime(true) - $startTime) * 1000;
+        $config = $this->model ?? (string) config('agenticgraph.prism.model');
+        [$provider, $model] = $this->parseModel($config);
+
+        $this->events()->dispatch(TokensUsed::fromLlmCall(
+            node: $this->getName(),
+            callStartMicrotime: $startTime,
+            callDurationMs: $durationMs,
+            promptTokens: $usage['promptTokens'],
+            completionTokens: $usage['completionTokens'],
+            callType: $callType,
+            model: "{$provider}:{$model}"
+        ));
+    }
+
+    /**
+     * @return array{promptTokens: int, completionTokens: int, totalTokens: int}|null
+     */
+    private function resolveUsage(mixed $response): ?array
+    {
+        if (is_object($response) && isset($response->usage)) {
+            $promptTokens = (int) ($response->usage->promptTokens ?? 0);
+            $completionTokens = (int) ($response->usage->completionTokens ?? 0);
+
+            return [
+                'promptTokens' => $promptTokens,
+                'completionTokens' => $completionTokens,
+                'totalTokens' => $promptTokens + $completionTokens,
+            ];
+        }
+
+        $steps = null;
+        if (is_object($response) && property_exists($response, 'steps')) {
+            $steps = $response->steps;
+        } elseif (is_array($response) && array_key_exists('steps', $response)) {
+            $steps = $response['steps'];
+        }
+
+        if ($steps instanceof \Illuminate\Support\Collection) {
+            $steps = $steps->all();
+        }
+
+        if (! is_array($steps)) {
+            return null;
+        }
+
+        $promptTokens = 0;
+        $completionTokens = 0;
+
+        foreach ($steps as $step) {
+            $usage = null;
+            if (is_object($step) && isset($step->usage)) {
+                $usage = $step->usage;
+            } elseif (is_array($step) && isset($step['usage'])) {
+                $usage = $step['usage'];
+            }
+
+            if ($usage === null) {
+                continue;
+            }
+
+            if (is_object($usage)) {
+                $promptTokens += (int) ($usage->promptTokens ?? 0);
+                $completionTokens += (int) ($usage->completionTokens ?? 0);
+            } elseif (is_array($usage)) {
+                $promptTokens += (int) ($usage['promptTokens'] ?? 0);
+                $completionTokens += (int) ($usage['completionTokens'] ?? 0);
+            }
+        }
+
+        if ($promptTokens === 0 && $completionTokens === 0) {
+            return null;
+        }
+
+        return [
+            'promptTokens' => $promptTokens,
+            'completionTokens' => $completionTokens,
+            'totalTokens' => $promptTokens + $completionTokens,
+        ];
+    }
+
+    /**
+     * @param  array<int, mixed>  $toolCalls
+     */
+    private function dispatchToolCalls(array $toolCalls, string $toolType): void
+    {
+        if ($toolCalls === []) {
+            return;
+        }
+
+        $traceContext = null;
+        try {
+            $traceContext = app(TraceContext::class);
+        } catch (\Illuminate\Contracts\Container\BindingResolutionException $e) {
+            // TraceContext not bound, tracing not active
+            return;
+        }
+
+        $executionId = $traceContext->getExecutionId();
+        $spanId = $traceContext->getSpanId();
+
+        foreach ($toolCalls as $toolCall) {
+            $toolName = null;
+            $toolCallId = null;
+            $arguments = null;
+
+            if (is_object($toolCall)) {
+                $toolName = $toolCall->name ?? null;
+                $toolCallId = $toolCall->id ?? null;
+                if (method_exists($toolCall, 'arguments')) {
+                    $arguments = $toolCall->arguments();
+                } elseif (property_exists($toolCall, 'arguments')) {
+                    $arguments = $toolCall->arguments;
+                }
+            } elseif (is_array($toolCall)) {
+                $toolName = $toolCall['name'] ?? null;
+                $toolCallId = $toolCall['id'] ?? null;
+                $arguments = $toolCall['arguments'] ?? null;
+            }
+
+            if (! is_string($toolName) || $toolName === '') {
+                continue;
+            }
+
+            $this->events()->dispatch(new ToolCallCaptured(
+                executionId: $executionId,
+                spanId: $spanId,
+                toolName: $toolName,
+                toolCallId: is_string($toolCallId) ? $toolCallId : null,
+                toolType: $toolType,
+                toolProvider: $this->toolProviderFromName($toolName),
+                inputSize: $this->payloadSize($arguments),
+                outputSize: null,
+                durationMs: null,
+                startedAt: new \DateTimeImmutable,
+                toolRequestId: is_string($toolCallId) ? $toolCallId : null,
+                status: 'success',
+                errorType: null,
+                errorMessage: null
+            ));
+        }
+    }
+
+    /**
+     * @param  array<int, mixed>  $tools
+     * @return array<int, \Prism\Prism\Tool>
+     */
+    private function wrapMcpTools(array $tools): array
+    {
+        $wrapped = [];
+        $wrappedTools = false;
+
+        foreach ($tools as $tool) {
+            if (! $tool instanceof \Prism\Prism\Tool) {
+                $wrapped[] = $tool;
+
+                continue;
+            }
+
+            $wrappedTool = new \Prism\Prism\Tool;
+            $toolName = $tool->name();
+            $wrappedTool->as($toolName);
+            $wrappedTool->for($tool->description());
+
+            foreach ($tool->parameters() as $name => $schema) {
+                $required = in_array($name, $tool->requiredParameters(), true);
+                $wrappedTool->withParameter($schema, $required);
+            }
+
+            $wrappedTool->using(function (...$args) use ($tool, $toolName): string {
+                $startedAt = new \DateTimeImmutable;
+                $start = microtime(true);
+                try {
+                    $result = $tool->handle(...$args);
+                } catch (\Throwable $e) {
+                    $durationMs = (microtime(true) - $start) * 1000;
+                    $this->dispatchMcpToolSpan($toolName, $args, null, $durationMs, 'failed', get_class($e), $e->getMessage(), $startedAt);
+                    throw $e;
+                }
+
+                $durationMs = (microtime(true) - $start) * 1000;
+                [$status, $errorType, $errorMessage] = $this->detectToolError($result);
+                $this->dispatchMcpToolSpan($toolName, $args, $result, $durationMs, $status, $errorType, $errorMessage, $startedAt);
+
+                return $result;
+            });
+
+            $wrapped[] = $wrappedTool;
+            $wrappedTools = true;
+        }
+
+        $this->wrappedMcpTools = $wrappedTools;
+
+        return $wrapped;
+    }
+
+    /**
+     * @return array{0: string, 1: string|null, 2: string|null}
+     */
+    private function detectToolError(string $result): array
+    {
+        if (! str_starts_with($result, 'ERROR:') && ! str_starts_with($result, 'Tool execution error:')) {
+            return ['success', null, null];
+        }
+
+        $message = trim($result);
+        $type = 'tool_error';
+        $lower = strtolower($message);
+        if (str_contains($lower, 'transport') || str_contains($lower, 'connection') || str_contains($lower, 'timed out') || str_contains($lower, 'timeout')) {
+            $type = 'connection';
+        }
+
+        return ['failed', $type, $message];
+    }
+
+    /**
+     * @param  array<string, mixed>  $args
+     */
+    private function dispatchMcpToolSpan(
+        string $toolName,
+        array $args,
+        ?string $result,
+        float $durationMs,
+        string $status,
+        ?string $errorType,
+        ?string $errorMessage,
+        \DateTimeImmutable $startedAt
+    ): void {
+        $traceContext = null;
+        try {
+            $traceContext = app(TraceContext::class);
+        } catch (\Illuminate\Contracts\Container\BindingResolutionException $e) {
+            // TraceContext not bound, tracing not active
+            return;
+        }
+
+        $this->events()->dispatch(new ToolCallCaptured(
+            executionId: $traceContext->getExecutionId(),
+            spanId: $traceContext->getSpanId(),
+            toolName: $toolName,
+            toolCallId: null,
+            toolType: 'mcp',
+            inputSize: $this->payloadSize($args),
+            outputSize: $this->payloadSize($result),
+            durationMs: $durationMs,
+            startedAt: $startedAt,
+            toolProvider: $this->toolProviderFromName($toolName),
+            toolRequestId: null,
+            status: $status,
+            errorType: $errorType,
+            errorMessage: $errorMessage
+        ));
+    }
+
+    private function toolProviderFromName(string $toolName): ?string
+    {
+        if (! str_contains($toolName, '__')) {
+            return null;
+        }
+
+        $parts = explode('__', $toolName);
+        $provider = $parts[1] ?? null;
+
+        return is_string($provider) && $provider !== '' ? $provider : null;
+    }
+
+    private function payloadSize(mixed $payload): ?int
+    {
+        if ($payload === null) {
+            return null;
+        }
+
+        if (is_string($payload)) {
+            return strlen($payload);
+        }
+
+        $encoded = json_encode($payload);
+        if (! is_string($encoded)) {
+            return null;
+        }
+
+        return strlen($encoded);
+    }
+
     /**
      * Use a prompt template
      *
      * @param  array<string, mixed>  $variables
+     * @param  array<int, \Prism\Prism\ValueObjects\Media\Media|\Prism\Prism\ValueObjects\Media\Text>  $additionalContent
      */
     protected function promptTemplate(PromptTemplate $template, array $variables = [], array $additionalContent = []): string
     {
@@ -446,7 +830,11 @@ abstract class PrismNode extends AbstractNode
 
         $config = $this->model ?? (string) config('agenticgraph.prism.model');
         [$provider, $model] = $this->parseModel($config);
+
+        $this->suppressAutoTracking = true;
         $response = $this->prism()->withPrompt($prompt, $additionalContent)->asText();
+        $this->suppressAutoTracking = false;
+
         $text = $response->text;
 
         if ($useCache) {
@@ -455,14 +843,14 @@ abstract class PrismNode extends AbstractNode
 
         if ($this->trackTokens && isset($response->usage)) {
             $durationMs = (microtime(true) - $startTime) * 1000;
-            $this->events()->dispatch(new TokensUsed(
+            $this->events()->dispatch(TokensUsed::fromLlmCall(
                 node: $this->getName(),
+                callStartMicrotime: $startTime,
+                callDurationMs: $durationMs,
                 promptTokens: $response->usage->promptTokens ?? 0,
                 completionTokens: $response->usage->completionTokens ?? 0,
-                totalTokens: ($response->usage->promptTokens ?? 0) + ($response->usage->completionTokens ?? 0),
                 callType: 'text',
-                model: "{$provider}:{$model}",
-                durationMs: $durationMs
+                model: "{$provider}:{$model}"
             ));
         }
 
@@ -473,6 +861,7 @@ abstract class PrismNode extends AbstractNode
      * Use a chat prompt template
      *
      * @param  array<string, mixed>  $variables
+     * @param  array<int, \Prism\Prism\ValueObjects\Media\Media|\Prism\Prism\ValueObjects\Media\Text>  $additionalContent
      */
     protected function chatPrompt(ChatPromptTemplate $template, array $variables = [], array $additionalContent = []): string
     {
@@ -497,14 +886,14 @@ abstract class PrismNode extends AbstractNode
 
         if ($this->trackTokens && isset($response->usage)) {
             $durationMs = (microtime(true) - $startTime) * 1000;
-            $this->events()->dispatch(new TokensUsed(
+            $this->events()->dispatch(TokensUsed::fromLlmCall(
                 node: $this->getName(),
+                callStartMicrotime: $startTime,
+                callDurationMs: $durationMs,
                 promptTokens: $response->usage->promptTokens ?? 0,
                 completionTokens: $response->usage->completionTokens ?? 0,
-                totalTokens: ($response->usage->promptTokens ?? 0) + ($response->usage->completionTokens ?? 0),
                 callType: 'text',
-                model: "{$provider}:{$model}",
-                durationMs: $durationMs
+                model: "{$provider}:{$model}"
             ));
         }
 

@@ -9,6 +9,7 @@ use Shahzad\AgenticGraph\Contracts\StateContract;
 
 abstract class AbstractRouter implements RouterInterface
 {
+    /** @var array<string, string> */
     protected array $routes = [];
 
     protected ?string $defaultRoute = null;

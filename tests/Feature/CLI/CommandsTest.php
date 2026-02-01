@@ -3,7 +3,6 @@
 use Illuminate\Support\Facades\Artisan;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
-use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
 
 class CLINode extends AbstractNode
@@ -20,7 +19,7 @@ it('lists graphs', function () {
         ->setEntryPoint('start')
         ->addExitPoint('start')
         ->build();
-    GraphRegistry::register('cli-graph', $graph);
+    app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->register('cli-graph', $graph);
     $code = Artisan::call('agenticgraph:list');
     expect($code)->toBe(0);
 });
@@ -33,7 +32,7 @@ it('visualizes graph', function () {
         ->setEntryPoint('start')
         ->addExitPoint('end')
         ->build();
-    GraphRegistry::register('viz-graph', $graph);
+    app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->register('viz-graph', $graph);
     $code = Artisan::call('agenticgraph:visualize', ['name' => 'viz-graph']);
     expect($code)->toBe(0);
 });

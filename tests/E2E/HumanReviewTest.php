@@ -53,7 +53,7 @@ it('pauses on human review and resumes to completion', function () {
         ->build();
 
     $executor = new GraphExecutor;
-    \Shahzad\AgenticGraph\Graph\GraphRegistry::register('human_review', $graph);
+    app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->register('human_review', $graph);
     $state = new State(['message' => 'Complex billing issue']);
     $result = $executor->executeUntil($graph, $state, fn ($s) => $s->get('needs_review') === true);
     expect($result['checkpointId'])->not()->toBeNull();

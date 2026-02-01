@@ -17,6 +17,8 @@ class ExecutionRepository
 
     /**
      * Valid state transitions for execution lifecycle
+     *
+     * @var array<string, array<int, string>>
      */
     protected array $validTransitions = [
         'queued' => ['running', 'failed'],
@@ -31,22 +33,27 @@ class ExecutionRepository
         $this->logger = $logger ?? app(LoggerInterface::class);
     }
 
+    /**
+     * @param  array<string, mixed>  $initialState
+     */
     public function queued(string $id, string $graphName, array $initialState = []): void
     {
-        $this->db->table($this->table)->updateOrInsert(
-            ['id' => $id],
-            [
-                'graph_name' => $graphName,
-                'status' => 'queued',
-                'initial_state' => json_encode($initialState),
-                'started_at' => null,
-                'completed_at' => null,
-                'duration' => null,
-                'error' => null,
-                'updated_at' => now(),
-                'created_at' => now(),
-            ]
-        );
+        $this->db->transaction(function () use ($id, $graphName, $initialState) {
+            $this->db->table($this->table)->updateOrInsert(
+                ['id' => $id],
+                [
+                    'graph_name' => $graphName,
+                    'status' => 'queued',
+                    'initial_state' => json_encode($initialState),
+                    'started_at' => null,
+                    'completed_at' => null,
+                    'duration' => null,
+                    'error' => null,
+                    'updated_at' => now(),
+                    'created_at' => now(),
+                ]
+            );
+        });
 
         if ((bool) config('agenticgraph.logging.enabled', true)) {
             $this->logger->debug('Execution queued', [
@@ -56,69 +63,86 @@ class ExecutionRepository
         }
     }
 
+    /**
+     * @param  array<string, mixed>  $initialState
+     */
     public function started(string $id, string $graphName, array $initialState = []): void
     {
-        // Verify the record exists and get current status
-        $current = $this->db->table($this->table)->where('id', $id)->first();
+        $this->db->transaction(function () use ($id, $graphName, $initialState) {
+            // Verify the record exists and get current status with lock
+            $current = $this->db->table($this->table)
+                ->where('id', $id)
+                ->lockForUpdate()
+                ->first();
 
-        if (! $current) {
-            // If record doesn't exist, create it first (shouldn't happen in normal flow)
+            if (! $current) {
+                // If record doesn't exist, create it first (shouldn't happen in normal flow)
+                if ((bool) config('agenticgraph.logging.enabled', true)) {
+                    $this->logger->warning('Execution record not found when starting, creating new record', [
+                        'execution_id' => $id,
+                        'graph_name' => $graphName,
+                    ]);
+                }
+                $this->queued($id, $graphName, $initialState);
+                $current = (object) ['status' => 'queued'];
+            } else {
+                // Validate state transition
+                if (! $this->canTransitionTo($id, 'running')) {
+                    if ((bool) config('agenticgraph.logging.enabled', true)) {
+                        $this->logger->warning('Invalid state transition attempted', [
+                            'execution_id' => $id,
+                            'current_status' => $current->status,
+                            'attempted_status' => 'running',
+                        ]);
+                    }
+                }
+            }
+
+            // Update to running status
+            $this->db->table($this->table)->where('id', $id)->update([
+                'status' => 'running',
+                'started_at' => now(),
+                'updated_at' => now(),
+            ]);
+
             if ((bool) config('agenticgraph.logging.enabled', true)) {
-                $this->logger->warning('Execution record not found when starting, creating new record', [
+                $this->logger->debug('Execution started', [
                     'execution_id' => $id,
                     'graph_name' => $graphName,
+                    'previous_status' => $current->status ?? 'new',
                 ]);
             }
-            $this->queued($id, $graphName, $initialState);
-        } else {
-            // Validate state transition
-            if (! $this->canTransitionTo($id, 'running')) {
+        });
+    }
+
+    /**
+     * @param  array<string, mixed>  $finalState
+     */
+    public function completed(string $id, array $finalState, float $duration): void
+    {
+        $this->db->transaction(function () use ($id, $finalState, $duration) {
+            // Verify state transition with lock
+            if (! $this->canTransitionTo($id, 'completed')) {
+                $current = $this->db->table($this->table)
+                    ->where('id', $id)
+                    ->lockForUpdate()
+                    ->value('status');
                 if ((bool) config('agenticgraph.logging.enabled', true)) {
-                    $this->logger->warning('Invalid state transition attempted', [
+                    $this->logger->warning('Invalid state transition to completed', [
                         'execution_id' => $id,
-                        'current_status' => $current->status,
-                        'attempted_status' => 'running',
+                        'current_status' => $current,
                     ]);
                 }
             }
-        }
 
-        // Update to running status
-        $this->db->table($this->table)->where('id', $id)->update([
-            'status' => 'running',
-            'started_at' => now(),
-            'updated_at' => now(),
-        ]);
-
-        if ((bool) config('agenticgraph.logging.enabled', true)) {
-            $this->logger->debug('Execution started', [
-                'execution_id' => $id,
-                'graph_name' => $graphName,
-                'previous_status' => $current ? $current->status : 'new',
+            $this->db->table($this->table)->where('id', $id)->update([
+                'status' => 'completed',
+                'final_state' => json_encode($finalState),
+                'duration' => $duration,
+                'completed_at' => now(),
+                'updated_at' => now(),
             ]);
-        }
-    }
-
-    public function completed(string $id, array $finalState, float $duration): void
-    {
-        // Verify state transition
-        if (! $this->canTransitionTo($id, 'completed')) {
-            $current = $this->db->table($this->table)->where('id', $id)->value('status');
-            if ((bool) config('agenticgraph.logging.enabled', true)) {
-                $this->logger->warning('Invalid state transition to completed', [
-                    'execution_id' => $id,
-                    'current_status' => $current,
-                ]);
-            }
-        }
-
-        $this->db->table($this->table)->where('id', $id)->update([
-            'status' => 'completed',
-            'final_state' => json_encode($finalState),
-            'duration' => $duration,
-            'completed_at' => now(),
-            'updated_at' => now(),
-        ]);
+        });
 
         if ((bool) config('agenticgraph.logging.enabled', true)) {
             $this->logger->debug('Execution completed', [
@@ -130,22 +154,27 @@ class ExecutionRepository
 
     public function failed(string $id, string $error): void
     {
-        // Verify state transition
-        if (! $this->canTransitionTo($id, 'failed')) {
-            $current = $this->db->table($this->table)->where('id', $id)->value('status');
-            if ((bool) config('agenticgraph.logging.enabled', true)) {
-                $this->logger->warning('Invalid state transition to failed', [
-                    'execution_id' => $id,
-                    'current_status' => $current,
-                ]);
+        $this->db->transaction(function () use ($id, $error) {
+            // Verify state transition with lock
+            if (! $this->canTransitionTo($id, 'failed')) {
+                $current = $this->db->table($this->table)
+                    ->where('id', $id)
+                    ->lockForUpdate()
+                    ->value('status');
+                if ((bool) config('agenticgraph.logging.enabled', true)) {
+                    $this->logger->warning('Invalid state transition to failed', [
+                        'execution_id' => $id,
+                        'current_status' => $current,
+                    ]);
+                }
             }
-        }
 
-        $this->db->table($this->table)->where('id', $id)->update([
-            'status' => 'failed',
-            'error' => $error,
-            'updated_at' => now(),
-        ]);
+            $this->db->table($this->table)->where('id', $id)->update([
+                'status' => 'failed',
+                'error' => $error,
+                'updated_at' => now(),
+            ]);
+        });
 
         if ((bool) config('agenticgraph.logging.enabled', true)) {
             $this->logger->error('Execution failed', [
@@ -204,7 +233,21 @@ class ExecutionRepository
      */
     public function getHistory(string $id): array
     {
-        $execution = $this->get($id);
+        // Single query to get execution record - no N+1 issue here as we only fetch one record
+        $execution = $this->db->table($this->table)
+            ->where('id', $id)
+            ->select([
+                'id',
+                'graph_name',
+                'status',
+                'created_at',
+                'started_at',
+                'completed_at',
+                'duration',
+                'error',
+            ])
+            ->first();
+
         if (! $execution) {
             return [];
         }
@@ -222,23 +265,69 @@ class ExecutionRepository
     }
 
     /**
+     * Get execution history for multiple IDs efficiently
+     *
+     * @param  array<int, string>  $ids
+     * @return array<string, array<string, mixed>>
+     */
+    public function getHistoryBatch(array $ids): array
+    {
+        if (empty($ids)) {
+            return [];
+        }
+
+        $executions = $this->db->table($this->table)
+            ->whereIn('id', $ids)
+            ->select([
+                'id',
+                'graph_name',
+                'status',
+                'created_at',
+                'started_at',
+                'completed_at',
+                'duration',
+                'error',
+            ])
+            ->get()
+            ->keyBy('id');
+
+        $result = [];
+        foreach ($executions as $id => $execution) {
+            $result[$id] = [
+                'id' => $execution->id,
+                'graph_name' => $execution->graph_name,
+                'status' => $execution->status,
+                'created_at' => $execution->created_at,
+                'started_at' => $execution->started_at,
+                'completed_at' => $execution->completed_at,
+                'duration' => $execution->duration,
+                'error' => $execution->error,
+            ];
+        }
+
+        return $result;
+    }
+
+    /**
      * Clean up old completed/failed executions
      */
     public function cleanup(int $olderThanDays = 30, ?string $status = null): int
     {
         $threshold = now()->subDays($olderThanDays);
 
-        $query = $this->db->table($this->table)
-            ->where('completed_at', '<', $threshold);
+        return $this->db->transaction(function () use ($threshold, $status) {
+            $query = $this->db->table($this->table)
+                ->where('completed_at', '<', $threshold);
 
-        if ($status) {
-            $query->where('status', $status);
-        } else {
-            // Only cleanup completed and failed, keep running/queued
-            $query->whereIn('status', ['completed', 'failed']);
-        }
+            if ($status) {
+                $query->where('status', $status);
+            } else {
+                // Only cleanup completed and failed, keep running/queued
+                $query->whereIn('status', ['completed', 'failed']);
+            }
 
-        return $query->delete();
+            return $query->delete();
+        });
     }
 
     /**
@@ -275,10 +364,62 @@ class ExecutionRepository
     {
         $threshold = now()->subMinutes($olderThanMinutes);
 
+        // Single query with proper index usage - no N+1 issue
         return $this->db->table($this->table)
             ->where('status', 'running')
             ->where('started_at', '<', $threshold)
+            ->select([
+                'id',
+                'graph_name',
+                'status',
+                'started_at',
+                'created_at',
+            ])
             ->get()
             ->toArray();
+    }
+
+    /**
+     * Find and mark stuck executions as failed
+     *
+     * @return array<int, string> Array of execution IDs that were marked as failed
+     */
+    public function markStuckExecutionsAsFailed(int $olderThanMinutes = 60): array
+    {
+        $threshold = now()->subMinutes($olderThanMinutes);
+
+        return $this->db->transaction(function () use ($threshold, $olderThanMinutes) {
+            // Find stuck executions with lock
+            $stuckIds = $this->db->table($this->table)
+                ->where('status', 'running')
+                ->where('started_at', '<', $threshold)
+                ->lockForUpdate()
+                ->pluck('id')
+                ->toArray();
+
+            if (empty($stuckIds)) {
+                return [];
+            }
+
+            // Mark as failed
+            $this->db->table($this->table)
+                ->whereIn('id', $stuckIds)
+                ->update([
+                    'status' => 'failed',
+                    'error' => "Execution marked as failed after being stuck for more than {$olderThanMinutes} minutes",
+                    'updated_at' => now(),
+                ]);
+
+            foreach ($stuckIds as $id) {
+                if ((bool) config('agenticgraph.logging.enabled', true)) {
+                    $this->logger->warning('Execution marked as failed due to being stuck', [
+                        'execution_id' => $id,
+                        'threshold_minutes' => $olderThanMinutes,
+                    ]);
+                }
+            }
+
+            return $stuckIds;
+        });
     }
 }

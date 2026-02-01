@@ -9,16 +9,24 @@ return new class extends Migration {
     {
         Schema::create('agenticgraph_executions', function (Blueprint $table) {
             $table->string('id')->primary();
+
             $table->string('graph_name');
-            $table->string('status'); // queued, running, paused, completed, failed
+            $table->string('status');
+
             $table->json('initial_state')->nullable();
             $table->json('final_state')->nullable();
+
             $table->float('duration')->nullable();
             $table->text('error')->nullable();
+
             $table->timestamp('started_at')->nullable();
             $table->timestamp('completed_at')->nullable();
+
             $table->timestamps();
+
             $table->index(['graph_name', 'status']);
+            $table->index('status');
+            $table->index(['created_at', 'status']);
         });
     }
 

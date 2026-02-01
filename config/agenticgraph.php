@@ -6,6 +6,8 @@ return [
     'checkpoint' => [
         'enabled' => env('AGENTICGRAPH_CHECKPOINT_ENABLED', true),
         'ttl' => env('AGENTICGRAPH_CHECKPOINT_TTL', 7),
+        'frequency' => env('AGENTICGRAPH_CHECKPOINT_FREQUENCY', 1), // Create checkpoint every N nodes (1 = every node)
+        'max_state_size' => env('AGENTICGRAPH_MAX_STATE_SIZE', 10485760), // 10MB in bytes
     ],
 
     'execution' => [
@@ -16,6 +18,16 @@ return [
 
     'lock' => [
         'timeout' => env('AGENTICGRAPH_LOCK_TIMEOUT', 10),
+        'block_timeout' => env('AGENTICGRAPH_LOCK_BLOCK_TIMEOUT', 5),
+    ],
+
+    'router' => [
+        'max_retries' => env('AGENTICGRAPH_ROUTER_MAX_RETRIES', 3),
+        'retry_delay_ms' => env('AGENTICGRAPH_ROUTER_RETRY_DELAY_MS', 100),
+    ],
+
+    'cache' => [
+        'version' => env('AGENTICGRAPH_CACHE_VERSION', 'v1'),
     ],
 
     'logging' => [
@@ -46,6 +58,20 @@ return [
         'failure_threshold' => env('AGENTICGRAPH_CIRCUIT_BREAKER_THRESHOLD', 5),
         'timeout' => env('AGENTICGRAPH_CIRCUIT_BREAKER_TIMEOUT', 60),
         'retry_after' => env('AGENTICGRAPH_CIRCUIT_BREAKER_RETRY_AFTER', 300),
+        'half_open_requests' => env('AGENTICGRAPH_CIRCUIT_BREAKER_HALF_OPEN', 3), // Requests to test in half-open state
+    ],
+
+    'events' => [
+        'batching' => [
+            'enabled' => env('AGENTICGRAPH_EVENT_BATCHING_ENABLED', false),
+            'batch_size' => env('AGENTICGRAPH_EVENT_BATCH_SIZE', 100),
+            'flush_interval_seconds' => env('AGENTICGRAPH_EVENT_FLUSH_INTERVAL', 5),
+        ],
+    ],
+
+    'api' => [
+        'timeout' => env('AGENTICGRAPH_API_TIMEOUT', 30), // seconds
+        'connect_timeout' => env('AGENTICGRAPH_API_CONNECT_TIMEOUT', 10), // seconds
     ],
 
     /*
@@ -63,6 +89,13 @@ return [
         // AgenticPulse API credentials
         'api_key' => env('AGENTICPULSE_API_KEY'),
         'endpoint' => env('AGENTICPULSE_ENDPOINT', 'https://api.agenticpulse.io'),
+
+        'service' => [
+            'name' => env('AGENTICGRAPH_SERVICE_NAME', 'agenticgraph'),
+            'version' => env('AGENTICGRAPH_SERVICE_VERSION', 'unknown'),
+        ],
+        'environment' => env('APP_ENV', 'local'),
+        'instrumentation_scope' => 'agenticgraph',
 
         // What to capture
         'capture' => [
@@ -84,6 +117,9 @@ return [
         'buffer' => [
             'store' => env('AGENTICGRAPH_TRACING_BUFFER_STORE'),
             'ttl_seconds' => env('AGENTICGRAPH_TRACING_BUFFER_TTL', 3600),
+        ],
+        'http' => [
+            'request_ttl_seconds' => env('AGENTICGRAPH_HTTP_REQUEST_TTL', 120),
         ],
     ],
 ];

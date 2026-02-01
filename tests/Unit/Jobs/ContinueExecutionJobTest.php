@@ -3,7 +3,6 @@
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
-use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Jobs\ContinueExecutionJob;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
 use Shahzad\AgenticGraph\State\State;
@@ -33,9 +32,9 @@ it('continues execution from a node', function () {
         ->setEntryPoint('a')
         ->addExitPoint('end')
         ->build();
-    GraphRegistry::register('ce-graph', $graph);
-    $job = new ContinueExecutionJob('ce-graph', 'exec-2', new State, 'a');
-    $job->handle(new GraphExecutor);
+    app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->register('ce-graph', $graph);
+    $job = new ContinueExecutionJob('ce-graph', 'exec-2', (new State)->toArray(), 'a');
+    $job->handle(new GraphExecutor, app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class));
     $list = (new DatabaseStorage)->list('ce-graph');
     expect($list)->not()->toBeEmpty();
 });

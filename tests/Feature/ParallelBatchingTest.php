@@ -4,7 +4,6 @@ use Illuminate\Support\Facades\Bus;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
-use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Jobs\ExecuteGraphJob;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
 use Shahzad\AgenticGraph\State\State;
@@ -59,8 +58,8 @@ it('uses Bus::batch for parallel execution', function () {
         ->setEntryPoint('start')
         ->addExitPoint('end')
         ->build();
-    GraphRegistry::register('parallel-batch', $graph);
-    $job = new ExecuteGraphJob('parallel-batch', 'exec-batch', new State);
-    $job->handle(new GraphExecutor);
+    app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->register('parallel-batch', $graph);
+    $job = new ExecuteGraphJob('parallel-batch', 'exec-batch', (new State)->toArray());
+    $job->handle(new GraphExecutor, app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class));
     Bus::assertBatched(fn ($batch) => $batch->jobs->count() === 2);
 });

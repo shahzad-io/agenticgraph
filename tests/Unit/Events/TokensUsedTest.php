@@ -9,6 +9,7 @@ use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\TokensUsed;
 use Shahzad\AgenticGraph\Nodes\PrismNode;
 use Shahzad\AgenticGraph\State\State;
+use Shahzad\AgenticGraph\Tracing\ExecutionClock;
 
 class TokensNode extends PrismNode
 {
@@ -30,4 +31,27 @@ it('emits TokensUsed event from PrismNode', function () {
     $result = $node->execute(new State);
     Event::assertDispatched(TokensUsed::class, fn (TokensUsed $e) => $e->promptTokens === 10 && $e->completionTokens === 20 && $e->totalTokens === 30);
     expect($result->get('t'))->toBe('hello');
+});
+
+it('creates tokens event with execution clock when trace context missing', function () {
+    $executionId = 'exec_123';
+    app()->instance(ExecutionClock::class, new ExecutionClock($executionId));
+
+    $startTime = microtime(true);
+    $event = TokensUsed::fromLlmCall(
+        node: 'TestNode',
+        callStartMicrotime: $startTime,
+        callDurationMs: 120.5,
+        promptTokens: 5,
+        completionTokens: 7,
+        callType: 'text',
+        model: 'openai:gpt-4o'
+    );
+
+    expect($event->executionId)->toBe($executionId);
+    expect($event->startedAt)->toBeInstanceOf(\DateTimeImmutable::class);
+    expect($event->endedAt)->toBeInstanceOf(\DateTimeImmutable::class);
+    expect($event->endedAt->getTimestamp())->toBeGreaterThanOrEqual($event->startedAt->getTimestamp());
+
+    app()->forgetInstance(ExecutionClock::class);
 });

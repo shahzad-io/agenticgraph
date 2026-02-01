@@ -6,8 +6,14 @@ namespace Shahzad\AgenticGraph\Contracts;
 
 interface StateContract
 {
+    /**
+     * @return array<string, mixed>
+     */
     public function toArray(): array;
 
+    /**
+     * @param  array<string, mixed>  $data
+     */
     public static function fromArray(array $data): static;
 
     public function merge(StateContract $other): static;
@@ -22,7 +28,13 @@ interface StateContract
 
     public function forget(string $key): static;
 
+    /**
+     * @return array<string, mixed>
+     */
     public function all(): array;
 
+    /**
+     * @return array<string, mixed>
+     */
     public function getMetadata(): array;
 }
