@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph\Tracing;
 
-//use Illuminate\Support\Facades\Log;
+// use Illuminate\Support\Facades\Log;
 
 final class ExecutionClock
 {
