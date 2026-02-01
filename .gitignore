@@ -15,6 +15,7 @@ yarn-error.log
 /build
 
 custom
+/IMP
 
 # IDE Helper
 _ide_helper.php

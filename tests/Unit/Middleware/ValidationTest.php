@@ -78,6 +78,41 @@ class ValidatedState implements StateContract
     {
         return [];
     }
+
+    public function setInterrupt(string $reason, string $checkpointId): static
+    {
+        $copy = $this->data;
+        $copy['_interrupt'] = [
+            'reason' => $reason,
+            'checkpoint_id' => $checkpointId,
+            'created_at' => (new \DateTimeImmutable)->format(DATE_ATOM),
+        ];
+
+        return new static($copy);
+    }
+
+    public function hasInterrupt(): bool
+    {
+        return isset($this->data['_interrupt']);
+    }
+
+    public function getInterrupt(): ?array
+    {
+        return $this->data['_interrupt'] ?? null;
+    }
+
+    public function getInterruptCheckpointId(): ?string
+    {
+        return $this->data['_interrupt']['checkpoint_id'] ?? null;
+    }
+
+    public function clearInterrupt(): static
+    {
+        $copy = $this->data;
+        unset($copy['_interrupt']);
+
+        return new static($copy);
+    }
 }
 
 it('invokes validation and throws on invalid input', function () {

@@ -37,4 +37,33 @@ interface StateContract
      * @return array<string, mixed>
      */
     public function getMetadata(): array;
+
+    /**
+     * Set interrupt metadata on the state.
+     * Returns a new instance (immutable).
+     */
+    public function setInterrupt(string $reason, string $checkpointId): static;
+
+    /**
+     * Check if state has an interrupt.
+     */
+    public function hasInterrupt(): bool;
+
+    /**
+     * Get interrupt metadata.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function getInterrupt(): ?array;
+
+    /**
+     * Get the checkpoint ID from the interrupt.
+     */
+    public function getInterruptCheckpointId(): ?string;
+
+    /**
+     * Clear interrupt metadata.
+     * Returns a new instance (immutable).
+     */
+    public function clearInterrupt(): static;
 }

@@ -10,6 +10,8 @@ use Shahzad\AgenticGraph\Events\GraphExecutionStarted;
 use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
 use Shahzad\AgenticGraph\Events\NodeExecutionFailed;
 use Shahzad\AgenticGraph\Events\NodeExecutionStarted;
+use Shahzad\AgenticGraph\Events\NodeInterrupted;
+use Shahzad\AgenticGraph\Events\NodeResumed;
 use Shahzad\AgenticGraph\Events\TokensUsed;
 use Shahzad\AgenticGraph\Events\ToolCallCaptured;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
@@ -363,6 +365,63 @@ class TracingListener
     }
 
     /**
+     * Handle node interrupted event.
+     */
+    public function onNodeInterrupted(NodeInterrupted $event): void
+    {
+        if (! $this->exporter->isEnabled()) {
+            return;
+        }
+
+        // Create a span for the interrupt
+        $this->exporter->addSpan([
+            'id' => uniqid('span_', true),
+            'trace_id' => $event->executionId,
+            'parent_id' => null, // Top-level interrupt span
+            'node_name' => $event->nodeName.' (interrupted)',
+            'node_type' => 'interrupt',
+            'span_type' => 'interrupt',
+            'status' => 'interrupted',
+            'span_kind' => 'internal',
+            'status_code' => 'PAUSED',
+            'started_at' => $event->interruptedAt->format(DATE_ATOM),
+            'ended_at' => $event->interruptedAt->format(DATE_ATOM),
+            'duration_ms' => 0, // Instant event
+            'interrupt_reason' => $event->reason,
+            'checkpoint_id' => $event->checkpointId,
+            'state_snapshot' => array_keys($event->stateSnapshot), // Just keys for size
+        ]);
+    }
+
+    /**
+     * Handle node resumed event.
+     */
+    public function onNodeResumed(NodeResumed $event): void
+    {
+        if (! $this->exporter->isEnabled()) {
+            return;
+        }
+
+        // Create a span for the resume
+        $this->exporter->addSpan([
+            'id' => uniqid('span_', true),
+            'trace_id' => $event->executionId,
+            'parent_id' => null, // Top-level resume span
+            'node_name' => $event->nodeName.' (resumed)',
+            'node_type' => 'resume',
+            'span_type' => 'resume',
+            'status' => 'resumed',
+            'span_kind' => 'internal',
+            'status_code' => 'OK',
+            'started_at' => $event->resumedAt->format(DATE_ATOM),
+            'ended_at' => $event->resumedAt->format(DATE_ATOM),
+            'duration_ms' => 0, // Instant event
+            'checkpoint_id' => $event->checkpointId,
+            'state_snapshot' => array_keys($event->stateSnapshot), // Just keys for size
+        ]);
+    }
+
+    /**
      * Subscribe to events.
      *
      * @return array<string, string>
@@ -382,6 +441,9 @@ class TracingListener
             NodeExecutionFailed::class => 'onNodeFailed',
             TokensUsed::class => 'onTokensUsed',
             ToolCallCaptured::class => 'onToolCallCaptured',
+            // Interrupt events
+            NodeInterrupted::class => 'onNodeInterrupted',
+            NodeResumed::class => 'onNodeResumed',
         ];
     }
 

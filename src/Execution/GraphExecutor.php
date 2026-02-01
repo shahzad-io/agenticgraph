@@ -115,6 +115,16 @@ class GraphExecutor
                         );
                     }
 
+                    // Check for interrupt BEFORE executing node
+                    $node = $graph->getNode($current);
+                    if ($this->shouldInterrupt($node, $state)) {
+                        // At this point we know $node is a PrismNode (checked in shouldInterrupt)
+                        assert($node instanceof \Shahzad\AgenticGraph\Nodes\PrismNode);
+                        $state = $this->handleInterrupt($graph, $executionId, $current, $state, $node);
+                        $lock->release();
+                        break; // Stop execution, return state with interrupt
+                    }
+
                     $nodeResult = $this->executeNode($graph, $executionId, $current, $state);
                     $state = $nodeResult['state'];
                     $spanId = $nodeResult['spanId'];
@@ -254,6 +264,71 @@ class GraphExecutor
     }
 
     /**
+     * Check if a node should interrupt execution.
+     */
+    private function shouldInterrupt(NodeInterface $node, StateContract $state): bool
+    {
+        // Only PrismNode supports interrupts
+        if (! $node instanceof \Shahzad\AgenticGraph\Nodes\PrismNode) {
+            return false;
+        }
+
+        return $node->shouldInterrupt($state);
+    }
+
+    /**
+     * Handle node interrupt by creating checkpoint and pausing execution.
+     */
+    private function handleInterrupt(
+        Graph $graph,
+        string $executionId,
+        string $nodeName,
+        StateContract $state,
+        \Shahzad\AgenticGraph\Nodes\PrismNode $node
+    ): StateContract {
+        // Get interrupt reason
+        $reason = $node->getInterruptReason($state);
+
+        // Create checkpoint FIRST (before modifying state)
+        $checkpoint = new Checkpoint;
+        $checkpoint->graphName = $graph->name;
+        $checkpoint->executionId = $executionId;
+        $checkpoint->state = $state; // State WITHOUT interrupt metadata yet
+        $checkpoint->currentNode = $nodeName;
+        $checkpoint->metadata['interrupted'] = true;
+        $checkpoint->metadata['interrupt_reason'] = $reason;
+        $checkpoint->createdAt = new \DateTimeImmutable;
+
+        // Save checkpoint
+        $checkpointId = app(CheckpointManager::class)->save($executionId, $checkpoint);
+
+        // NOW add interrupt metadata to state (with checkpoint ID)
+        $state = $state->setInterrupt($reason, $checkpointId);
+
+        // Dispatch event
+        $this->events->dispatch(new \Shahzad\AgenticGraph\Events\NodeInterrupted(
+            executionId: $executionId,
+            nodeName: $nodeName,
+            reason: $reason,
+            checkpointId: $checkpointId,
+            stateSnapshot: $state->toArray(),
+            interruptedAt: new \DateTimeImmutable
+        ));
+
+        // Log
+        if ((bool) config('agenticgraph.logging.enabled', true)) {
+            $this->logger->info('Execution interrupted', [
+                'execution_id' => $executionId,
+                'node' => $nodeName,
+                'reason' => $reason,
+                'checkpoint_id' => $checkpointId,
+            ]);
+        }
+
+        return $state;
+    }
+
+    /**
      * @return string|array<int, string>|null
      */
     protected function determineNext(Graph $graph, string $current, StateContract $state): string|array|null
@@ -303,6 +378,81 @@ class GraphExecutor
         }
 
         return $this->executeFromNode($graph, $checkpoint->state, $checkpoint->currentNode, $checkpoint->executionId, useBatch: true);
+    }
+
+    /**
+     * Resume execution from an interrupt checkpoint with human input.
+     *
+     * @param  string  $checkpointId  The checkpoint ID from the interrupt
+     * @param  mixed  $humanInput  Human-provided input (typically array)
+     * @return StateContract|null Final state or null if checkpoint not found
+     *
+     * @throws \InvalidArgumentException If checkpoint is not an interrupt checkpoint
+     * @throws \RuntimeException If checkpoint or graph not found
+     */
+    public function resumeWithInput(string $checkpointId, mixed $humanInput): ?StateContract
+    {
+        $storage = $this->resolveStorage();
+        $checkpoint = $storage->load($checkpointId);
+
+        if ($checkpoint === null) {
+            throw new \RuntimeException("Checkpoint {$checkpointId} not found");
+        }
+
+        // Validate this is an interrupt checkpoint
+        if (! isset($checkpoint->metadata['interrupted']) ||
+            $checkpoint->metadata['interrupted'] !== true) {
+            throw new \InvalidArgumentException(
+                "Checkpoint {$checkpointId} is not an interrupt checkpoint"
+            );
+        }
+
+        // Get graph and node
+        $graph = app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)
+            ->get($checkpoint->graphName);
+
+        if ($graph === null) {
+            throw new \RuntimeException("Graph {$checkpoint->graphName} not found");
+        }
+
+        $node = $graph->getNode($checkpoint->currentNode);
+        $state = $checkpoint->state;
+        $executionId = $checkpoint->executionId;
+
+        // Call node's onResume to process human input
+        if ($node instanceof \Shahzad\AgenticGraph\Nodes\PrismNode) {
+            $state = $node->onResume($state, $humanInput);
+        }
+
+        // Clear interrupt metadata
+        $state = $state->clearInterrupt();
+
+        // Dispatch resumed event
+        $this->events->dispatch(new \Shahzad\AgenticGraph\Events\NodeResumed(
+            executionId: $executionId,
+            nodeName: $checkpoint->currentNode,
+            checkpointId: $checkpointId,
+            stateSnapshot: $state->toArray(),
+            resumedAt: new \DateTimeImmutable
+        ));
+
+        // Log
+        if ((bool) config('agenticgraph.logging.enabled', true)) {
+            $this->logger->info('Execution resumed', [
+                'execution_id' => $executionId,
+                'checkpoint_id' => $checkpointId,
+                'node' => $checkpoint->currentNode,
+            ]);
+        }
+
+        // Continue execution from the interrupted node
+        return $this->executeFromNode(
+            $graph,
+            $state,
+            $checkpoint->currentNode,
+            $executionId,
+            useBatch: false
+        );
     }
 
     /**

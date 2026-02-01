@@ -171,4 +171,39 @@ final class State implements Arrayable, JsonSerializable, StateContract
     {
         return $this->metadata;
     }
+
+    public function setInterrupt(string $reason, string $checkpointId): static
+    {
+        $data = $this->data;
+        Arr::set($data, '_interrupt', [
+            'reason' => $reason,
+            'checkpoint_id' => $checkpointId,
+            'created_at' => (new \DateTimeImmutable)->format(DATE_ATOM),
+        ]);
+
+        return new self($data, $this->metadata);
+    }
+
+    public function hasInterrupt(): bool
+    {
+        return $this->has('_interrupt');
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    public function getInterrupt(): ?array
+    {
+        return $this->get('_interrupt');
+    }
+
+    public function getInterruptCheckpointId(): ?string
+    {
+        return $this->get('_interrupt.checkpoint_id');
+    }
+
+    public function clearInterrupt(): static
+    {
+        return $this->forget('_interrupt');
+    }
 }

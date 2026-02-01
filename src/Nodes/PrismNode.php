@@ -926,4 +926,51 @@ abstract class PrismNode extends AbstractNode
 
         return app(PrismClient::class);
     }
+
+    /**
+     * Determine if execution should pause before this node runs.
+     * Override this method to implement interrupt logic.
+     */
+    public function shouldInterrupt(\Shahzad\AgenticGraph\Contracts\StateContract $state): bool
+    {
+        return false; // Default: no interrupt
+    }
+
+    /**
+     * Provide a human-readable reason for the interrupt.
+     * This will be shown to the user.
+     */
+    public function getInterruptReason(\Shahzad\AgenticGraph\Contracts\StateContract $state): string
+    {
+        return "Node '{$this->getName()}' requires human review";
+    }
+
+    /**
+     * Process human input when resuming from interrupt.
+     * Override this to handle approval, validation, etc.
+     */
+    public function onResume(\Shahzad\AgenticGraph\Contracts\StateContract $state, mixed $humanInput): \Shahzad\AgenticGraph\Contracts\StateContract
+    {
+        // Default: merge array input into state
+        if (is_array($humanInput)) {
+            foreach ($humanInput as $key => $value) {
+                $state = $state->set($key, $value);
+            }
+        }
+
+        return $state;
+    }
+
+    /**
+     * Helper: Handle approval workflows.
+     */
+    protected function handleApproval(
+        \Shahzad\AgenticGraph\Contracts\StateContract $state,
+        bool $approved,
+        ?string $comments = null
+    ): \Shahzad\AgenticGraph\Contracts\StateContract {
+        return $state
+            ->set('approved', $approved)
+            ->set('approval_comments', $comments);
+    }
 }

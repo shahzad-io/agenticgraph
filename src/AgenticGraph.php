@@ -53,6 +53,16 @@ class AgenticGraph
     }
 
     /**
+     * Resume execution from an interrupt checkpoint with human input.
+     *
+     * @param  mixed  $humanInput  Human-provided input (typically array)
+     */
+    public function resumeWithInput(string $checkpointId, mixed $humanInput): ?StateContract
+    {
+        return $this->executor()->resumeWithInput($checkpointId, $humanInput);
+    }
+
+    /**
      * @return array{executionId: string, checkpointId: string|null}
      */
     public function executeUntil(Graph $graph, StateContract $state, callable $predicate): array
