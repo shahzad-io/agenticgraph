@@ -3,6 +3,28 @@
 return [
     'storage' => env('AGENTICGRAPH_STORAGE', 'database'),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Graph Registry Configuration
+    |--------------------------------------------------------------------------
+    |
+    | Register your graph classes here for auto-discovery and building.
+    | This enables automatic graph rebuilding when resuming from checkpoints
+    | or executing async workflows without manual registration.
+    |
+    | Format: 'graph-name' => GraphClass::class
+    |
+    | Example:
+    | 'graphs' => [
+    |     'content-moderation' => App\Agents\ContentModeration\Graph::class,
+    |     'currency-conversion' => App\Agents\CurrencyConversion\Graph::class,
+    | ],
+    |
+    */
+    'graphs' => [
+        // Add your graph classes here
+    ],
+
     'checkpoint' => [
         'enabled' => env('AGENTICGRAPH_CHECKPOINT_ENABLED', true),
         'ttl' => env('AGENTICGRAPH_CHECKPOINT_TTL', 7),

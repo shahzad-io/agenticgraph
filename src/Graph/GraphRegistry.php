@@ -94,4 +94,56 @@ class GraphRegistry
     {
         return $this->cache->has(self::CACHE_PREFIX.$name);
     }
+
+    /**
+     * Get graph from cache, or auto-build from config if not cached.
+     *
+     * @param  string  $name  The graph name
+     * @return Graph|null The graph instance, or null if not found in cache or config
+     */
+    public function getOrBuild(string $name): ?Graph
+    {
+        // Try cache first
+        $graph = $this->get($name);
+        if ($graph !== null) {
+            return $graph;
+        }
+
+        // Try to build from config
+        $graphClass = config("agenticgraph.graphs.{$name}");
+        if ($graphClass === null || ! class_exists($graphClass)) {
+            return null;
+        }
+
+        // Check if the class has a build method
+        if (! method_exists($graphClass, 'build')) {
+            return null;
+        }
+
+        // Build the graph
+        try {
+            $graph = $graphClass::build();
+
+            // Verify it's a Graph instance
+            if (! $graph instanceof Graph) {
+                return null;
+            }
+
+            // Register for future use
+            $this->register($name, $graph);
+
+            return $graph;
+        } catch (\Throwable $e) {
+            // Log the error if logging is enabled
+            if (config('agenticgraph.logging.enabled', true)) {
+                \Illuminate\Support\Facades\Log::error('Failed to auto-build graph from config', [
+                    'graph_name' => $name,
+                    'graph_class' => $graphClass,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+
+            return null;
+        }
+    }
 }

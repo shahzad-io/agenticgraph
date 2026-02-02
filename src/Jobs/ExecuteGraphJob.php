@@ -39,9 +39,14 @@ class ExecuteGraphJob implements ShouldBeUnique, ShouldQueue
 
     public function handle(GraphExecutor $executor, GraphRegistry $registry): void
     {
-        $graph = $registry->get($this->graphName);
+        // Auto-build graph from config if not cached (supports async workflows)
+        $graph = $registry->getOrBuild($this->graphName);
+
         if (! $graph) {
-            return;
+            throw new \RuntimeException(
+                "Graph '{$this->graphName}' not found in registry or config. ".
+                'Ensure the graph is registered or added to config/agenticgraph.php graphs array.'
+            );
         }
 
         // Reconstruct State from array

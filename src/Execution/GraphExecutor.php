@@ -407,12 +407,12 @@ class GraphExecutor
             );
         }
 
-        // Get graph and node
+        // Get graph and node (auto-build from config if not cached)
         $graph = app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)
-            ->get($checkpoint->graphName);
+            ->getOrBuild($checkpoint->graphName);
 
         if ($graph === null) {
-            throw new \RuntimeException("Graph {$checkpoint->graphName} not found");
+            throw new \RuntimeException("Graph {$checkpoint->graphName} not found in registry or config");
         }
 
         $node = $graph->getNode($checkpoint->currentNode);
