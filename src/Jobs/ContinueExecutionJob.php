@@ -10,6 +10,7 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
+use Shahzad\AgenticGraph\Execution\LoopMetadata;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\State\State;
 
@@ -19,12 +20,14 @@ class ContinueExecutionJob implements ShouldQueue
 
     /**
      * @param  array<string, mixed>  $stateData
+     * @param  array<string, mixed>|null  $loopMetadata
      */
     public function __construct(
         public readonly string $graphName,
         public readonly string $executionId,
         public readonly array $stateData,  // ✅ Plain array instead of StateContract
-        public readonly string $startNode
+        public readonly string $startNode,
+        public readonly ?array $loopMetadata = null,  // Loop context for resume
     ) {
         $this->onConnection(config('agenticgraph.execution.queue_connection'));
         $this->onQueue(config('agenticgraph.execution.queue_name'));
@@ -45,6 +48,11 @@ class ContinueExecutionJob implements ShouldQueue
         // Reconstruct State from array
         $state = State::fromArray($this->stateData);
 
-        $executor->executeFromNode($graph, $state, $this->startNode, $this->executionId, useBatch: true);
+        // Restore loop metadata if available
+        $loopMeta = $this->loopMetadata !== null
+            ? LoopMetadata::fromArray($this->loopMetadata)
+            : null;
+
+        $executor->executeFromNode($graph, $state, $this->startNode, $this->executionId, useBatch: true, loopMetadata: $loopMeta);
     }
 }

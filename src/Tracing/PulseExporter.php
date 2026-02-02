@@ -426,8 +426,38 @@ class PulseExporter
             $bufferedCalls
         );
 
-        // Dispatch async to avoid blocking the response
-        dispatch(function () use ($payload) {
+        $requestBound = app()->bound('request');
+        $isHttpContext = $requestBound && (! app()->runningInConsole() || app()->runningUnitTests());
+
+        if ($isHttpContext) {
+            // In HTTP context, dispatch after response to avoid blocking
+            dispatch(function () use ($payload) {
+                try {
+                    /** @var \Illuminate\Http\Client\Response $response */
+                    $response = Http::withToken($this->apiKey)
+                        ->timeout(5)
+                        ->post("{$this->endpoint}/v1/ingest", $payload);
+
+                    if ($response->failed()) {
+                        if ((bool) config('agenticgraph.logging.enabled', true)) {
+                            Log::warning('AgenticPulse ingest failed', [
+                                'status' => $response->status(),
+                                'body' => $response->body(),
+                            ]);
+                        }
+                    }
+                } catch (\Throwable $e) {
+                    // Silent fail - don't break the user's application
+                    if ((bool) config('agenticgraph.logging.enabled', true)) {
+                        Log::debug('AgenticPulse ingest error', [
+                            'error' => $e->getMessage(),
+                        ]);
+                    }
+                }
+            })->afterResponse();
+        } else {
+            // In queue/console context, execute synchronously
+            // This ensures traces are sent immediately when queue jobs complete
             try {
                 /** @var \Illuminate\Http\Client\Response $response */
                 $response = Http::withToken($this->apiKey)
@@ -450,7 +480,7 @@ class PulseExporter
                     ]);
                 }
             }
-        })->afterResponse();
+        }
 
         $this->clearBufferedItems($traceId, 'spans');
         $this->clearBufferedItems($traceId, 'llm_calls');

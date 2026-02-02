@@ -27,6 +27,7 @@ class ExecuteGraphJob implements ShouldBeUnique, ShouldQueue
         public readonly string $executionId,
         public readonly array $stateData,  // ✅ Plain array instead of StateContract
         public readonly ?string $checkpointId = null,
+        public readonly ?string $rootSpanId = null,
     ) {
         $this->onConnection(config('agenticgraph.execution.queue_connection'));
         $this->onQueue(config('agenticgraph.execution.queue_name'));
@@ -52,6 +53,32 @@ class ExecuteGraphJob implements ShouldBeUnique, ShouldQueue
         // Reconstruct State from array
         $state = State::fromArray($this->stateData);
 
-        $executor->execute($graph, $state, useBatch: true, executionId: $this->executionId);
+        // Set up tracing context for this job execution
+        // This ensures all events dispatched during execution have proper trace context
+        $traceContext = new \Shahzad\AgenticGraph\Tracing\TraceContext(
+            executionId: $this->executionId,
+            rootSpanId: $this->rootSpanId ?? uniqid('span_', true)
+        );
+        app()->instance(\Shahzad\AgenticGraph\Tracing\TraceContext::class, $traceContext);
+
+        // Set up execution clock for timing
+        $jobStartMicrotime = microtime(true);
+        app()->instance(\Shahzad\AgenticGraph\Tracing\ExecutionClock::class, new \Shahzad\AgenticGraph\Tracing\ExecutionClock($this->executionId, $jobStartMicrotime));
+
+        // Set up execution context for loop tracking
+        $executionContext = new \Shahzad\AgenticGraph\Execution\ExecutionContext(
+            executionId: $this->executionId,
+            startTime: $jobStartMicrotime,
+        );
+        app()->instance(\Shahzad\AgenticGraph\Execution\ExecutionContext::class, $executionContext);
+
+        try {
+            $executor->execute($graph, $state, useBatch: true, executionId: $this->executionId);
+        } finally {
+            // Clean up container instances
+            app()->forgetInstance(\Shahzad\AgenticGraph\Tracing\TraceContext::class);
+            app()->forgetInstance(\Shahzad\AgenticGraph\Tracing\ExecutionClock::class);
+            app()->forgetInstance(\Shahzad\AgenticGraph\Execution\ExecutionContext::class);
+        }
     }
 }

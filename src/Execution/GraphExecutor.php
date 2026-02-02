@@ -11,9 +11,11 @@ use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Log;
 use Psr\Log\LoggerInterface;
+use Shahzad\AgenticGraph\Contracts\LoopAwareRouterInterface;
 use Shahzad\AgenticGraph\Contracts\NodeInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Contracts\StorageInterface;
+use Shahzad\AgenticGraph\Events\CycleCompleted;
 use Shahzad\AgenticGraph\Events\GraphExecutionCompleted;
 use Shahzad\AgenticGraph\Events\GraphExecutionFailed;
 use Shahzad\AgenticGraph\Events\GraphExecutionStarted;
@@ -51,6 +53,8 @@ class GraphExecutor
 
     private StateManager $stateManager;
 
+    private LoopGuard $loopGuard;
+
     public function __construct(
         ?Dispatcher $events = null,
         ?CacheManager $cache = null,
@@ -70,6 +74,15 @@ class GraphExecutor
         $this->logger = $logger ?? app(LoggerInterface::class);
         $this->repo = $repo ?? app(ExecutionRepository::class);
         $this->stateManager = $stateManager ?? app(StateManager::class);
+
+        // Initialize loop guard from config
+        $loopConfig = config('agenticgraph.execution.loop', []);
+        $this->loopGuard = new LoopGuard(
+            maxGlobalIterations: $loopConfig['max_iterations'] ?? 1000,
+            maxCycleIterations: $loopConfig['max_cycle_iterations'] ?? null,
+            timeoutSeconds: $loopConfig['timeout_seconds'] ?? null,
+            enabled: $loopConfig['enabled'] ?? false,
+        );
     }
 
     public function execute(Graph $graph, StateContract $state, bool $useBatch = false, ?string $executionId = null): StateContract
@@ -80,15 +93,32 @@ class GraphExecutor
         $executionId = $executionId ?? $this->generateExecutionId();
         $repo = $this->repo;
 
-        // Create fresh trace context for this execution
-        $traceContext = new TraceContext(
-            executionId: $executionId,
-            rootSpanId: uniqid('span_', true)
-        );
+        // Reuse existing trace context if available (from async job), otherwise create new
+        if (! app()->bound(TraceContext::class)) {
+            $traceContext = new TraceContext(
+                executionId: $executionId,
+                rootSpanId: uniqid('span_', true)
+            );
+            app()->instance(TraceContext::class, $traceContext);
+        } else {
+            $traceContext = app(TraceContext::class);
+        }
 
-        // Bind to container for this execution scope
-        app()->instance(TraceContext::class, $traceContext);
-        app()->instance(ExecutionClock::class, new ExecutionClock($executionId));
+        // Reuse existing execution clock if available (from async job), otherwise create new
+        if (! app()->bound(ExecutionClock::class)) {
+            app()->instance(ExecutionClock::class, new ExecutionClock($executionId));
+        }
+
+        // Reuse existing execution context if available (from async job), otherwise create new
+        if (! app()->bound(ExecutionContext::class)) {
+            $executionContext = new ExecutionContext(
+                executionId: $executionId,
+                startTime: microtime(true),
+            );
+            app()->instance(ExecutionContext::class, $executionContext);
+        } else {
+            $executionContext = app(ExecutionContext::class);
+        }
 
         // Ensure execution record exists and transition to running
         if (! $repo->get($executionId)) {
@@ -115,6 +145,46 @@ class GraphExecutor
                         );
                     }
 
+                    // Loop tracking: update path stack and detect cycles
+                    $executionContext = $executionContext->pushNode($current);
+                    [$executionContext, $cycle] = $executionContext->detectAndRecordCycle($current);
+
+                    // Check loop guards (if enabled)
+                    try {
+                        $this->loopGuard->check($executionContext, $cycle);
+                    } catch (LoopLimitExceededException $e) {
+                        $this->repo->failed($executionId, $e->getMessage());
+                        throw $e;
+                    }
+
+                    // Increment iteration and update container
+                    $executionContext = $executionContext->incrementIteration();
+                    app()->instance(ExecutionContext::class, $executionContext);
+
+                    // Dispatch cycle completion event if a cycle was detected
+                    if ($cycle !== null) {
+                        $this->events->dispatch(new CycleCompleted(
+                            executionId: $executionId,
+                            cycleHash: $cycle->cycleHash,
+                            cyclePath: $cycle->cyclePath,
+                            completionCount: $cycle->completionCount,
+                            globalIterations: $executionContext->globalIterations,
+                            completedAt: new \DateTimeImmutable,
+                            spanId: $traceContext->getSpanId(),
+                        ));
+
+                        if ((bool) config('agenticgraph.logging.enabled', true)) {
+                            $this->logger->debug('Cycle completed', [
+                                'execution_id' => $executionId,
+                                'cycle_hash' => $cycle->cycleHash,
+                                'cycle_path' => $cycle->cyclePath,
+                                'completion_count' => $cycle->completionCount,
+                                'global_iterations' => $executionContext->globalIterations,
+                                'node_visit_count' => $executionContext->nodeVisitCounts[$current] ?? 0,
+                            ]);
+                        }
+                    }
+
                     // Check for interrupt BEFORE executing node
                     $node = $graph->getNode($current);
                     if ($this->shouldInterrupt($node, $state)) {
@@ -128,7 +198,7 @@ class GraphExecutor
                     $nodeResult = $this->executeNode($graph, $executionId, $current, $state);
                     $state = $nodeResult['state'];
                     $spanId = $nodeResult['spanId'];
-                    $this->checkpoint($graph, $executionId, $current, $state);
+                    $this->checkpoint($graph, $executionId, $current, $state, $executionContext);
 
                     $this->events->dispatch(new NodeExecutionCompleted(
                         $executionId,
@@ -171,6 +241,7 @@ class GraphExecutor
                             $this->executeParallelViaBatch($graph, $state, $executionId, $current, $next, $spanId);
 
                             app()->forgetInstance(TraceContext::class);
+                            app()->forgetInstance(ExecutionContext::class);
 
                             return $state; // Async continuation, return current state
                         } else {
@@ -190,6 +261,9 @@ class GraphExecutor
             }
 
             $duration = microtime(true) - $start;
+
+            // Clear execution context after successful completion
+            app()->forgetInstance(ExecutionContext::class);
             $this->repo->completed($executionId, $state->toArray(), $duration);
             $completedAt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', microtime(true))) ?: new \DateTimeImmutable;
             $this->events->dispatch(new GraphExecutionCompleted($executionId, $graph->name, $state, $completedAt, $duration, [], $traceContext->getRootSpanId()));
@@ -205,6 +279,7 @@ class GraphExecutor
             }
             app()->forgetInstance(ExecutionClock::class);
             app()->forgetInstance(TraceContext::class);
+            app()->forgetInstance(ExecutionContext::class);
         }
     }
 
@@ -337,7 +412,13 @@ class GraphExecutor
         foreach ($edges as $edge) {
             $condition = $edge->getCondition();
             if ($condition) {
-                $route = $condition->route($state);
+                // Check if router is loop-aware and ExecutionContext is available
+                if ($condition instanceof LoopAwareRouterInterface && app()->bound(ExecutionContext::class)) {
+                    $executionContext = app(ExecutionContext::class);
+                    $route = $condition->routeWithContext($state, $executionContext);
+                } else {
+                    $route = $condition->route($state);
+                }
 
                 return $route;
             }
@@ -351,15 +432,44 @@ class GraphExecutor
 
     public function executeAsync(Graph $graph, StateContract $state): string
     {
-        // Validate state before execution
         $state->validate();
 
         $executionId = $this->generateExecutionId();
+
+        // Create trace context and capture rootSpanId for the job
+        $traceContext = new TraceContext(
+            executionId: $executionId,
+            rootSpanId: uniqid('span_', true)
+        );
+        $rootSpanId = $traceContext->getRootSpanId();
+
+        $executionContext = new ExecutionContext(
+            executionId: $executionId,
+            startTime: microtime(true),
+        );
+
+        // Bind to container temporarily for event dispatch
+        app()->instance(TraceContext::class, $traceContext);
+        app()->instance(ExecutionClock::class, new ExecutionClock($executionId));
+        app()->instance(ExecutionContext::class, $executionContext);
+
         $this->repo->queued($executionId, $graph->name, $state->toArray());
+        $this->repo->started($executionId, $graph->name, $state->toArray());
+        $executionStartDt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', microtime(true))) ?: new \DateTimeImmutable;
+        $this->events->dispatch(new GraphExecutionStarted($executionId, $graph->name, $state, $executionStartDt, $rootSpanId));
+
+        // Clean up container instances before dispatching job
+        app()->forgetInstance(TraceContext::class);
+        app()->forgetInstance(ExecutionClock::class);
+        app()->forgetInstance(ExecutionContext::class);
+
+        // Pass rootSpanId to job so it can maintain trace hierarchy
         dispatch(new \Shahzad\AgenticGraph\Jobs\ExecuteGraphJob(
             $graph->name,
             $executionId,
-            $state->toArray()  // ✅ Pass array instead of object
+            $state->toArray(),
+            checkpointId: null,
+            rootSpanId: $rootSpanId
         ));
 
         return $executionId;
@@ -377,7 +487,12 @@ class GraphExecutor
             return null;
         }
 
-        return $this->executeFromNode($graph, $checkpoint->state, $checkpoint->currentNode, $checkpoint->executionId, useBatch: true);
+        $loopMetadata = null;
+        if (isset($checkpoint->metadata['loop'])) {
+            $loopMetadata = LoopMetadata::fromArray($checkpoint->metadata['loop']);
+        }
+
+        return $this->executeFromNode($graph, $checkpoint->state, $checkpoint->currentNode, $checkpoint->executionId, useBatch: true, loopMetadata: $loopMetadata);
     }
 
     /**
@@ -446,12 +561,18 @@ class GraphExecutor
         }
 
         // Continue execution from the interrupted node
+        $loopMetadata = null;
+        if (isset($checkpoint->metadata['loop'])) {
+            $loopMetadata = LoopMetadata::fromArray($checkpoint->metadata['loop']);
+        }
+
         return $this->executeFromNode(
             $graph,
             $state,
             $checkpoint->currentNode,
             $executionId,
-            useBatch: false
+            useBatch: false,
+            loopMetadata: $loopMetadata
         );
     }
 
@@ -615,12 +736,21 @@ class GraphExecutor
         // Determine next node
         $next = $this->determinePostParallelNext($graph, $targets, $merged);
 
+        // Get current execution context for loop metadata (if available)
+        $loopMetadataArray = null;
+        if (app()->bound(ExecutionContext::class)) {
+            $executionContext = app(ExecutionContext::class);
+            $loopMetadata = LoopMetadata::fromExecutionContext($executionContext);
+            $loopMetadataArray = $loopMetadata->toArray();
+        }
+
         // Continue execution
         dispatch(new \Shahzad\AgenticGraph\Jobs\ContinueExecutionJob(
             $graph->name,
             $executionId,
             $merged->toArray(),
-            $next ?? ($graph->exitPoints[0] ?? $sourceNode)
+            $next ?? ($graph->exitPoints[0] ?? $sourceNode),
+            $loopMetadataArray
         ))->onConnection(config('agenticgraph.execution.queue_connection'))
             ->onQueue(config('agenticgraph.execution.queue_name'));
     }
@@ -696,7 +826,7 @@ class GraphExecutor
         return $unique[0];
     }
 
-    public function executeFromNode(Graph $graph, StateContract $state, string $startNode, string $executionId, bool $useBatch = false): StateContract
+    public function executeFromNode(Graph $graph, StateContract $state, string $startNode, string $executionId, bool $useBatch = false, ?LoopMetadata $loopMetadata = null): StateContract
     {
         // Create fresh trace context for this execution
         $traceContext = new TraceContext(
@@ -704,9 +834,20 @@ class GraphExecutor
             rootSpanId: uniqid('span_', true)
         );
 
+        // Initialize ExecutionContext from metadata (resume) or fresh
+        if ($loopMetadata !== null) {
+            $executionContext = ExecutionContext::fromArray($loopMetadata->toArray(), $executionId);
+        } else {
+            $executionContext = new ExecutionContext(
+                executionId: $executionId,
+                startTime: microtime(true),
+            );
+        }
+
         // Bind to container for this execution scope
         app()->instance(TraceContext::class, $traceContext);
         app()->instance(ExecutionClock::class, new ExecutionClock($executionId));
+        app()->instance(ExecutionContext::class, $executionContext);
 
         $current = $startNode;
         $visited = [];
@@ -795,6 +936,7 @@ class GraphExecutor
             }
             app()->forgetInstance(ExecutionClock::class);
             app()->forgetInstance(TraceContext::class);
+            app()->forgetInstance(ExecutionContext::class);
         }
     }
 
@@ -817,9 +959,16 @@ class GraphExecutor
             rootSpanId: uniqid('span_', true)
         );
 
+        // Create execution context for loop tracking
+        $executionContext = new ExecutionContext(
+            executionId: $executionId,
+            startTime: microtime(true),
+        );
+
         // Bind to container for this execution scope
         app()->instance(TraceContext::class, $traceContext);
         app()->instance(ExecutionClock::class, new ExecutionClock($executionId));
+        app()->instance(ExecutionContext::class, $executionContext);
         $current = $graph->entryPoint;
         $lastCheckpointId = null;
         try {
@@ -876,10 +1025,11 @@ class GraphExecutor
             }
             app()->forgetInstance(ExecutionClock::class);
             app()->forgetInstance(TraceContext::class);
+            app()->forgetInstance(ExecutionContext::class);
         }
     }
 
-    protected function checkpoint(Graph $graph, string $executionId, string $currentNode, StateContract $state): void
+    protected function checkpoint(Graph $graph, string $executionId, string $currentNode, StateContract $state, ?ExecutionContext $executionContext = null): void
     {
         if (! config('agenticgraph.checkpoint.enabled')) {
             return;
@@ -890,6 +1040,12 @@ class GraphExecutor
         $checkpoint->state = $state;
         $checkpoint->currentNode = $currentNode;
         $checkpoint->createdAt = new \DateTimeImmutable;
+
+        // Add loop metadata if context available
+        if ($executionContext !== null) {
+            $loopMetadata = LoopMetadata::fromExecutionContext($executionContext);
+            $checkpoint->metadata['loop'] = $loopMetadata->toArray();
+        }
 
         $checkpointManager = app(CheckpointManager::class);
         $checkpointManager->save($executionId, $checkpoint);

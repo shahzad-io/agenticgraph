@@ -35,7 +35,16 @@ return [
     'execution' => [
         'queue_connection' => env('AGENTICGRAPH_QUEUE_CONNECTION', 'redis'),
         'queue_name' => env('AGENTICGRAPH_QUEUE_NAME', 'agenticgraph'),
-        'max_iterations' => env('AGENTICGRAPH_MAX_ITERATIONS', 1000),
+        'max_iterations' => env('AGENTICGRAPH_MAX_ITERATIONS', 1000), // existing - used when loop.enabled = false
+
+        // Loop support configuration (opt-in, backward compatible)
+        'loop' => [
+            'enabled' => env('AGENTICGRAPH_LOOP_ENABLED', false),
+            'max_iterations' => env('AGENTICGRAPH_LOOP_MAX_ITERATIONS', 1000),
+            'max_cycle_iterations' => env('AGENTICGRAPH_LOOP_MAX_CYCLE_ITERATIONS', null),
+            'timeout_seconds' => env('AGENTICGRAPH_LOOP_TIMEOUT_SECONDS', null),
+            'cycle_detection' => env('AGENTICGRAPH_LOOP_CYCLE_DETECTION', 'silent'), // silent|warn|error
+        ],
     ],
 
     'lock' => [

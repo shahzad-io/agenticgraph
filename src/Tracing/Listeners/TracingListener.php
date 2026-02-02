@@ -14,6 +14,7 @@ use Shahzad\AgenticGraph\Events\NodeInterrupted;
 use Shahzad\AgenticGraph\Events\NodeResumed;
 use Shahzad\AgenticGraph\Events\TokensUsed;
 use Shahzad\AgenticGraph\Events\ToolCallCaptured;
+use Shahzad\AgenticGraph\Execution\ExecutionContext;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 
@@ -193,6 +194,25 @@ class TracingListener
         $traceStartDt = $traceStart ? new \DateTimeImmutable($traceStart->toIso8601String()) : null;
         $this->calculateSpanTimestamps($startedAt, null, $durationMs, $traceStartDt, $startedAt, $endedAt);
 
+        // Extract loop context if available
+        $loopContext = null;
+        try {
+            $executionContext = app(ExecutionContext::class);
+            $loopContext = [
+                'global_iterations' => $executionContext->globalIterations,
+                'node_visit_count' => $executionContext->nodeVisitCounts[$event->nodeName] ?? 0,
+                'active_cycles' => array_map(
+                    fn ($hash, $count) => ['cycle' => $hash, 'count' => $count],
+                    array_keys($executionContext->cycleCompletionCounts),
+                    $executionContext->cycleCompletionCounts
+                ),
+                'path_depth' => count($executionContext->pathStack),
+                'in_cycle' => ! empty($executionContext->cycleCompletionCounts),
+            ];
+        } catch (\Illuminate\Contracts\Container\BindingResolutionException $e) {
+            // ExecutionContext not bound (loop disabled or old execution)
+        }
+
         $this->exporter->addSpan([
             'id' => $event->spanId ?? uniqid('span_', true),
             'trace_id' => $event->executionId,
@@ -210,6 +230,7 @@ class TracingListener
                 'added' => array_diff($outputKeys, $inputKeys),
                 'removed' => array_diff($inputKeys, $outputKeys),
             ],
+            'loop_context' => $loopContext,
         ]);
     }
 

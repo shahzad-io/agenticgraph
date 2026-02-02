@@ -128,6 +128,27 @@ class Graph
             }
         }
 
+        // 7. Optional cycle detection
+        $cycleMode = config('agenticgraph.execution.loop.cycle_detection', 'silent');
+
+        if ($cycleMode !== 'silent') {
+            $cycles = $this->detectCycles();
+
+            if (! empty($cycles)) {
+                $cycleList = array_map(fn ($c) => $c['hash'], $cycles);
+                $message = 'Cycles detected in graph: '.implode(', ', $cycleList);
+
+                if ($cycleMode === 'error') {
+                    throw new InvalidGraphException($message);
+                } elseif ($cycleMode === 'warn' && (bool) config('agenticgraph.logging.enabled', true)) {
+                    \Illuminate\Support\Facades\Log::warning($message, [
+                        'graph' => $this->name,
+                        'cycles' => $cycles,
+                    ]);
+                }
+            }
+        }
+
         return true;
     }
 
@@ -224,5 +245,92 @@ class Graph
         }
 
         return implode("\n", $lines);
+    }
+
+    /**
+     * Detect cycles in the graph using DFS with recursion stack.
+     *
+     * @return array<int, array{path: array<int, string>, hash: string}>
+     */
+    public function detectCycles(): array
+    {
+        $cycles = [];
+        $visited = [];
+        $recursionStack = [];
+        $pathStack = [];
+
+        foreach (array_keys($this->nodes) as $node) {
+            if (! in_array($node, $visited, true)) {
+                $this->dfsDetectCycles(
+                    $node,
+                    $visited,
+                    $recursionStack,
+                    $pathStack,
+                    $cycles
+                );
+            }
+        }
+
+        return $cycles;
+    }
+
+    /**
+     * DFS helper for cycle detection.
+     *
+     * @param  array<int, string>  $visited
+     * @param  array<int, string>  $recursionStack
+     * @param  array<int, string>  $pathStack
+     * @param  array<int, array{path: array<int, string>, hash: string}>  $cycles
+     */
+    private function dfsDetectCycles(
+        string $node,
+        array &$visited,
+        array &$recursionStack,
+        array &$pathStack,
+        array &$cycles
+    ): void {
+        $visited[] = $node;
+        $recursionStack[] = $node;
+        $pathStack[] = $node;
+
+        $edges = $this->getEdgesFrom($node);
+        foreach ($edges as $edge) {
+            $condition = $edge->getCondition();
+            $targets = [];
+
+            if ($condition) {
+                $targets = $condition->getAvailableRoutes();
+            } else {
+                $target = $edge->getTarget();
+                $targets = is_array($target) ? $target : [$target];
+            }
+
+            foreach ($targets as $neighbor) {
+                if (! in_array($neighbor, $visited, true)) {
+                    $this->dfsDetectCycles(
+                        $neighbor,
+                        $visited,
+                        $recursionStack,
+                        $pathStack,
+                        $cycles
+                    );
+                } elseif (in_array($neighbor, $recursionStack, true)) {
+                    // Cycle detected
+                    $cycleStartIndex = array_search($neighbor, $pathStack, true);
+                    $cyclePath = array_slice($pathStack, $cycleStartIndex);
+                    $cyclePath[] = $neighbor; // Close the cycle
+                    $cycleHash = implode('→', $cyclePath);
+
+                    $cycles[] = [
+                        'path' => $cyclePath,
+                        'hash' => $cycleHash,
+                    ];
+                }
+            }
+        }
+
+        // Backtrack
+        array_pop($recursionStack);
+        array_pop($pathStack);
     }
 }
