@@ -1,0 +1,36 @@
+name: IDE Support Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  ide-support:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.2
+          extensions: dom, curl, libxml, mbstring, zip, redis
+          coverage: none
+      
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-progress
+      
+      - name: Run PHPStan (Level 6)
+        run: vendor/bin/phpstan analyse --memory-limit=2G
+      
+      - name: Run IDE Support Tests
+        run: vendor/bin/pest tests/IDESupport --no-coverage
+      
+      - name: Check PHPDoc Coverage on IDE-Critical Files
+        run: |
+          vendor/bin/phpstan analyse \
+            --configuration=phpstan-ide.neon \
+            --memory-limit=2G

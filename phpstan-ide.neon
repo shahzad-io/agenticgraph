@@ -1,0 +1,19 @@
+includes:
+    - phpstan.neon.dist
+
+parameters:
+    level: 6
+    
+    # Extra strict for facades and contracts
+    checkMissingCallableSignature: true
+    checkPhpDocMissingReturn: true
+    checkPhpDocMethodSignatures: true
+    reportMaybesInMethodSignatures: true
+    reportStaticMethodSignatures: true
+    
+    paths:
+        - src/Facades
+        - src/Contracts
+        - src/Nodes
+
+

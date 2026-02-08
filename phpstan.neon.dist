@@ -10,7 +10,19 @@ parameters:
     tmpDir: build/phpstan
     checkOctaneCompatibility: true
     checkModelProperties: true
+
+    # IDE Support: Enhanced PHPDoc checking
+    checkMissingCallableSignature: true
+    checkPhpDocMissingReturn: true
+    checkPhpDocMethodSignatures: true
+    reportMaybesInMethodSignatures: true
+    reportStaticMethodSignatures: true
+    checkMissingVarTagTypehint: true
+
     ignoreErrors:
         - message: "#Called 'env' outside of the config directory#"
           paths:
               - config/agenticgraph.php
+        # Callable signature warnings (minor - don't affect IDE support)
+        - '#has parameter \$predicate with no signature specified for callable#'
+        - '#has parameter \$next with no signature specified for Closure#'

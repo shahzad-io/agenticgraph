@@ -54,7 +54,21 @@
         "analyse": "vendor/bin/phpstan analyse",
         "test": "vendor/bin/pest",
         "test-coverage": "vendor/bin/pest --coverage",
-        "format": "vendor/bin/pint"
+        "format": "vendor/bin/pint",
+        "test:ide": "vendor/bin/pest tests/IDESupport --no-coverage",
+        "stan:ide": "vendor/bin/phpstan analyse --configuration=phpstan-ide.neon",
+        "check:ide": [
+            "@test:ide",
+            "@stan:ide"
+        ]
+    },
+    "scripts-descriptions": {
+        "test:ide": "Run IDE support validation tests",
+        "stan:ide": "Run strict PHPStan analysis on IDE-critical files",
+        "check:ide": "Run all IDE support checks (tests + static analysis)"
+    },
+    "suggest": {
+        "barryvdh/laravel-ide-helper": "For enhanced IDE autocomplete support (recommended for development)"
     },
     "config": {
         "sort-packages": true,

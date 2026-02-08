@@ -23,7 +23,7 @@ use Shahzad\AgenticGraph\State\StateManager as StateManagerService;
  * @method static StateContract decompress(string $payload)
  * @method static StateContract mergeAll(array<int, StateContract> $states)
  *
- * @see StateManagerService
+ * @see \Shahzad\AgenticGraph\State\StateManager
  */
 class StateManager extends Facade
 {

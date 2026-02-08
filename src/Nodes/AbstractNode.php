@@ -9,10 +9,13 @@ use Shahzad\AgenticGraph\Contracts\StateContract;
 
 abstract class AbstractNode implements NodeInterface
 {
+    /** @var string|null Override property for node name */
+    protected ?string $name = null;
+
     public function getName(): string
     {
         // Allow nodes to override with a property
-        if (property_exists($this, 'name') && $this->name) {
+        if ($this->name !== null && $this->name !== '') {
             return $this->name;
         }
 

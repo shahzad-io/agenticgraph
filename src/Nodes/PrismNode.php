@@ -19,6 +19,7 @@ use Prism\Prism\Text\PendingRequest as PendingTextRequest;
 use Prism\Prism\ValueObjects\Media\Audio as AudioMedia;
 use Prism\Relay\Facades\Relay;
 use Shahzad\AgenticGraph\Contracts\PrismClient;
+use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\TokensUsed;
 use Shahzad\AgenticGraph\Events\ToolCallCaptured;
 use Shahzad\AgenticGraph\Mcp\McpRequest;
@@ -26,6 +27,32 @@ use Shahzad\AgenticGraph\Prompts\ChatPromptTemplate;
 use Shahzad\AgenticGraph\Prompts\PromptTemplate;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 
+/**
+ * Abstract node with integrated PrismPHP AI capabilities.
+ *
+ * @method PendingTextRequest prism() Create a text generation request
+ * @method PendingEmbeddingsRequest embeddings() Create an embeddings request
+ * @method PendingImageRequest image() Create an image generation request
+ * @method PendingAudioRequest audio() Create an audio processing request
+ * @method string prompt(string $template, array<string, mixed> $variables = [], array<int, \Prism\Prism\ValueObjects\Media\Media|\Prism\Prism\ValueObjects\Media\Text> $additionalContent = []) Generate text from a template
+ * @method string promptMessages(array<int, Message> $messages) Generate text from message array
+ * @method EmbeddingsResponse embeddingsFromInput(string|array<int, string> $inputs, array<string, mixed> $providerOptions = []) Generate embeddings from input
+ * @method ImageResponse generateImage(string $prompt, array<int, \Prism\Prism\ValueObjects\Media\Media|\Prism\Prism\ValueObjects\Media\Text> $additionalContent = [], array<string, mixed> $providerOptions = []) Generate an image
+ * @method AudioTextResponse audioToText(AudioMedia $audio, array<string, mixed> $providerOptions = []) Transcribe audio to text
+ * @method AudioResponse textToAudio(string $text, ?string $voice = null, array<string, mixed> $providerOptions = []) Convert text to audio
+ * @method mixed structured(string $prompt, mixed $schema) Generate structured output using a schema
+ * @method array<int, \Prism\Prism\ValueObjects\ToolCall> tools(string $prompt, array<int, \Prism\Prism\Tool> $tools) Execute with tool calling
+ * @method McpRequest withMcp(string $serverName, array<string, mixed> $options = []) Create MCP tool request
+ * @method static withModel(string $model) Set the model for this node
+ * @method static withCache(int $ttlMinutes) Enable caching with TTL
+ * @method static withoutCache() Disable caching
+ * @method string promptTemplate(PromptTemplate $template, array<string, mixed> $variables = [], array<int, \Prism\Prism\ValueObjects\Media\Media|\Prism\Prism\ValueObjects\Media\Text> $additionalContent = []) Use a prompt template
+ * @method string chatPrompt(ChatPromptTemplate $template, array<string, mixed> $variables = [], array<int, \Prism\Prism\ValueObjects\Media\Media|\Prism\Prism\ValueObjects\Media\Text> $additionalContent = []) Use a chat prompt template
+ * @method bool shouldInterrupt(StateContract $state) Check if execution should pause
+ * @method string getInterruptReason(StateContract $state) Get human-readable interrupt reason
+ * @method StateContract onResume(StateContract $state, mixed $humanInput) Process human input when resuming
+ * @method StateContract handleApproval(StateContract $state, bool $approved, ?string $comments = null) Handle approval workflows
+ */
 abstract class PrismNode extends AbstractNode
 {
     private ?CacheRepository $cache = null;
@@ -71,11 +98,15 @@ abstract class PrismNode extends AbstractNode
             $durationMs = (microtime(true) - $startTime) * 1000;
             $callType = 'text';
             $toolCalls = [];
+            // @phpstan-ignore-next-line - Defensive coding for different response types
             if (is_object($response) && property_exists($response, 'toolCalls')) {
                 $toolCalls = $response->toolCalls ?? [];
+                // @phpstan-ignore-next-line - Defensive coding for different response types
             } elseif (is_array($response) && array_key_exists('toolCalls', $response)) {
+                // @phpstan-ignore-next-line - Defensive coding for different response types
                 $toolCalls = $response['toolCalls'] ?? [];
             }
+            // @phpstan-ignore-next-line - Defensive coding for different response types
             if (is_array($toolCalls) && $toolCalls !== []) {
                 $callType = 'tools';
                 $this->dispatchToolCalls($toolCalls, 'prism');
