@@ -39,12 +39,14 @@ class MockPulseExporter extends PulseExporter
         string $traceId,
         string $graphName,
         array $initialStateKeys = [],
-        ?\DateTimeImmutable $startedAt = null
+        ?\DateTimeImmutable $startedAt = null,
+        ?array $initialStateData = null
     ): void {
         $this->traces[$traceId] = [
             'graph_name' => $graphName,
             'initial_state_keys' => $initialStateKeys,
             'started_at' => $startedAt?->format(DATE_ATOM),
+            'initial_state' => $initialStateData,
         ];
     }
 }

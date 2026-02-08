@@ -15,7 +15,7 @@ class GraphEdge implements EdgeInterface
     /** @var string|array<int, string> */
     protected string|array $target;
 
-    protected ?RouterInterface $condition;
+    protected RouterInterface|string|null $condition;
 
     /** @var array<string, mixed> */
     protected array $metadata;
@@ -24,7 +24,7 @@ class GraphEdge implements EdgeInterface
      * @param  string|array<int, string>  $target
      * @param  array<string, mixed>  $metadata
      */
-    public function __construct(string $source, string|array $target, ?RouterInterface $condition = null, array $metadata = [])
+    public function __construct(string $source, string|array $target, RouterInterface|string|null $condition = null, array $metadata = [])
     {
         $this->source = $source;
         $this->target = $target;
@@ -42,7 +42,7 @@ class GraphEdge implements EdgeInterface
         return $this->target;
     }
 
-    public function getCondition(): ?RouterInterface
+    public function getCondition(): RouterInterface|string|null
     {
         return $this->condition;
     }

@@ -87,7 +87,9 @@ abstract class PrismNode extends AbstractNode
                 promptTokens: $usage['promptTokens'],
                 completionTokens: $usage['completionTokens'],
                 callType: $callType,
-                model: "{$provider}:{$model}"
+                model: "{$provider}:{$model}",
+                prompt: $this->extractPromptFromMessages($messages),
+                response: $this->extractResponseText($response)
             ));
         });
 
@@ -150,20 +152,20 @@ abstract class PrismNode extends AbstractNode
     protected function prompt(string $template, array $variables = [], array $additionalContent = []): string
     {
         $startTime = microtime(true);
-        $prompt = $this->interpolate($template, $variables);
+        $promptText = $this->interpolate($template, $variables);
         $useCache = $this->shouldCache() && $additionalContent === [];
-        $cacheKey = $useCache ? $this->getCacheKey($prompt) : null;
+        $cacheKey = $useCache ? $this->getCacheKey($promptText) : null;
         if ($useCache && $this->cache()->has($cacheKey)) {
             return $this->cache()->get($cacheKey);
         }
         $config = $this->model ?? (string) config('agenticgraph.prism.model');
         [$provider, $model] = $this->parseModel($config);
         $this->suppressAutoTracking = true;
-        $response = $this->prism()->withPrompt($prompt, $additionalContent)->asText();
+        $response = $this->prism()->withPrompt($promptText, $additionalContent)->asText();
         $this->suppressAutoTracking = false;
-        $text = $response->text;
+        $responseText = $response->text;
         if ($useCache) {
-            $this->cache()->put($cacheKey, $text, ($this->cacheTtl ?? (int) config('agenticgraph.prism.cache_ttl')) * 60);
+            $this->cache()->put($cacheKey, $responseText, ($this->cacheTtl ?? (int) config('agenticgraph.prism.cache_ttl')) * 60);
         }
         if ($this->trackTokens) {
             $usage = $this->resolveUsage($response);
@@ -177,11 +179,13 @@ abstract class PrismNode extends AbstractNode
                 promptTokens: $usage['promptTokens'],
                 completionTokens: $usage['completionTokens'],
                 callType: 'text',
-                model: "{$provider}:{$model}"
+                model: "{$provider}:{$model}",
+                prompt: $promptText,
+                response: $responseText
             ));
         }
 
-        return $text;
+        return $responseText;
     }
 
     /**
@@ -199,7 +203,7 @@ abstract class PrismNode extends AbstractNode
             ->asText();
         $this->suppressAutoTracking = false;
 
-        $text = $response->text;
+        $responseText = $response->text;
 
         if ($this->trackTokens) {
             $usage = $this->resolveUsage($response);
@@ -213,11 +217,13 @@ abstract class PrismNode extends AbstractNode
                 promptTokens: $usage['promptTokens'],
                 completionTokens: $usage['completionTokens'],
                 callType: 'text',
-                model: "{$provider}:{$model}"
+                model: "{$provider}:{$model}",
+                prompt: $this->extractPromptFromMessages($messages),
+                response: $responseText
             ));
         }
 
-        return $text;
+        return $responseText;
     }
 
     /**
@@ -253,7 +259,9 @@ abstract class PrismNode extends AbstractNode
                 promptTokens: $tokens,
                 completionTokens: 0,
                 callType: 'embeddings',
-                model: "{$provider}:{$model}"
+                model: "{$provider}:{$model}",
+                prompt: is_array($inputs) ? implode("\n---\n", $inputs) : $inputs,
+                response: null  // Embeddings don't have text response
             ));
         }
 
@@ -286,7 +294,9 @@ abstract class PrismNode extends AbstractNode
                 promptTokens: $response->usage->promptTokens ?? 0,
                 completionTokens: $response->usage->completionTokens ?? 0,
                 callType: 'image',
-                model: "{$provider}:{$model}"
+                model: "{$provider}:{$model}",
+                prompt: $prompt,
+                response: null  // Image responses don't have text
             ));
         }
 
@@ -318,7 +328,9 @@ abstract class PrismNode extends AbstractNode
                 promptTokens: $response->usage->promptTokens ?? 0,
                 completionTokens: $response->usage->completionTokens ?? 0,
                 callType: 'audio',
-                model: "{$provider}:{$model}"
+                model: "{$provider}:{$model}",
+                prompt: null,  // Audio input, no text prompt
+                response: $response->text ?? null
             ));
         }
 
@@ -367,7 +379,9 @@ abstract class PrismNode extends AbstractNode
                 promptTokens: $usage['promptTokens'],
                 completionTokens: $usage['completionTokens'],
                 callType: 'structured',
-                model: "{$provider}:{$model}"
+                model: "{$provider}:{$model}",
+                prompt: $prompt,
+                response: $this->extractResponseText($response)
             ));
         }
 
@@ -405,7 +419,9 @@ abstract class PrismNode extends AbstractNode
                 promptTokens: $usage['promptTokens'],
                 completionTokens: $usage['completionTokens'],
                 callType: 'tools',
-                model: "{$provider}:{$model}"
+                model: "{$provider}:{$model}",
+                prompt: $prompt,
+                response: $this->extractResponseText($response)
             ));
         }
 
@@ -538,7 +554,9 @@ abstract class PrismNode extends AbstractNode
             promptTokens: $usage['promptTokens'],
             completionTokens: $usage['completionTokens'],
             callType: $callType,
-            model: "{$provider}:{$model}"
+            model: "{$provider}:{$model}",
+            prompt: null,  // Generic method, no prompt context available
+            response: $this->extractResponseText($response)
         ));
     }
 
@@ -606,6 +624,91 @@ abstract class PrismNode extends AbstractNode
             'completionTokens' => $completionTokens,
             'totalTokens' => $promptTokens + $completionTokens,
         ];
+    }
+
+    /**
+     * Extract prompt text from messages (array or Collection).
+     *
+     * @param  array<int, Message>|\Illuminate\Support\Collection<int, Message>|null  $messages
+     */
+    private function extractPromptFromMessages(array|\Illuminate\Support\Collection|null $messages): ?string
+    {
+        if ($messages === null) {
+            return null;
+        }
+
+        // Convert Collection to array if needed
+        if ($messages instanceof \Illuminate\Support\Collection) {
+            $messages = $messages->all();
+        }
+
+        if ($messages === []) {
+            return null;
+        }
+
+        $parts = [];
+        foreach ($messages as $message) {
+            $content = null;
+
+            if (method_exists($message, 'getContent')) {
+                $content = $message->getContent();
+            } elseif (method_exists($message, 'content')) {
+                $content = $message->content();
+            } elseif (property_exists($message, 'content')) {
+                $content = $message->content;
+            } elseif (method_exists($message, 'text')) {
+                $content = $message->text();
+            } elseif (property_exists($message, 'text')) {
+                $content = $message->text;
+            }
+
+            if (is_string($content) && $content !== '') {
+                $role = 'user';
+                if (method_exists($message, 'getRole')) {
+                    $role = $message->getRole();
+                } elseif (method_exists($message, 'role')) {
+                    $role = $message->role();
+                } elseif (property_exists($message, 'role')) {
+                    $role = $message->role;
+                }
+
+                $parts[] = "[{$role}] {$content}";
+            }
+        }
+
+        return $parts === [] ? null : implode("\n\n", $parts);
+    }
+
+    /**
+     * Extract response text from a response object.
+     */
+    private function extractResponseText(mixed $response): ?string
+    {
+        if (! is_object($response)) {
+            return null;
+        }
+
+        // Try different common properties
+        if (property_exists($response, 'text')) {
+            return $response->text;
+        }
+
+        if (property_exists($response, 'content')) {
+            return $response->content;
+        }
+
+        if (property_exists($response, 'message')) {
+            return is_string($response->message) ? $response->message : null;
+        }
+
+        // Try to get structured output as JSON
+        if (property_exists($response, 'structured')) {
+            $encoded = json_encode($response->structured);
+
+            return $encoded !== false ? $encoded : null;
+        }
+
+        return null;
     }
 
     /**
@@ -820,9 +923,9 @@ abstract class PrismNode extends AbstractNode
     protected function promptTemplate(PromptTemplate $template, array $variables = [], array $additionalContent = []): string
     {
         $startTime = microtime(true);
-        $prompt = $template->format($variables);
+        $promptText = $template->format($variables);
         $useCache = $this->shouldCache() && $additionalContent === [];
-        $cacheKey = $useCache ? $this->getCacheKey($prompt) : null;
+        $cacheKey = $useCache ? $this->getCacheKey($promptText) : null;
 
         if ($useCache && $this->cache()->has($cacheKey)) {
             return $this->cache()->get($cacheKey);
@@ -832,13 +935,13 @@ abstract class PrismNode extends AbstractNode
         [$provider, $model] = $this->parseModel($config);
 
         $this->suppressAutoTracking = true;
-        $response = $this->prism()->withPrompt($prompt, $additionalContent)->asText();
+        $response = $this->prism()->withPrompt($promptText, $additionalContent)->asText();
         $this->suppressAutoTracking = false;
 
-        $text = $response->text;
+        $responseText = $response->text;
 
         if ($useCache) {
-            $this->cache()->put($cacheKey, $text, ($this->cacheTtl ?? (int) config('agenticgraph.prism.cache_ttl')) * 60);
+            $this->cache()->put($cacheKey, $responseText, ($this->cacheTtl ?? (int) config('agenticgraph.prism.cache_ttl')) * 60);
         }
 
         if ($this->trackTokens && isset($response->usage)) {
@@ -850,11 +953,13 @@ abstract class PrismNode extends AbstractNode
                 promptTokens: $response->usage->promptTokens ?? 0,
                 completionTokens: $response->usage->completionTokens ?? 0,
                 callType: 'text',
-                model: "{$provider}:{$model}"
+                model: "{$provider}:{$model}",
+                prompt: $promptText,
+                response: $responseText
             ));
         }
 
-        return $text;
+        return $responseText;
     }
 
     /**
@@ -866,10 +971,10 @@ abstract class PrismNode extends AbstractNode
     protected function chatPrompt(ChatPromptTemplate $template, array $variables = [], array $additionalContent = []): string
     {
         $startTime = microtime(true);
-        $prompt = $template->formatAsString($variables);
+        $promptText = $template->formatAsString($variables);
 
         $useCache = $this->shouldCache() && $additionalContent === [];
-        $cacheKey = $useCache ? $this->getCacheKey($prompt) : null;
+        $cacheKey = $useCache ? $this->getCacheKey($promptText) : null;
 
         if ($useCache && $this->cache()->has($cacheKey)) {
             return $this->cache()->get($cacheKey);
@@ -877,11 +982,11 @@ abstract class PrismNode extends AbstractNode
 
         $config = $this->model ?? (string) config('agenticgraph.prism.model');
         [$provider, $model] = $this->parseModel($config);
-        $response = $this->prism()->withPrompt($prompt, $additionalContent)->asText();
-        $text = $response->text;
+        $response = $this->prism()->withPrompt($promptText, $additionalContent)->asText();
+        $responseText = $response->text;
 
         if ($useCache) {
-            $this->cache()->put($cacheKey, $text, ($this->cacheTtl ?? (int) config('agenticgraph.prism.cache_ttl')) * 60);
+            $this->cache()->put($cacheKey, $responseText, ($this->cacheTtl ?? (int) config('agenticgraph.prism.cache_ttl')) * 60);
         }
 
         if ($this->trackTokens && isset($response->usage)) {
@@ -893,11 +998,13 @@ abstract class PrismNode extends AbstractNode
                 promptTokens: $response->usage->promptTokens ?? 0,
                 completionTokens: $response->usage->completionTokens ?? 0,
                 callType: 'text',
-                model: "{$provider}:{$model}"
+                model: "{$provider}:{$model}",
+                prompt: $promptText,
+                response: $responseText
             ));
         }
 
-        return $text;
+        return $responseText;
     }
 
     protected function cache(): CacheRepository

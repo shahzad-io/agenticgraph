@@ -102,4 +102,44 @@ final class TraceContext
     {
         return $this->enabled;
     }
+
+    /**
+     * Convert TraceContext to array for serialization (e.g., checkpoint storage).
+     *
+     * @return array<string, mixed>
+     */
+    public function toArray(): array
+    {
+        return [
+            'execution_id' => $this->executionId,
+            'root_span_id' => $this->rootSpanId,
+            'current_span_id' => $this->currentSpanId,
+            'span_stack' => $this->spanStack,
+            'enabled' => $this->enabled,
+        ];
+    }
+
+    /**
+     * Create TraceContext from array (e.g., checkpoint restoration).
+     *
+     * @param  array<string, mixed>  $data
+     */
+    public static function fromArray(array $data): self
+    {
+        $executionId = $data['execution_id'] ?? uniqid('exec_', true);
+        $rootSpanId = $data['root_span_id'] ?? uniqid('span_', true);
+
+        $context = new self($executionId, $rootSpanId);
+
+        // Restore span stack and current span
+        if (isset($data['span_stack']) && is_array($data['span_stack'])) {
+            $context->spanStack = $data['span_stack'];
+        }
+
+        if (isset($data['current_span_id']) && is_string($data['current_span_id'])) {
+            $context->currentSpanId = $data['current_span_id'];
+        }
+
+        return $context;
+    }
 }

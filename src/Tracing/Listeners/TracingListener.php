@@ -20,6 +20,7 @@ use Shahzad\AgenticGraph\Tracing\TraceContext;
 
 /**
  * Listens to graph execution events and forwards to PulseExporter.
+ * Supports configurable capture settings for state, prompts, and responses.
  */
 class TracingListener
 {
@@ -37,9 +38,24 @@ class TracingListener
     /** @var array<string, string> */
     protected array $graphSpanIds = [];
 
+    /** Capture configuration */
+    protected string $captureState;
+
+    protected bool $capturePrompts;
+
+    protected bool $captureResponses;
+
+    protected int $captureMaxLength;
+
     public function __construct(PulseExporter $exporter)
     {
         $this->exporter = $exporter;
+
+        // Load capture configuration
+        $this->captureState = config('agenticgraph.tracing.capture.state', 'diff');
+        $this->capturePrompts = config('agenticgraph.tracing.capture.prompts', false);
+        $this->captureResponses = config('agenticgraph.tracing.capture.responses', false);
+        $this->captureMaxLength = (int) config('agenticgraph.tracing.capture.max_length', 10000);
     }
 
     /**
@@ -53,15 +69,20 @@ class TracingListener
 
         $spanId = $event->spanId ?? uniqid('span_', true);
 
+        // Capture initial state based on configuration
+        $initialState = $this->captureStateData(
+            $event->initialState->toArray(),
+            $event->initialState->toArray(), // No previous state at start
+            false // Not an error
+        );
+
         $this->exporter->startTrace(
             $event->executionId,
             $event->graphName,
             array_keys($event->initialState->toArray()),
-            $event->startedAt
+            $event->startedAt,
+            $initialState
         );
-
-        // We can add the graph span immediately or wait for completion.
-        // Waiting for completion is typical for this exporter structure.
     }
 
     /**
@@ -112,10 +133,18 @@ class TracingListener
             'duration_ms' => $durationMs,
         ]);
 
+        // Capture final state based on configuration
+        $finalState = $this->captureStateData(
+            $event->finalState->toArray(),
+            $event->finalState->toArray(), // Full state at completion
+            false // Not an error
+        );
+
         $this->exporter->completeTrace(
             $event->executionId,
             array_keys($event->finalState->toArray()),
-            $durationMs
+            $durationMs,
+            $finalState
         );
     }
 
@@ -156,10 +185,18 @@ class TracingListener
             ],
         ]);
 
+        // On error, capture full state if configured for error_only mode
+        $finalState = $this->captureStateData(
+            [], // Can't access final state on failure
+            [],
+            true // Is an error
+        );
+
         $this->exporter->failTrace(
             $event->executionId,
             $event->exception,
-            $event->durationMs
+            $event->durationMs,
+            $finalState
         );
     }
 
@@ -213,6 +250,13 @@ class TracingListener
             // ExecutionContext not bound (loop disabled or old execution)
         }
 
+        // Capture state diff based on configuration
+        $stateDiff = $this->buildStateDiff(
+            $event->inputState->toArray(),
+            $event->outputState->toArray(),
+            false // Not an error
+        );
+
         $this->exporter->addSpan([
             'id' => $event->spanId ?? uniqid('span_', true),
             'trace_id' => $event->executionId,
@@ -229,6 +273,7 @@ class TracingListener
             'state_diff' => [
                 'added' => array_diff($outputKeys, $inputKeys),
                 'removed' => array_diff($inputKeys, $outputKeys),
+                'values' => $stateDiff,
             ],
             'loop_context' => $loopContext,
         ]);
@@ -302,9 +347,6 @@ class TracingListener
         $this->calculateSpanTimestamps($eventStartedAt, $eventEndedAt, $durationMs, $traceStartDt, $startedAt, $endedAt);
 
         $parentId = $event->parentSpanId ?? $spanId ?? ($executionId ? ($this->graphSpanIds[$executionId] ?? null) : null);
-        // Fallback for parent if tracing context lost?
-        // In async, we might lose parentID if not passed.
-        // But TokensUsed usually happens inside Node execution where context is set (if properly handled).
 
         $this->exporter->addSpan([
             'id' => $spanId ?? uniqid('span_', true),
@@ -326,8 +368,8 @@ class TracingListener
             'cost_usd' => $cost,
         ]);
 
-        // ... (keep addLlmCall) ...
-        $this->exporter->addLlmCall([
+        // Build LLM call data with optional prompt/response capture
+        $llmCallData = [
             'id' => uniqid('llm_', true),
             'trace_id' => $executionId,
             'span_id' => $spanId,
@@ -340,7 +382,19 @@ class TracingListener
             'duration_ms' => $event->durationMs,
             'created_at' => now()->toIso8601String(),
             'cost_usd' => $cost,
-        ]);
+        ];
+
+        // Add prompt if capture is enabled
+        if ($this->capturePrompts && $event->prompt !== null) {
+            $llmCallData['prompt'] = $this->truncateText($event->prompt, $this->captureMaxLength);
+        }
+
+        // Add response if capture is enabled
+        if ($this->captureResponses && $event->response !== null) {
+            $llmCallData['response'] = $this->truncateText($event->response, $this->captureMaxLength);
+        }
+
+        $this->exporter->addLlmCall($llmCallData);
     }
 
     public function onToolCallCaptured(ToolCallCaptured $event): void
@@ -445,9 +499,6 @@ class TracingListener
     /**
      * Subscribe to events.
      *
-     * @return array<string, string>
-     */
-    /**
      * @param  object  $events
      * @return array<class-string, string>
      */
@@ -466,6 +517,98 @@ class TracingListener
             NodeInterrupted::class => 'onNodeInterrupted',
             NodeResumed::class => 'onNodeResumed',
         ];
+    }
+
+    /**
+     * Capture state data based on configuration.
+     *
+     * @param  array<string, mixed>  $currentState
+     * @param  array<string, mixed>  $previousState
+     * @return array<string, mixed>|null
+     */
+    private function captureStateData(array $currentState, array $previousState, bool $isError): ?array
+    {
+        return match ($this->captureState) {
+            'none' => null,
+            'full' => $currentState,
+            'error_only' => $isError ? $currentState : null,
+            default => null, // 'diff' mode returns null at trace level (handled per-node)
+        };
+    }
+
+    /**
+     * Build state diff based on configuration.
+     *
+     * @param  array<string, mixed>  $inputState
+     * @param  array<string, mixed>  $outputState
+     * @return array<string, mixed>|null
+     */
+    private function buildStateDiff(array $inputState, array $outputState, bool $isError): ?array
+    {
+        return match ($this->captureState) {
+            'none' => null,
+            'full' => $outputState,
+            'diff' => $this->computeDiff($inputState, $outputState),
+            'error_only' => $isError ? $outputState : null,
+            default => null,
+        };
+    }
+
+    /**
+     * Compute difference between input and output state.
+     *
+     * @param  array<string, mixed>  $input
+     * @param  array<string, mixed>  $output
+     * @return array<string, mixed>
+     */
+    private function computeDiff(array $input, array $output): array
+    {
+        $diff = [];
+
+        // Find added and changed keys
+        foreach ($output as $key => $value) {
+            if (! array_key_exists($key, $input)) {
+                $diff[$key] = ['type' => 'added', 'value' => $value];
+            } elseif ($input[$key] !== $value) {
+                $diff[$key] = ['type' => 'changed', 'old' => $input[$key], 'new' => $value];
+            }
+        }
+
+        // Find removed keys
+        foreach ($input as $key => $value) {
+            if (! array_key_exists($key, $output)) {
+                $diff[$key] = ['type' => 'removed', 'old' => $value];
+            }
+        }
+
+        return $diff;
+    }
+
+    /**
+     * Truncate text to maximum allowed length with ellipsis indicator.
+     */
+    private function truncateText(?string $text, int $maxLength): ?string
+    {
+        if ($text === null || strlen($text) <= $maxLength) {
+            return $text;
+        }
+
+        // Try to truncate at sentence boundary first
+        $truncated = substr($text, 0, $maxLength - 20);
+        $lastSentence = strrpos($truncated, '. ');
+
+        if ($lastSentence !== false && $lastSentence > $maxLength * 0.7) {
+            return substr($truncated, 0, $lastSentence + 1).' [...truncated]';
+        }
+
+        // Fallback: truncate at word boundary
+        $lastSpace = strrpos($truncated, ' ');
+        if ($lastSpace !== false) {
+            return substr($truncated, 0, $lastSpace).' [...truncated]';
+        }
+
+        // Final fallback: hard truncate
+        return substr($text, 0, $maxLength - 15).' [...truncated]';
     }
 
     private function calculateSpanTimestamps(

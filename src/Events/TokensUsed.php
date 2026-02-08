@@ -19,6 +19,12 @@ class TokensUsed implements BatchableEventInterface, ShouldQueue
 {
     use SerializesModels;
 
+    /**
+     * Maximum allowed length for prompt/response text before hard truncation.
+     * Prevents memory issues and keeps events reasonably sized.
+     */
+    private const MAX_TEXT_LENGTH = 100000; // 100KB hard ceiling
+
     public function __construct(
         public readonly string $node,
         public readonly int $promptTokens,
@@ -32,6 +38,8 @@ class TokensUsed implements BatchableEventInterface, ShouldQueue
         public readonly ?float $durationMs = null,
         public readonly ?\DateTimeImmutable $startedAt = null,
         public readonly ?\DateTimeImmutable $endedAt = null,
+        public readonly ?string $prompt = null,
+        public readonly ?string $response = null,
     ) {}
 
     public static function fromLlmCall(
@@ -41,7 +49,9 @@ class TokensUsed implements BatchableEventInterface, ShouldQueue
         int $promptTokens,
         int $completionTokens,
         string $callType,
-        ?string $model = null
+        ?string $model = null,
+        ?string $prompt = null,
+        ?string $response = null
     ): self {
         $clock = ExecutionClock::tryGet();
         $traceContext = null;
@@ -86,8 +96,37 @@ class TokensUsed implements BatchableEventInterface, ShouldQueue
             model: $model,
             durationMs: $callDurationMs,
             startedAt: $startedAt,
-            endedAt: $endedAt
+            endedAt: $endedAt,
+            prompt: $prompt !== null ? self::truncateText($prompt, self::MAX_TEXT_LENGTH) : null,
+            response: $response !== null ? self::truncateText($response, self::MAX_TEXT_LENGTH) : null,
         );
+    }
+
+    /**
+     * Truncate text to maximum allowed length with ellipsis indicator.
+     */
+    private static function truncateText(?string $text, int $maxLength): ?string
+    {
+        if ($text === null || strlen($text) <= $maxLength) {
+            return $text;
+        }
+
+        // Try to truncate at sentence boundary first
+        $truncated = substr($text, 0, $maxLength - 20);
+        $lastSentence = strrpos($truncated, '. ');
+
+        if ($lastSentence !== false && $lastSentence > $maxLength * 0.7) {
+            return substr($truncated, 0, $lastSentence + 1).' [...truncated]';
+        }
+
+        // Fallback: truncate at word boundary
+        $lastSpace = strrpos($truncated, ' ');
+        if ($lastSpace !== false) {
+            return substr($truncated, 0, $lastSpace).' [...truncated]';
+        }
+
+        // Final fallback: hard truncate
+        return substr($text, 0, $maxLength - 15).' [...truncated]';
     }
 
     /**
@@ -106,6 +145,7 @@ class TokensUsed implements BatchableEventInterface, ShouldQueue
      * Merge another TokensUsed event into this one.
      *
      * Aggregates token counts and uses the latest timestamp.
+     * Note: Prompt and response text are NOT merged (keeps first event's text only).
      */
     public function merge(BatchableEventInterface $other): BatchableEventInterface
     {
@@ -127,6 +167,8 @@ class TokensUsed implements BatchableEventInterface, ShouldQueue
             $earliestStartedAt = $other->startedAt;
         }
 
+        // When merging, keep the first event's prompt/response text
+        // (merging text content doesn't make sense)
         return new self(
             node: $this->node,
             promptTokens: $this->promptTokens + $other->promptTokens,
@@ -140,6 +182,8 @@ class TokensUsed implements BatchableEventInterface, ShouldQueue
             durationMs: ($this->durationMs ?? 0) + ($other->durationMs ?? 0),
             startedAt: $earliestStartedAt,
             endedAt: $latestEndedAt,
+            prompt: $this->prompt,
+            response: $this->response,
         );
     }
 }

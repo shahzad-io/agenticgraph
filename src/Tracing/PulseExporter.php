@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Log;
 /**
  * Exports traces to AgenticPulse SaaS.
  * Buffers spans during execution and flushes asynchronously on completion.
+ * Supports payload size management with automatic truncation.
  */
 class PulseExporter
 {
@@ -29,6 +30,11 @@ class PulseExporter
 
     /** @var array<string, \Illuminate\Support\Carbon> */
     private array $traceStarts = [];
+
+    /** Payload size limits */
+    private const MAX_PAYLOAD_BYTES = 1_048_576; // 1MB
+
+    private const HARD_PAYLOAD_LIMIT = 10_485_760; // 10MB - absolute maximum
 
     private ?string $endpoint = null;
 
@@ -242,15 +248,16 @@ class PulseExporter
 
     /**
      * Start a new trace.
-     */
-    /**
+     *
      * @param  array<int, string>  $initialStateKeys
+     * @param  array<string, mixed>|null  $initialStateData
      */
     public function startTrace(
         string $traceId,
         string $graphName,
         array $initialStateKeys = [],
-        ?\DateTimeImmutable $startedAt = null
+        ?\DateTimeImmutable $startedAt = null,
+        ?array $initialStateData = null
     ): void {
         if (! $this->enabled) {
             return;
@@ -275,6 +282,11 @@ class PulseExporter
             ],
             'instrumentation_scope' => (string) config('agenticgraph.tracing.instrumentation_scope', 'agenticgraph'),
         ];
+
+        // Add initial state data if provided
+        if ($initialStateData !== null && $initialStateData !== []) {
+            $this->traces[$traceId]['initial_state'] = $initialStateData;
+        }
     }
 
     public function getTraceStartTime(string $traceId): ?\Illuminate\Support\Carbon
@@ -330,12 +342,16 @@ class PulseExporter
 
     /**
      * Complete a trace (success).
-     */
-    /**
+     *
      * @param  array<int, string>  $finalStateKeys
+     * @param  array<string, mixed>|null  $finalStateData
      */
-    public function completeTrace(string $traceId, array $finalStateKeys = [], float $durationMs = 0): void
-    {
+    public function completeTrace(
+        string $traceId,
+        array $finalStateKeys = [],
+        float $durationMs = 0,
+        ?array $finalStateData = null
+    ): void {
         if (! $this->enabled || ! isset($this->traces[$traceId])) {
             return;
         }
@@ -353,6 +369,11 @@ class PulseExporter
         $this->traces[$traceId]['duration_ms'] = $durationMs;
         $this->traces[$traceId]['final_state_keys'] = $finalStateKeys;
 
+        // Add final state data if provided
+        if ($finalStateData !== null && $finalStateData !== []) {
+            $this->traces[$traceId]['final_state'] = $finalStateData;
+        }
+
         if (! $this->isSampled($traceId)) {
             $this->clearBufferedItems($traceId, 'spans');
             $this->clearBufferedItems($traceId, 'llm_calls');
@@ -366,9 +387,15 @@ class PulseExporter
 
     /**
      * Fail a trace (error).
+     *
+     * @param  array<string, mixed>|null  $finalStateData
      */
-    public function failTrace(string $traceId, \Throwable $exception, float $durationMs = 0): void
-    {
+    public function failTrace(
+        string $traceId,
+        \Throwable $exception,
+        float $durationMs = 0,
+        ?array $finalStateData = null
+    ): void {
         if (! $this->enabled || ! isset($this->traces[$traceId])) {
             return;
         }
@@ -389,6 +416,11 @@ class PulseExporter
             'message' => $exception->getMessage(),
         ];
 
+        // Add final state data if provided (especially useful for error debugging)
+        if ($finalStateData !== null && $finalStateData !== []) {
+            $this->traces[$traceId]['final_state'] = $finalStateData;
+        }
+
         if (! $this->isSampled($traceId)) {
             if (! $this->shouldAlwaysSampleOnError()) {
                 $this->clearBufferedItems($traceId, 'spans');
@@ -400,6 +432,53 @@ class PulseExporter
         }
 
         $this->flush($traceId);
+    }
+
+    /**
+     * Interrupt a trace (paused for human input).
+     * Unlike fail/complete, this preserves the trace for continuation.
+     */
+    public function interruptTrace(string $traceId, string $reason): void
+    {
+        if (! $this->enabled || ! isset($this->traces[$traceId])) {
+            return;
+        }
+
+        $this->traces[$traceId]['status'] = 'interrupted';
+        $this->traces[$traceId]['interrupt_reason'] = $reason;
+        $this->traces[$traceId]['interrupted_at'] = now()->toIso8601String();
+
+        // Mark trace as interrupted but don't reset - it may be resumed
+        // The trace stays in buffer with interrupted status
+        if (! $this->isSampled($traceId)) {
+            $this->clearBufferedItems($traceId, 'spans');
+            $this->clearBufferedItems($traceId, 'llm_calls');
+            $this->reset();
+
+            return;
+        }
+
+        // Flush current progress so it's not lost during the interrupt
+        $this->flush($traceId);
+    }
+
+    /**
+     * Resume a previously interrupted trace.
+     * Rehydrates trace state for continuation.
+     */
+    public function resumeTrace(string $traceId): void
+    {
+        if (! $this->enabled) {
+            return;
+        }
+
+        // Mark trace as running again
+        if (isset($this->traces[$traceId])) {
+            $this->traces[$traceId]['status'] = 'running';
+            $this->traces[$traceId]['resumed_at'] = now()->toIso8601String();
+            unset($this->traces[$traceId]['interrupt_reason']);
+            unset($this->traces[$traceId]['interrupted_at']);
+        }
     }
 
     /**
@@ -531,10 +610,308 @@ class PulseExporter
         $spans = $this->normalizeSpans($spans);
         $trace = $this->normalizeTraceWindow($this->traces[$traceId], $spans);
 
-        return [
+        $llmCalls = $this->mergeById(array_merge($localCalls, $bufferedCalls));
+
+        $payload = [
             'trace' => $trace,
             'spans' => $spans,
-            'llm_calls' => $this->mergeById(array_merge($localCalls, $bufferedCalls)),
+            'llm_calls' => $llmCalls,
+        ];
+
+        // Check and manage payload size
+        return $this->preparePayload($payload);
+    }
+
+    /**
+     * Prepare payload with size management and truncation.
+     *
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    private function preparePayload(array $payload): array
+    {
+        $estimatedSize = $this->estimatePayloadSize($payload);
+
+        // If under limit, return as-is
+        if ($estimatedSize < self::MAX_PAYLOAD_BYTES) {
+            return $payload;
+        }
+
+        // If over hard limit, create error trace instead
+        if ($estimatedSize > self::HARD_PAYLOAD_LIMIT) {
+            return $this->createErrorPayload($payload, 'Payload exceeded maximum size limit');
+        }
+
+        // Apply smart truncation
+        return $this->smartTruncatePayload($payload, $estimatedSize);
+    }
+
+    /**
+     * Estimate payload size without full JSON encoding.
+     *
+     * @param  array<string, mixed>  $payload
+     */
+    private function estimatePayloadSize(array $payload): int
+    {
+        $size = 0;
+
+        // Estimate trace size
+        if (isset($payload['trace'])) {
+            $size += $this->estimateArraySize($payload['trace']);
+        }
+
+        // Estimate spans size
+        if (isset($payload['spans'])) {
+            foreach ($payload['spans'] as $span) {
+                $size += $this->estimateArraySize($span);
+            }
+        }
+
+        // Estimate LLM calls size (these often contain large text)
+        if (isset($payload['llm_calls'])) {
+            foreach ($payload['llm_calls'] as $call) {
+                $size += $this->estimateArraySize($call);
+            }
+        }
+
+        return $size;
+    }
+
+    /**
+     * Estimate size of an array without JSON encoding.
+     *
+     * @param  array<int|string, mixed>  $data
+     */
+    private function estimateArraySize(array $data): int
+    {
+        $size = 0;
+        foreach ($data as $key => $value) {
+            $size += strlen((string) $key);
+            if (is_string($value)) {
+                $size += strlen($value);
+            } elseif (is_array($value)) {
+                $size += $this->estimateArraySize($value);
+            } elseif (is_object($value)) {
+                $encoded = json_encode($value);
+                $size += $encoded !== false ? strlen($encoded) : 100;
+            } else {
+                $size += strlen(json_encode($value) ?: '');
+            }
+        }
+
+        return $size;
+    }
+
+    /**
+     * Smart truncate payload to fit within size limits.
+     *
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    private function smartTruncatePayload(array $payload, int $currentSize): array
+    {
+        $targetSize = (int) (self::MAX_PAYLOAD_BYTES * 0.9); // Aim for 90% of limit
+        $excess = $currentSize - $targetSize;
+        $applied = [];
+
+        // Priority 1: Truncate LLM responses
+        if ($excess > 0 && isset($payload['llm_calls'])) {
+            $payload['llm_calls'] = $this->truncateLlmResponses($payload['llm_calls'], $excess);
+            $applied[] = 'responses';
+            $newSize = $this->estimatePayloadSize($payload);
+            if ($newSize <= self::MAX_PAYLOAD_BYTES) {
+                return $this->finalizePayload($payload, $applied, $currentSize);
+            }
+            $excess = $newSize - $targetSize;
+        }
+
+        // Priority 2: Truncate LLM prompts
+        if ($excess > 0 && isset($payload['llm_calls'])) {
+            $payload['llm_calls'] = $this->truncateLlmPrompts($payload['llm_calls'], $excess);
+            $applied[] = 'prompts';
+            $newSize = $this->estimatePayloadSize($payload);
+            if ($newSize <= self::MAX_PAYLOAD_BYTES) {
+                return $this->finalizePayload($payload, $applied, $currentSize);
+            }
+            $excess = $newSize - $targetSize;
+        }
+
+        // Priority 3: Drop middle spans (keep first 50 + last 50)
+        if ($excess > 0 && isset($payload['spans']) && count($payload['spans']) > 100) {
+            $payload['spans'] = array_merge(
+                array_slice($payload['spans'], 0, 50),
+                array_slice($payload['spans'], -50)
+            );
+            $applied[] = 'spans';
+            $newSize = $this->estimatePayloadSize($payload);
+            if ($newSize <= self::MAX_PAYLOAD_BYTES) {
+                return $this->finalizePayload($payload, $applied, $currentSize);
+            }
+        }
+
+        // Priority 4: Remove state values from trace (keep only keys)
+        if (isset($payload['trace'])) {
+            unset($payload['trace']['initial_state']);
+            unset($payload['trace']['final_state']);
+            $applied[] = 'state_values';
+        }
+
+        return $this->finalizePayload($payload, $applied, $currentSize);
+    }
+
+    /**
+     * Truncate LLM response text in calls.
+     *
+     * @param  array<int, array<string, mixed>>  $calls
+     * @return array<int, array<string, mixed>>
+     */
+    private function truncateLlmResponses(array $calls, int $targetReduction): array
+    {
+        $responseLengths = [];
+        foreach ($calls as $index => $call) {
+            if (isset($call['response']) && is_string($call['response'])) {
+                $responseLengths[$index] = strlen($call['response']);
+            }
+        }
+
+        if ($responseLengths === []) {
+            return $calls;
+        }
+
+        // Sort by length (longest first) to truncate biggest first
+        arsort($responseLengths);
+
+        $reduced = 0;
+        foreach ($responseLengths as $index => $length) {
+            if ($reduced >= $targetReduction) {
+                break;
+            }
+
+            $currentResponse = $calls[$index]['response'];
+            $targetLength = (int) ($length * 0.5); // Reduce by 50%
+
+            $calls[$index]['response'] = $this->truncateText($currentResponse, $targetLength);
+            $reduced += ($length - $targetLength);
+        }
+
+        return $calls;
+    }
+
+    /**
+     * Truncate LLM prompt text in calls.
+     *
+     * @param  array<int, array<string, mixed>>  $calls
+     * @return array<int, array<string, mixed>>
+     */
+    private function truncateLlmPrompts(array $calls, int $targetReduction): array
+    {
+        $promptLengths = [];
+        foreach ($calls as $index => $call) {
+            if (isset($call['prompt']) && is_string($call['prompt'])) {
+                $promptLengths[$index] = strlen($call['prompt']);
+            }
+        }
+
+        if ($promptLengths === []) {
+            return $calls;
+        }
+
+        // Sort by length (longest first) to truncate biggest first
+        arsort($promptLengths);
+
+        $reduced = 0;
+        foreach ($promptLengths as $index => $length) {
+            if ($reduced >= $targetReduction) {
+                break;
+            }
+
+            $currentPrompt = $calls[$index]['prompt'];
+            $targetLength = (int) ($length * 0.5); // Reduce by 50%
+
+            $calls[$index]['prompt'] = $this->truncateText($currentPrompt, $targetLength);
+            $reduced += ($length - $targetLength);
+        }
+
+        return $calls;
+    }
+
+    /**
+     * Truncate text to specified length with ellipsis.
+     */
+    private function truncateText(string $text, int $maxLength): string
+    {
+        if (strlen($text) <= $maxLength) {
+            return $text;
+        }
+
+        // Try to truncate at sentence boundary
+        $truncated = substr($text, 0, $maxLength - 20);
+        $lastSentence = strrpos($truncated, '. ');
+
+        if ($lastSentence !== false && $lastSentence > $maxLength * 0.7) {
+            return substr($truncated, 0, $lastSentence + 1).' [...truncated]';
+        }
+
+        // Fallback: truncate at word boundary
+        $lastSpace = strrpos($truncated, ' ');
+        if ($lastSpace !== false) {
+            return substr($truncated, 0, $lastSpace).' [...truncated]';
+        }
+
+        // Final fallback: hard truncate
+        return substr($text, 0, $maxLength - 15).' [...truncated]';
+    }
+
+    /**
+     * Finalize payload with truncation metadata.
+     *
+     * @param  array<string, mixed>  $payload
+     * @param  array<int, string>  $applied
+     * @return array<string, mixed>
+     */
+    private function finalizePayload(array $payload, array $applied, int $originalSize): array
+    {
+        if ($applied === []) {
+            return $payload;
+        }
+
+        // Add truncation metadata
+        $payload['_meta'] = [
+            'truncated' => true,
+            'truncation_applied' => array_values(array_unique($applied)),
+            'original_size_bytes' => $originalSize,
+            'truncated_at' => now()->toIso8601String(),
+        ];
+
+        return $payload;
+    }
+
+    /**
+     * Create an error payload when trace is too large.
+     *
+     * @param  array<string, mixed>  $originalPayload
+     * @return array<string, mixed>
+     */
+    private function createErrorPayload(array $originalPayload, string $reason): array
+    {
+        $trace = $originalPayload['trace'] ?? [];
+
+        return [
+            'trace' => [
+                'id' => $trace['id'] ?? 'unknown',
+                'graph_name' => $trace['graph_name'] ?? 'unknown',
+                'status' => 'error',
+                'error_reason' => $reason,
+                'started_at' => $trace['started_at'] ?? now()->toIso8601String(),
+                'resource' => $trace['resource'] ?? [],
+            ],
+            'spans' => [],
+            'llm_calls' => [],
+            '_meta' => [
+                'truncated' => true,
+                'truncation_applied' => ['complete_payload'],
+                'error' => 'Payload size exceeded 10MB limit',
+            ],
         ];
     }
 

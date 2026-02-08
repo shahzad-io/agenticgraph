@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\Log;
 use Psr\Log\LoggerInterface;
 use Shahzad\AgenticGraph\Contracts\LoopAwareRouterInterface;
 use Shahzad\AgenticGraph\Contracts\NodeInterface;
+use Shahzad\AgenticGraph\Contracts\RouterInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Contracts\StorageInterface;
 use Shahzad\AgenticGraph\Events\CycleCompleted;
@@ -32,6 +33,7 @@ use Shahzad\AgenticGraph\Storage\FileStorage;
 use Shahzad\AgenticGraph\Storage\RedisStorage;
 use Shahzad\AgenticGraph\Tracing\ExecutionClock;
 use Shahzad\AgenticGraph\Tracing\Instrumentation\HttpClientInstrumentation;
+use Shahzad\AgenticGraph\Tracing\PulseExporter;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 
 class GraphExecutor
@@ -374,6 +376,12 @@ class GraphExecutor
         $checkpoint->metadata['interrupt_reason'] = $reason;
         $checkpoint->createdAt = new \DateTimeImmutable;
 
+        // Save trace context to checkpoint for resuming (ensures trace continuity)
+        if (app()->bound(TraceContext::class)) {
+            $traceContext = app(TraceContext::class);
+            $checkpoint->metadata['trace_context'] = $traceContext->toArray();
+        }
+
         // Save checkpoint
         $checkpointId = app(CheckpointManager::class)->save($executionId, $checkpoint);
 
@@ -389,6 +397,15 @@ class GraphExecutor
             stateSnapshot: $state->toArray(),
             interruptedAt: new \DateTimeImmutable
         ));
+
+        // Flush trace with interrupted status to ensure it's not lost
+        // This ensures partial traces are captured before the long pause
+        if (app()->bound(PulseExporter::class)) {
+            $exporter = app(PulseExporter::class);
+            if ($exporter->isEnabled()) {
+                $exporter->interruptTrace($executionId, $reason);
+            }
+        }
 
         // Log
         if ((bool) config('agenticgraph.logging.enabled', true)) {
@@ -410,8 +427,8 @@ class GraphExecutor
     {
         $edges = $graph->getEdgesFrom($current);
         foreach ($edges as $edge) {
-            $condition = $edge->getCondition();
-            if ($condition) {
+            $condition = $this->resolveRouter($edge->getCondition());
+            if ($condition !== null) {
                 // Check if router is loop-aware and ExecutionContext is available
                 if ($condition instanceof LoopAwareRouterInterface && app()->bound(ExecutionContext::class)) {
                     $executionContext = app(ExecutionContext::class);
@@ -487,12 +504,28 @@ class GraphExecutor
             return null;
         }
 
+        $executionId = $checkpoint->executionId;
+
+        // Restore trace context from checkpoint if available
+        if (isset($checkpoint->metadata['trace_context']) && is_array($checkpoint->metadata['trace_context'])) {
+            $traceContext = TraceContext::fromArray($checkpoint->metadata['trace_context']);
+            app()->instance(TraceContext::class, $traceContext);
+
+            // Resume the trace in the exporter
+            if (app()->bound(PulseExporter::class)) {
+                $exporter = app(PulseExporter::class);
+                if ($exporter->isEnabled()) {
+                    $exporter->resumeTrace($executionId);
+                }
+            }
+        }
+
         $loopMetadata = null;
         if (isset($checkpoint->metadata['loop'])) {
             $loopMetadata = LoopMetadata::fromArray($checkpoint->metadata['loop']);
         }
 
-        return $this->executeFromNode($graph, $checkpoint->state, $checkpoint->currentNode, $checkpoint->executionId, useBatch: true, loopMetadata: $loopMetadata);
+        return $this->executeFromNode($graph, $checkpoint->state, $checkpoint->currentNode, $executionId, useBatch: true, loopMetadata: $loopMetadata);
     }
 
     /**
@@ -564,6 +597,20 @@ class GraphExecutor
         $loopMetadata = null;
         if (isset($checkpoint->metadata['loop'])) {
             $loopMetadata = LoopMetadata::fromArray($checkpoint->metadata['loop']);
+        }
+
+        // Restore trace context from checkpoint if available
+        if (isset($checkpoint->metadata['trace_context']) && is_array($checkpoint->metadata['trace_context'])) {
+            $traceContext = TraceContext::fromArray($checkpoint->metadata['trace_context']);
+            app()->instance(TraceContext::class, $traceContext);
+
+            // Resume the trace in the exporter
+            if (app()->bound(PulseExporter::class)) {
+                $exporter = app(PulseExporter::class);
+                if ($exporter->isEnabled()) {
+                    $exporter->resumeTrace($executionId);
+                }
+            }
         }
 
         return $this->executeFromNode(
@@ -811,7 +858,7 @@ class GraphExecutor
                 continue;
             }
             $edge = $edges[0];
-            $condition = $edge->getCondition();
+            $condition = $this->resolveRouter($edge->getCondition());
             $target = $condition ? $condition->route($state) : $edge->getTarget();
             $targetName = is_array($target) ? ($target[0] ?? null) : $target;
             if ($targetName) {
@@ -824,6 +871,26 @@ class GraphExecutor
         $unique = array_values(array_unique($nextTargets));
 
         return $unique[0];
+    }
+
+    private function resolveRouter(RouterInterface|string|null $condition): ?RouterInterface
+    {
+        if ($condition === null) {
+            return null;
+        }
+
+        if ($condition instanceof RouterInterface) {
+            return $condition;
+        }
+
+        $router = app()->make($condition);
+        if (! $router instanceof RouterInterface) {
+            throw new \RuntimeException(
+                "Router class must implement RouterInterface: {$condition}"
+            );
+        }
+
+        return $router;
     }
 
     public function executeFromNode(Graph $graph, StateContract $state, string $startNode, string $executionId, bool $useBatch = false, ?LoopMetadata $loopMetadata = null): StateContract

@@ -101,8 +101,8 @@ class GraphBuilder
             }
         }
 
-        $instance = is_string($router) ? Container::getInstance()->make($router) : $router;
-        $this->edges[] = new GraphEdge($source, [], $instance, $metadata);
+        $condition = $router;
+        $this->edges[] = new GraphEdge($source, [], $condition, $metadata);
 
         return $this;
     }

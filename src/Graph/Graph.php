@@ -6,6 +6,7 @@ namespace Shahzad\AgenticGraph\Graph;
 
 use Shahzad\AgenticGraph\Contracts\EdgeInterface;
 use Shahzad\AgenticGraph\Contracts\NodeInterface;
+use Shahzad\AgenticGraph\Contracts\RouterInterface;
 
 class Graph
 {
@@ -176,7 +177,7 @@ class Graph
             $edges = $this->getEdgesFrom($current);
             foreach ($edges as $edge) {
                 // Check if edge has a condition (router)
-                $condition = $edge->getCondition();
+                $condition = $this->resolveRouter($edge->getCondition());
                 if ($condition) {
                     // For conditional edges, add all available routes
                     foreach ($condition->getAvailableRoutes() as $route) {
@@ -295,7 +296,7 @@ class Graph
 
         $edges = $this->getEdgesFrom($node);
         foreach ($edges as $edge) {
-            $condition = $edge->getCondition();
+            $condition = $this->resolveRouter($edge->getCondition());
             $targets = [];
 
             if ($condition) {
@@ -332,5 +333,27 @@ class Graph
         // Backtrack
         array_pop($recursionStack);
         array_pop($pathStack);
+    }
+
+    private function resolveRouter(RouterInterface|string|null $condition): ?RouterInterface
+    {
+        if ($condition === null) {
+            return null;
+        }
+
+        if ($condition instanceof RouterInterface) {
+            return $condition;
+        }
+
+        if (! class_exists($condition)) {
+            throw new InvalidGraphException("Router class does not exist: {$condition}");
+        }
+
+        $router = app()->make($condition);
+        if (! $router instanceof RouterInterface) {
+            throw new InvalidGraphException("Router class must implement RouterInterface: {$condition}");
+        }
+
+        return $router;
     }
 }

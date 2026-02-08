@@ -119,7 +119,9 @@ class PrismRouter extends AbstractRouter implements RouterInterface
                 promptTokens: $response->usage->promptTokens ?? 0,
                 completionTokens: $response->usage->completionTokens ?? 0,
                 callType: 'router',
-                model: "{$provider}:{$model}"
+                model: "{$provider}:{$model}",
+                prompt: $prompt,
+                response: $response->text ?? null
             ));
         }
 

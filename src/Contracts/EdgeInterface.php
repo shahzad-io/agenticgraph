@@ -13,7 +13,7 @@ interface EdgeInterface
      */
     public function getTarget(): string|array;
 
-    public function getCondition(): ?RouterInterface;
+    public function getCondition(): RouterInterface|string|null;
 
     public function shouldTraverse(StateContract $state): bool;
 
