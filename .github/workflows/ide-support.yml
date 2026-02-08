@@ -3,20 +3,32 @@ name: IDE Support Tests
 on:
   push:
     branches: [ main, develop ]
+    paths:
+      - 'src/**'
+      - 'tests/IDESupport/**'
+      - 'phpstan.neon.dist'
+      - 'phpstan-ide.neon'
+      - '.github/workflows/ide-support.yml'
   pull_request:
     branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'tests/IDESupport/**'
+      - 'phpstan.neon.dist'
+      - 'phpstan-ide.neon'
 
 jobs:
   ide-support:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
       
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: 8.2
+          php-version: 8.3
           extensions: dom, curl, libxml, mbstring, zip, redis
           coverage: none
       
