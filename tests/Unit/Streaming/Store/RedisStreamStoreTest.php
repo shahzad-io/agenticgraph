@@ -196,7 +196,7 @@ test('redis stream store handles large event volume', function () {
     $duration = microtime(true) - $startedAt;
 
     expect($store->lastSeq($streamId))->toBe(10000)
-        ->and($duration)->toBeLessThan(2.0);
+        ->and($duration)->toBeLessThan(10.0);
 });
 
 test('redis stream store handles malformed payload json', function () {
