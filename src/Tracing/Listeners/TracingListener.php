@@ -164,7 +164,9 @@ class TracingListener
         $startedAt = $traceStart ? new \DateTimeImmutable($traceStart->toIso8601String()) : null;
         $endedAt = $startedAt ?? new \DateTimeImmutable;
         $traceStartDt = $traceStart ? new \DateTimeImmutable($traceStart->toIso8601String()) : null;
-        $this->calculateSpanTimestamps($startedAt, null, $durationMs, $traceStartDt, $startedAt, $endedAt);
+        $resolvedStartedAt = $endedAt;
+        $resolvedEndedAt = $endedAt;
+        $this->calculateSpanTimestamps($startedAt, null, $durationMs, $traceStartDt, $resolvedStartedAt, $resolvedEndedAt);
 
         $this->exporter->addSpan([
             'id' => $spanId,
@@ -176,8 +178,8 @@ class TracingListener
             'status' => 'failed',
             'span_kind' => 'internal',
             'status_code' => 'ERROR',
-            'started_at' => $startedAt->format(DATE_ATOM),
-            'ended_at' => $endedAt->format(DATE_ATOM),
+            'started_at' => $resolvedStartedAt->format(DATE_ATOM),
+            'ended_at' => $resolvedEndedAt->format(DATE_ATOM),
             'duration_ms' => $durationMs,
             'error' => [
                 'type' => get_class($event->exception),
@@ -229,7 +231,9 @@ class TracingListener
         }
         $endedAt = $startedAt ?? new \DateTimeImmutable;
         $traceStartDt = $traceStart ? new \DateTimeImmutable($traceStart->toIso8601String()) : null;
-        $this->calculateSpanTimestamps($startedAt, null, $durationMs, $traceStartDt, $startedAt, $endedAt);
+        $resolvedStartedAt = $endedAt;
+        $resolvedEndedAt = $endedAt;
+        $this->calculateSpanTimestamps($startedAt, null, $durationMs, $traceStartDt, $resolvedStartedAt, $resolvedEndedAt);
 
         // Extract loop context if available
         $loopContext = null;
@@ -267,8 +271,8 @@ class TracingListener
             'status' => 'success',
             'span_kind' => 'internal',
             'status_code' => 'OK',
-            'started_at' => $startedAt->format(DATE_ATOM),
-            'ended_at' => $endedAt->format(DATE_ATOM),
+            'started_at' => $resolvedStartedAt->format(DATE_ATOM),
+            'ended_at' => $resolvedEndedAt->format(DATE_ATOM),
             'duration_ms' => $durationMs,
             'state_diff' => [
                 'added' => array_diff($outputKeys, $inputKeys),
@@ -290,9 +294,11 @@ class TracingListener
 
         $traceStart = $this->exporter->getTraceStartTime($event->executionId);
         $startedAt = $event->startedAt;
-        $endedAt = $startedAt;
+        $endedAt = $startedAt ?? new \DateTimeImmutable;
         $traceStartDt = $traceStart ? new \DateTimeImmutable($traceStart->toIso8601String()) : null;
-        $this->calculateSpanTimestamps($startedAt, null, $event->durationMs, $traceStartDt, $startedAt, $endedAt);
+        $resolvedStartedAt = $endedAt;
+        $resolvedEndedAt = $endedAt;
+        $this->calculateSpanTimestamps($startedAt, null, $event->durationMs, $traceStartDt, $resolvedStartedAt, $resolvedEndedAt);
 
         $this->exporter->addSpan([
             'id' => $event->spanId ?? uniqid('span_', true),
@@ -303,8 +309,8 @@ class TracingListener
             'status' => 'failed',
             'span_kind' => 'internal',
             'status_code' => 'ERROR',
-            'started_at' => $startedAt->format(DATE_ATOM),
-            'ended_at' => $endedAt->format(DATE_ATOM),
+            'started_at' => $resolvedStartedAt->format(DATE_ATOM),
+            'ended_at' => $resolvedEndedAt->format(DATE_ATOM),
             'duration_ms' => $event->durationMs,
             'error' => [
                 'type' => get_class($event->exception),

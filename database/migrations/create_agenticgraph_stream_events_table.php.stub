@@ -1,0 +1,32 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration {
+    public function up(): void
+    {
+        Schema::create('stream_events', function (Blueprint $table) {
+            $table->id();
+            $table->string('stream_id', 128)->index();
+            $table->string('execution_id', 128)->index();
+            $table->unsignedInteger('seq');
+            $table->unsignedInteger('node_seq')->nullable();
+            $table->string('node_name')->nullable();
+            $table->string('span_id', 128)->nullable();
+            $table->string('parent_span_id', 128)->nullable();
+            $table->string('type', 50);
+            $table->json('payload');
+            $table->timestamp('occurred_at', 6);
+            $table->timestamps();
+            $table->index(['stream_id', 'seq'], 'idx_stream_seq');
+            $table->index('occurred_at');
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('stream_events');
+    }
+};

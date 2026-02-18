@@ -70,6 +70,24 @@ class FileStorage implements StorageInterface
         return $this->hydrateCheckpoint($data);
     }
 
+    public function loadLatestForExecution(string $executionId): ?Checkpoint
+    {
+        $index = $this->loadIndex();
+        $filtered = array_filter($index, fn ($item) => $item['execution_id'] === $executionId);
+        if ($filtered === []) {
+            return null;
+        }
+        usort($filtered, fn ($a, $b) => $b['created_at'] <=> $a['created_at']);
+        $latest = $filtered[0];
+        $path = $this->path($latest['id']);
+        if (! file_exists($path)) {
+            return null;
+        }
+        $data = json_decode(file_get_contents($path), true) ?? [];
+
+        return $this->hydrateCheckpoint($data);
+    }
+
     /**
      * @return array<int, string>
      */

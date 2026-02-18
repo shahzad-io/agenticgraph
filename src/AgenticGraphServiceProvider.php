@@ -7,14 +7,21 @@ namespace Shahzad\AgenticGraph;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\DatabaseManager;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Route;
 use Shahzad\AgenticGraph\Adapters\PrismFacadeClient;
 use Shahzad\AgenticGraph\Commands\AgenticGraphCommand;
 use Shahzad\AgenticGraph\Contracts\PrismClient;
 use Shahzad\AgenticGraph\Execution\CheckpointManager;
+use Shahzad\AgenticGraph\Execution\ExecutionRepository;
+use Shahzad\AgenticGraph\Execution\ExecutionStatusResolver;
+use Shahzad\AgenticGraph\Execution\ExecutionStore;
+use Shahzad\AgenticGraph\Http\Controllers\StreamController;
 use Shahzad\AgenticGraph\State\StateManager;
 use Shahzad\AgenticGraph\Storage\DatabaseStorage;
 use Shahzad\AgenticGraph\Storage\FileStorage;
 use Shahzad\AgenticGraph\Storage\RedisStorage;
+use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
+use Shahzad\AgenticGraph\Streaming\Store\StreamStoreManager;
 use Shahzad\AgenticGraph\Tracing\Listeners\TracingListener;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
 use Spatie\LaravelPackageTools\Package;
@@ -35,6 +42,7 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
             ->hasViews()
             ->hasMigration('create_agenticgraph_executions_table')
             ->hasMigration('create_agenticgraph_checkpoints_table')
+            ->hasMigration('create_agenticgraph_stream_events_table')
             ->hasCommand(AgenticGraphCommand::class)
             ->hasCommand(\Shahzad\AgenticGraph\Console\ListGraphsCommand::class)
             ->hasCommand(\Shahzad\AgenticGraph\Console\VisualizeGraphCommand::class)
@@ -101,9 +109,36 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
             );
         });
 
+        $this->app->bind(ExecutionStore::class, function ($app) {
+            return $app->make(ExecutionRepository::class);
+        });
+
+        $this->app->singleton(ExecutionStatusResolver::class, function ($app) {
+            return new ExecutionStatusResolver(
+                $app->make(ExecutionStore::class),
+                $app->make(CheckpointManager::class)
+            );
+        });
+
+        $this->app->bind(StreamStoreManager::class, function ($app) {
+            return new StreamStoreManager($app);
+        });
+
+        $this->app->bind(StreamStoreInterface::class, function ($app) {
+            return $app->make(StreamStoreManager::class)->store();
+        });
+
         // Register tracing instrumentation if tracing is enabled
         if (config('agenticgraph.tracing.enabled', false)) {
             $this->registerTracing();
+        }
+
+        if (config('agenticgraph.streaming.routes.enabled', true)) {
+            Route::middleware(config('agenticgraph.streaming.routes.middleware', ['api']))
+                ->prefix(config('agenticgraph.streaming.routes.prefix', 'agentic-graph/streams'))
+                ->group(function (): void {
+                    Route::get('/{streamId}', [StreamController::class, 'stream']);
+                });
         }
     }
 

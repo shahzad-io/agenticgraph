@@ -1,6 +1,7 @@
 <?php
 
 use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Execution\ExecutionOptions;
 use Shahzad\AgenticGraph\Facades\AgenticGraph as AG;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
 use Shahzad\AgenticGraph\State\State;
@@ -21,6 +22,8 @@ it('uses facade to execute a graph', function () {
         ->setEntryPoint('start')
         ->addExitPoint('end')
         ->build();
-    $result = AG::execute($graph, new State);
-    expect($result->get('ok'))->toBeTrue();
+    AG::register('facade', $graph);
+
+    $handle = AG::execute('facade', new State, new ExecutionOptions);
+    expect($handle->getFinalState()->get('ok'))->toBeTrue();
 });

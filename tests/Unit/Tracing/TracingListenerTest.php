@@ -89,6 +89,38 @@ it('calculates duration correctly mixed with queued delays', function () {
     expect($span['parent_id'])->toBe('parent_1');
 });
 
+it('records span attributes for node completion', function () {
+    $exporter = new MockPulseExporter;
+    $listener = new TracingListener($exporter);
+
+    $startedAt = new \DateTimeImmutable('2024-01-01 09:00:00');
+    $event = new NodeExecutionCompleted(
+        executionId: 'exec_attr',
+        nodeName: 'node-attr',
+        inputState: new State(['a' => 1]),
+        outputState: new State(['a' => 1, 'b' => 2]),
+        duration: 0.25,
+        metadata: ['node_type' => 'test-node'],
+        spanId: 'span_attr',
+        startedAt: $startedAt,
+        parentSpanId: 'parent_attr'
+    );
+
+    $listener->onNodeCompleted($event);
+
+    expect($exporter->spans)->toHaveCount(1);
+    $span = $exporter->spans[0];
+
+    expect($span['node_type'])->toBe('test-node')
+        ->and($span['span_type'])->toBe('node')
+        ->and($span['status'])->toBe('success')
+        ->and($span['span_kind'])->toBe('internal')
+        ->and($span['status_code'])->toBe('OK')
+        ->and($span['state_diff'])->toHaveKey('added')
+        ->and($span['state_diff'])->toHaveKey('removed')
+        ->and($span['state_diff'])->toHaveKey('values');
+});
+
 it('uses token event timestamps and ids', function () {
     $exporter = new MockPulseExporter;
     $listener = new TracingListener($exporter);

@@ -16,9 +16,9 @@ class VisualizeGraphCommand extends Command
     public function handle(GraphRegistry $registry): int
     {
         $name = $this->argument('name');
-        $graph = $registry->get($name);
+        $graph = $registry->getOrBuild($name);
         if (! $graph) {
-            $this->error("Graph not found: {$name}");
+            $this->error("Graph not found in registry or config: {$name}");
 
             return self::FAILURE;
         }

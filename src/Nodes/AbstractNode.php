@@ -4,8 +4,13 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph\Nodes;
 
+use Illuminate\Contracts\Container\BindingResolutionException;
+use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Contracts\NodeInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
+use Shahzad\AgenticGraph\Streaming\StreamContext;
+use Shahzad\AgenticGraph\Tracing\TraceContext;
 
 abstract class AbstractNode implements NodeInterface
 {
@@ -64,4 +69,73 @@ abstract class AbstractNode implements NodeInterface
     public function onAfter(StateContract $state, StateContract $result): void {}
 
     public function onError(\Throwable $exception, StateContract $state): void {}
+
+    protected function isStreaming(): bool
+    {
+        if (! app()->bound(StreamContext::class)) {
+            return false;
+        }
+
+        return app(StreamContext::class)->sink() !== null;
+    }
+
+    /**
+     * @param  \Closure(): void  $callback
+     */
+    protected function whenStreaming(\Closure $callback): void
+    {
+        if (! $this->isStreaming()) {
+            return;
+        }
+
+        try {
+            $callback();
+        } catch (\Throwable $e) {
+            if ((bool) config('agenticgraph.logging.enabled', true)) {
+                Log::warning('Stream callback failed', [
+                    'node' => $this->getName(),
+                    'error_type' => $e::class,
+                    'message' => $e->getMessage(),
+                ]);
+            }
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    protected function streamEvent(string $type, array $payload): void
+    {
+        if (! $this->isStreaming()) {
+            return;
+        }
+
+        $context = app(StreamContext::class);
+        $sink = $context->sink();
+        if ($sink === null) {
+            return;
+        }
+
+        $traceContext = null;
+        try {
+            $traceContext = app(TraceContext::class);
+        } catch (BindingResolutionException $e) {
+        }
+
+        $session = $context->session();
+        $seq = ++$session->seq;
+
+        $sink->emit(new StreamEventImpl(
+            $session->streamId,
+            $session->executionId,
+            $this->getName(),
+            $traceContext?->getSpanId(),
+            $traceContext?->getParentSpanId(),
+            $type,
+            $payload,
+            $seq,
+            null,
+            new \DateTimeImmutable
+        ));
+    }
 }

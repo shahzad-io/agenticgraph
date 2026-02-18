@@ -163,6 +163,11 @@ class CheckpointManager
         return $this->storage->load($checkpointId);
     }
 
+    public function getLatestForExecution(string $executionId): ?Checkpoint
+    {
+        return $this->storage->loadLatestForExecution($executionId);
+    }
+
     /**
      * Delete a checkpoint by ID.
      */

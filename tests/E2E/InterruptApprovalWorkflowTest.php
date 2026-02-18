@@ -7,6 +7,7 @@ use Shahzad\AgenticGraph\Events\NodeInterrupted;
 use Shahzad\AgenticGraph\Events\NodeResumed;
 use Shahzad\AgenticGraph\Execution\Checkpoint;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
+use Shahzad\AgenticGraph\Facades\AgenticGraph;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Nodes\PrismNode;
 use Shahzad\AgenticGraph\State\State;
@@ -219,4 +220,63 @@ it('dispatches interrupt and resume events during execution', function () {
         return $event->nodeName === 'approve'
             && $event->checkpointId === $checkpointId;
     });
+});
+
+it('resumes interrupt via facade using checkpoint id', function () {
+    $graph = GraphBuilder::create('approval-workflow-facade')
+        ->addNode('generate', GenerateContentNode::class)
+        ->addNode('approve', ApprovalInterruptNode::class)
+        ->addNode('publish', PublishNode::class)
+        ->addEdge('generate', 'approve')
+        ->addEdge('approve', 'publish')
+        ->setEntryPoint('generate')
+        ->addExitPoint('publish')
+        ->build();
+
+    AgenticGraph::register('approval-workflow-facade', $graph);
+
+    $handle = AgenticGraph::execute('approval-workflow-facade', new State(['topic' => 'Facade']));
+    $checkpointId = $handle->getFinalState()->getInterruptCheckpointId();
+
+    $final = AgenticGraph::resumeInterrupt($checkpointId, [
+        'approved' => true,
+        'comments' => 'OK',
+    ]);
+
+    expect($final->get('published'))->toBeTrue()
+        ->and($final->get('approved'))->toBeTrue()
+        ->and($final->get('approval_comments'))->toBe('OK')
+        ->and($final->hasInterrupt())->toBeFalse();
+});
+
+it('throws helpful error when interrupt checkpoint is missing', function () {
+    expect(fn () => AgenticGraph::resumeInterrupt('missing-interrupt-checkpoint', []))
+        ->toThrow(\RuntimeException::class, 'Persist the interrupt checkpoint id');
+});
+
+it('throws helpful error when checkpoint is not an interrupt checkpoint', function () {
+    $graph = GraphBuilder::create('non-interrupt-workflow-facade')
+        ->addNode('step1', GenerateContentNode::class)
+        ->addNode('step2', PublishNode::class)
+        ->addEdge('step1', 'step2')
+        ->setEntryPoint('step1')
+        ->addExitPoint('step2')
+        ->build();
+
+    AgenticGraph::register('non-interrupt-workflow-facade', $graph);
+
+    $checkpoint = new Checkpoint;
+    $checkpoint->id = 'cp-test-non-interrupt-facade';
+    $checkpoint->graphName = 'non-interrupt-workflow-facade';
+    $checkpoint->executionId = 'exec-test-facade';
+    $checkpoint->state = new State(['data' => 'test']);
+    $checkpoint->currentNode = 'step1';
+    $checkpoint->metadata = [];
+    $checkpoint->createdAt = new \DateTimeImmutable;
+
+    $storage = app(StorageInterface::class);
+    $checkpointId = $storage->save($checkpoint);
+
+    expect(fn () => AgenticGraph::resumeInterrupt($checkpointId, []))
+        ->toThrow(\InvalidArgumentException::class, 'Use the checkpoint id from State::getInterruptCheckpointId()');
 });

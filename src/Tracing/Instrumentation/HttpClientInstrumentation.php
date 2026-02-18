@@ -7,6 +7,7 @@ namespace Shahzad\AgenticGraph\Tracing\Instrumentation;
 use Illuminate\Http\Client\Events\ConnectionFailed;
 use Illuminate\Http\Client\Events\RequestSending;
 use Illuminate\Http\Client\Events\ResponseReceived;
+use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Tracing\ExecutionClock;
@@ -88,6 +89,7 @@ class HttpClientInstrumentation
             'request_id' => $requestId,
             'method' => $event->request->method(),
             'url' => $this->safeUrl((string) $event->request->url()),
+            'event' => 'response_received',
         ];
 
         $durationMs = 0;
@@ -100,9 +102,22 @@ class HttpClientInstrumentation
 
         $requestStart = $this->pullRequestStart($executionId, $requestId);
         if (! $requestStart) {
-            if ($this->shouldLog()) {
+            $context['status_code'] = $event->response->status();
+            $context['duration_ms'] = $durationMs;
+            if ($this->shouldLogMissingStart($executionId, $requestId, 'response_received')) {
                 Log::warning('HTTP response without matching request', $context);
             }
+            $this->addFallbackSpan(
+                $clock,
+                $executionId,
+                $parentId,
+                $event->request,
+                $durationMs,
+                $event->response->successful() ? 'success' : 'failed',
+                (string) $event->response->status(),
+                $event->response->status(),
+                strlen($event->response->body())
+            );
 
             return;
         }
@@ -164,13 +179,28 @@ class HttpClientInstrumentation
             'request_id' => $requestId,
             'method' => $event->request->method(),
             'url' => $this->safeUrl((string) $event->request->url()),
+            'event' => 'connection_failed',
         ];
 
         $requestStart = $this->pullRequestStart($executionId, $requestId);
         if (! $requestStart) {
-            if ($this->shouldLog()) {
+            $context['duration_ms'] = 0;
+            $context['error_type'] = get_class($event->exception);
+            if ($this->shouldLogMissingStart($executionId, $requestId, 'connection_failed')) {
                 Log::warning('HTTP connection failed without matching request', $context);
             }
+            $this->addFallbackSpan(
+                $clock,
+                $executionId,
+                $parentId,
+                $event->request,
+                0,
+                'failed',
+                '0',
+                null,
+                0,
+                $event->exception->getMessage()
+            );
 
             return;
         }
@@ -220,6 +250,68 @@ class HttpClientInstrumentation
     private function shouldLog(): bool
     {
         return (bool) config('agenticgraph.logging.enabled', true);
+    }
+
+    private function shouldLogMissingStart(string $executionId, int $requestId, string $event): bool
+    {
+        if (! $this->shouldLog()) {
+            return false;
+        }
+
+        $key = "agenticgraph:http:missing_start:{$executionId}:{$requestId}:{$event}";
+        $store = $this->requestStartStore();
+        if ($store->get($key)) {
+            return false;
+        }
+
+        $store->put($key, true, 60);
+
+        return true;
+    }
+
+    private function addFallbackSpan(
+        ExecutionClock $clock,
+        string $executionId,
+        ?string $parentId,
+        Request $request,
+        float $durationMs,
+        string $status,
+        string $statusCode,
+        ?int $httpStatusCode,
+        int $responseSize,
+        ?string $errorMessage = null
+    ): void {
+        $durationMs = max($durationMs, 0);
+        $endMicrotime = microtime(true);
+        $startMicrotime = $durationMs > 0 ? $endMicrotime - ($durationMs / 1000) : $endMicrotime;
+        $startedAt = $clock->spanStartedAt($startMicrotime);
+        $endedAt = $clock->spanEndedAt($startMicrotime, $durationMs);
+
+        $http = [
+            'method' => $request->method(),
+            'url' => $request->url(),
+            'status_code' => $httpStatusCode,
+            'response_size' => $responseSize,
+        ];
+        if ($errorMessage !== null) {
+            $http['error'] = $errorMessage;
+        }
+
+        $this->exporter->addSpan([
+            'id' => uniqid('span_', true),
+            'trace_id' => $executionId,
+            'parent_id' => $parentId,
+            'node_name' => 'http_request',
+            'node_type' => 'http',
+            'span_type' => 'http',
+            'status' => $status,
+            'span_kind' => 'client',
+            'status_code' => $statusCode,
+            'started_at' => $startedAt->format(DATE_ATOM),
+            'ended_at' => $endedAt->format(DATE_ATOM),
+            'duration_ms' => $durationMs,
+            'http' => $http,
+        ]);
     }
 
     private function requestStartStore(): \Illuminate\Contracts\Cache\Repository

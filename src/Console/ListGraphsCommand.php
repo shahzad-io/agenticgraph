@@ -16,13 +16,31 @@ class ListGraphsCommand extends Command
     public function handle(GraphRegistry $registry): int
     {
         $graphs = $registry->all();
-        if (empty($graphs)) {
+        $configGraphs = config('agenticgraph.graphs', []);
+        $missingGraphs = [];
+
+        foreach ($configGraphs as $name => $class) {
+            if (isset($graphs[$name])) {
+                continue;
+            }
+            $graph = $registry->getOrBuild($name);
+            if ($graph) {
+                $graphs[$name] = $graph;
+            } else {
+                $missingGraphs[$name] = $class;
+            }
+        }
+
+        if (empty($graphs) && empty($missingGraphs)) {
             $this->warn('No graphs registered');
 
             return self::SUCCESS;
         }
         foreach ($graphs as $name => $graph) {
             $this->line("- {$name} ({$graph->description}) Nodes: ".count($graph->nodes));
+        }
+        foreach ($missingGraphs as $name => $class) {
+            $this->line("- {$name} (config: {$class}) Nodes: n/a");
         }
 
         return self::SUCCESS;

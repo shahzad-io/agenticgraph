@@ -10,11 +10,14 @@ use Prism\Prism\Audio\AudioResponse;
 use Prism\Prism\Audio\PendingRequest as PendingAudioRequest;
 use Prism\Prism\Audio\TextResponse as AudioTextResponse;
 use Prism\Prism\Contracts\Message;
+use Prism\Prism\Contracts\Schema;
 use Prism\Prism\Embeddings\PendingRequest as PendingEmbeddingsRequest;
 use Prism\Prism\Embeddings\Response as EmbeddingsResponse;
 use Prism\Prism\Enums\ToolChoice;
+use Prism\Prism\Exceptions\PrismStructuredDecodingException;
 use Prism\Prism\Images\PendingRequest as PendingImageRequest;
 use Prism\Prism\Images\Response as ImageResponse;
+use Prism\Prism\Streaming\Events\ToolCallEvent;
 use Prism\Prism\Text\PendingRequest as PendingTextRequest;
 use Prism\Prism\ValueObjects\Media\Audio as AudioMedia;
 use Prism\Relay\Facades\Relay;
@@ -23,8 +26,16 @@ use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\TokensUsed;
 use Shahzad\AgenticGraph\Events\ToolCallCaptured;
 use Shahzad\AgenticGraph\Mcp\McpRequest;
+use Shahzad\AgenticGraph\Nodes\Contracts\StreamableNodeInterface;
 use Shahzad\AgenticGraph\Prompts\ChatPromptTemplate;
 use Shahzad\AgenticGraph\Prompts\PromptTemplate;
+use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
+use Shahzad\AgenticGraph\Streaming\NodeStreamAccumulator;
+use Shahzad\AgenticGraph\Streaming\PrismStreamAdapter;
+use Shahzad\AgenticGraph\Streaming\StreamContext;
+use Shahzad\AgenticGraph\Streaming\StreamOptions;
+use Shahzad\AgenticGraph\Streaming\StreamSession;
+use Shahzad\AgenticGraph\Streaming\StreamStatus;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 
 /**
@@ -53,7 +64,7 @@ use Shahzad\AgenticGraph\Tracing\TraceContext;
  * @method StateContract onResume(StateContract $state, mixed $humanInput) Process human input when resuming
  * @method StateContract handleApproval(StateContract $state, bool $approved, ?string $comments = null) Handle approval workflows
  */
-abstract class PrismNode extends AbstractNode
+abstract class PrismNode extends AbstractNode implements StreamableNodeInterface
 {
     private ?CacheRepository $cache = null;
 
@@ -127,6 +138,77 @@ abstract class PrismNode extends AbstractNode
         return $request;
     }
 
+    public function executeStreaming(StateContract $state, StreamSinkInterface $sink): StateContract
+    {
+        $traceContext = $this->resolveTraceContext();
+        $streamContext = null;
+        if (app()->bound(StreamContext::class)) {
+            $streamContext = app(StreamContext::class);
+        }
+        $session = $streamContext?->session() ?? new StreamSession(
+            streamId: uniqid('stream_', true),
+            executionId: $traceContext?->getExecutionId() ?? uniqid('exec_', true),
+            options: new StreamOptions,
+            startedAtUnix: time()
+        );
+
+        $adapter = new PrismStreamAdapter(
+            session: $session,
+            nodeName: $this->getName(),
+            spanId: $traceContext?->getSpanId(),
+            parentSpanId: $traceContext?->getParentSpanId()
+        );
+        $accumulator = new NodeStreamAccumulator($state);
+
+        try {
+            $request = $this->buildStreamingRequest($state);
+            foreach ($request->asStream() as $event) {
+                $streamEvent = $adapter->adapt($event);
+                if ($streamEvent === null) {
+                    continue;
+                }
+                $sink->emit($streamEvent);
+                $accumulator->apply($streamEvent);
+            }
+            $sink->close(StreamStatus::SUCCESS);
+
+            return $accumulator->finalize();
+        } catch (\Throwable $e) {
+            $sink->close(StreamStatus::ERROR, [
+                'error_type' => $e::class,
+                'message' => $e->getMessage(),
+            ]);
+            throw $e;
+        }
+    }
+
+    protected function buildStreamingRequest(StateContract $state): PendingTextRequest
+    {
+        $request = $this->prism();
+        $messages = $state->get('messages');
+
+        if (is_array($messages) && $messages !== []) {
+            $request->withMessages($messages);
+        } else {
+            $prompt = $state->get('prompt');
+            if (! is_string($prompt) || $prompt === '') {
+                throw new \RuntimeException('Streaming prompt or messages are required.');
+            }
+            $additionalContent = $state->get('additional_content', []);
+            if (! is_array($additionalContent)) {
+                $additionalContent = [];
+            }
+            $request->withPrompt($prompt, $additionalContent);
+        }
+
+        $tools = $state->get('tools');
+        if (is_array($tools) && $tools !== []) {
+            $request->withTools($tools);
+        }
+
+        return $request;
+    }
+
     protected function embeddings(): PendingEmbeddingsRequest
     {
         $embeddingsProvider = config('agenticgraph.prism.embeddings.provider');
@@ -184,6 +266,11 @@ abstract class PrismNode extends AbstractNode
     {
         $startTime = microtime(true);
         $promptText = $this->interpolate($template, $variables);
+        if ($this->streamingEnabled()) {
+            $request = $this->prism()->withPrompt($promptText, $additionalContent);
+
+            return $this->streamTextRequest($request);
+        }
         $useCache = $this->shouldCache() && $additionalContent === [];
         $cacheKey = $useCache ? $this->getCacheKey($promptText) : null;
         if ($useCache && $this->cache()->has($cacheKey)) {
@@ -227,6 +314,12 @@ abstract class PrismNode extends AbstractNode
         $startTime = microtime(true);
         $config = $this->model ?? (string) config('agenticgraph.prism.model');
         [$provider, $model] = $this->parseModel($config);
+
+        if ($this->streamingEnabled()) {
+            $request = $this->prism()->withMessages($messages);
+
+            return $this->streamTextRequest($request);
+        }
 
         $this->suppressAutoTracking = true;
         $response = $this->prism()
@@ -392,6 +485,41 @@ abstract class PrismNode extends AbstractNode
         $config = $this->model ?? (string) config('agenticgraph.prism.model');
         [$provider, $model] = $this->parseModel($config);
 
+        if ($this->streamingEnabled() && $schema instanceof Schema) {
+            $promptWithSchema = $this->buildStructuredPrompt($prompt, $schema);
+            $text = $this->prompt($promptWithSchema);
+
+            try {
+                return $this->decodeStructuredResponseText($text);
+            } catch (PrismStructuredDecodingException) {
+                $response = $this->prismClient()->structured()
+                    ->using($provider, $model)
+                    ->withSchema($schema)
+                    ->withPrompt($prompt)
+                    ->asStructured();
+
+                if ($this->trackTokens) {
+                    $usage = $this->resolveUsage($response);
+                }
+                if ($this->trackTokens && $usage !== null) {
+                    $durationMs = (microtime(true) - $startTime) * 1000;
+                    $this->events()->dispatch(TokensUsed::fromLlmCall(
+                        node: $this->getName(),
+                        callStartMicrotime: $startTime,
+                        callDurationMs: $durationMs,
+                        promptTokens: $usage['promptTokens'],
+                        completionTokens: $usage['completionTokens'],
+                        callType: 'structured',
+                        model: "{$provider}:{$model}",
+                        prompt: $prompt,
+                        response: $this->extractResponseText($response)
+                    ));
+                }
+
+                return $response->structured;
+            }
+        }
+
         $response = $this->prismClient()->structured()
             ->using($provider, $model)
             ->withSchema($schema)
@@ -428,6 +556,46 @@ abstract class PrismNode extends AbstractNode
         $startTime = microtime(true);
         $config = $this->model ?? (string) config('agenticgraph.prism.model');
         [$provider, $model] = $this->parseModel($config);
+
+        if ($this->streamingEnabled()) {
+            $request = $this->prism()
+                ->withTools($tools)
+                ->withPrompt($prompt);
+            $context = app(StreamContext::class);
+            $sink = $context->sink();
+            if ($sink === null) {
+                $response = $request->asText();
+                $this->dispatchToolCalls($response->toolCalls ?? [], 'prism');
+
+                return $response->toolCalls ?? [];
+            }
+            $traceContext = $this->resolveTraceContext();
+            $adapter = new PrismStreamAdapter(
+                session: $context->session(),
+                nodeName: $this->getName(),
+                spanId: $traceContext?->getSpanId(),
+                parentSpanId: $traceContext?->getParentSpanId()
+            );
+            $toolCalls = [];
+            $this->suppressAutoTracking = true;
+            try {
+                foreach ($request->asStream() as $event) {
+                    $streamEvent = $adapter->adapt($event);
+                    if ($streamEvent === null) {
+                        continue;
+                    }
+                    $sink->emit($streamEvent);
+                    if ($event instanceof ToolCallEvent) {
+                        $toolCalls[] = $event->toolCall;
+                    }
+                }
+            } finally {
+                $this->suppressAutoTracking = false;
+            }
+            $this->dispatchToolCalls($toolCalls, 'prism');
+
+            return $toolCalls;
+        }
 
         $this->suppressAutoTracking = true;
         $response = $this->prism()
@@ -742,6 +910,95 @@ abstract class PrismNode extends AbstractNode
         return null;
     }
 
+    private function resolveTraceContext(): ?TraceContext
+    {
+        try {
+            return app(TraceContext::class);
+        } catch (\Illuminate\Contracts\Container\BindingResolutionException $e) {
+            return null;
+        }
+    }
+
+    private function streamingEnabled(): bool
+    {
+        try {
+            $context = app(StreamContext::class);
+        } catch (\Illuminate\Contracts\Container\BindingResolutionException $e) {
+            return false;
+        }
+
+        return $context->sink() !== null;
+    }
+
+    private function streamTextRequest(PendingTextRequest $request): string
+    {
+        try {
+            $context = app(StreamContext::class);
+        } catch (\Illuminate\Contracts\Container\BindingResolutionException $e) {
+            return $request->asText()->text;
+        }
+
+        $sink = $context->sink();
+        if ($sink === null) {
+            return $request->asText()->text;
+        }
+
+        $traceContext = $this->resolveTraceContext();
+        $adapter = new PrismStreamAdapter(
+            session: $context->session(),
+            nodeName: $this->getName(),
+            spanId: $traceContext?->getSpanId(),
+            parentSpanId: $traceContext?->getParentSpanId()
+        );
+        $text = '';
+
+        $this->suppressAutoTracking = true;
+        try {
+            foreach ($request->asStream() as $event) {
+                $streamEvent = $adapter->adapt($event);
+                if ($streamEvent === null) {
+                    continue;
+                }
+                $sink->emit($streamEvent);
+                if ($streamEvent->type() === 'text_delta') {
+                    $delta = $streamEvent->payload()['delta'] ?? '';
+                    if (is_string($delta) && $delta !== '') {
+                        $text .= $delta;
+                    }
+                }
+            }
+        } finally {
+            $this->suppressAutoTracking = false;
+        }
+
+        return $text;
+    }
+
+    private function buildStructuredPrompt(string $prompt, Schema $schema): string
+    {
+        $schemaJson = json_encode($schema->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+        if ($schemaJson === false) {
+            $schemaJson = '{}';
+        }
+
+        return $prompt."\n\nReturn only JSON that matches this schema:\n".$schemaJson."\nNo markdown, no extra keys.";
+    }
+
+    private function decodeStructuredResponseText(string $responseText): mixed
+    {
+        $pattern = '/^```(?:json)?\s*\n?(.*?)\n?```$/s';
+        $payload = trim($responseText);
+        if (preg_match($pattern, $payload, $matches)) {
+            $payload = trim($matches[1]);
+        }
+
+        try {
+            return json_decode($payload, true, flags: JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            throw PrismStructuredDecodingException::make($responseText);
+        }
+    }
+
     /**
      * @param  array<int, mixed>  $toolCalls
      */
@@ -955,6 +1212,11 @@ abstract class PrismNode extends AbstractNode
     {
         $startTime = microtime(true);
         $promptText = $template->format($variables);
+        if ($this->streamingEnabled()) {
+            $request = $this->prism()->withPrompt($promptText, $additionalContent);
+
+            return $this->streamTextRequest($request);
+        }
         $useCache = $this->shouldCache() && $additionalContent === [];
         $cacheKey = $useCache ? $this->getCacheKey($promptText) : null;
 
@@ -1003,6 +1265,11 @@ abstract class PrismNode extends AbstractNode
     {
         $startTime = microtime(true);
         $promptText = $template->formatAsString($variables);
+        if ($this->streamingEnabled()) {
+            $request = $this->prism()->withPrompt($promptText, $additionalContent);
+
+            return $this->streamTextRequest($request);
+        }
 
         $useCache = $this->shouldCache() && $additionalContent === [];
         $cacheKey = $useCache ? $this->getCacheKey($promptText) : null;

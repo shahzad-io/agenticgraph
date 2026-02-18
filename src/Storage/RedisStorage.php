@@ -58,6 +58,11 @@ class RedisStorage implements StorageInterface
         return $c;
     }
 
+    public function loadLatestForExecution(string $executionId): ?Checkpoint
+    {
+        return null;
+    }
+
     /**
      * @return array<int, string>
      */

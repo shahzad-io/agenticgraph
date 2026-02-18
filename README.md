@@ -18,6 +18,15 @@ AgenticGraph is the first open-source Laravel AI orchestration package, bringing
 - Full documentation: [documentation.md](documentation.md)
 - Covers configuration, .env settings, execution, routing, storage, middleware, events, checkpoints, and CLI
 
+## Streaming
+
+- Streaming guide: [docs/streaming/README.md](docs/streaming/README.md)
+- API reference: [docs/streaming/API.md](docs/streaming/API.md)
+- Event catalog: [docs/streaming/EVENTS.md](docs/streaming/EVENTS.md)
+- Deployment: [docs/streaming/DEPLOYMENT.md](docs/streaming/DEPLOYMENT.md)
+- Troubleshooting: [docs/streaming/TROUBLESHOOTING.md](docs/streaming/TROUBLESHOOTING.md)
+- Examples: [docs/streaming/EXAMPLES.md](docs/streaming/EXAMPLES.md)
+
 ## Installation
 
 Requirements: PHP 8.2+, Laravel 11 or 12.

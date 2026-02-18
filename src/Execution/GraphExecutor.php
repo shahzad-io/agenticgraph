@@ -6,6 +6,7 @@ namespace Shahzad\AgenticGraph\Execution;
 
 use Illuminate\Bus\Batch;
 use Illuminate\Cache\CacheManager;
+use Illuminate\Contracts\Broadcasting\Broadcaster;
 use Illuminate\Contracts\Bus\Dispatcher as BusDispatcher;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Support\Facades\Bus;
@@ -24,13 +25,33 @@ use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
 use Shahzad\AgenticGraph\Events\NodeExecutionFailed;
 use Shahzad\AgenticGraph\Events\NodeExecutionStarted;
 use Shahzad\AgenticGraph\Graph\Graph;
+use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Middleware\LoggingMiddleware;
 use Shahzad\AgenticGraph\Middleware\TimingMiddleware;
 use Shahzad\AgenticGraph\Middleware\ValidationMiddleware;
+use Shahzad\AgenticGraph\Nodes\Contracts\StreamableNodeInterface;
 use Shahzad\AgenticGraph\State\StateManager;
 use Shahzad\AgenticGraph\Storage\DatabaseStorage;
 use Shahzad\AgenticGraph\Storage\FileStorage;
 use Shahzad\AgenticGraph\Storage\RedisStorage;
+use Shahzad\AgenticGraph\Streaming\AsyncStreamCoordinator;
+use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
+use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
+use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
+use Shahzad\AgenticGraph\Streaming\Sinks\BroadcastSink;
+use Shahzad\AgenticGraph\Streaming\Sinks\MemorySink;
+use Shahzad\AgenticGraph\Streaming\Sinks\RateLimitedSink;
+use Shahzad\AgenticGraph\Streaming\Sinks\SSESink;
+use Shahzad\AgenticGraph\Streaming\Store\RetentionPolicy;
+use Shahzad\AgenticGraph\Streaming\StreamContext;
+use Shahzad\AgenticGraph\Streaming\StreamErrorHandler;
+use Shahzad\AgenticGraph\Streaming\StreamHandle;
+use Shahzad\AgenticGraph\Streaming\StreamMetrics;
+use Shahzad\AgenticGraph\Streaming\StreamObserver;
+use Shahzad\AgenticGraph\Streaming\StreamOptions;
+use Shahzad\AgenticGraph\Streaming\StreamResumePayload;
+use Shahzad\AgenticGraph\Streaming\StreamSession;
+use Shahzad\AgenticGraph\Streaming\StreamStatus;
 use Shahzad\AgenticGraph\Tracing\ExecutionClock;
 use Shahzad\AgenticGraph\Tracing\Instrumentation\HttpClientInstrumentation;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
@@ -285,6 +306,731 @@ class GraphExecutor
         }
     }
 
+    public function executeWithOptions(Graph $graph, StateContract $state, ExecutionOptions $options, ?string $executionId = null): ExecutionHandle
+    {
+        $store = app(ExecutionStore::class);
+        $resolver = app(ExecutionStatusResolver::class);
+        $checkpoints = app(CheckpointManager::class);
+        $options->streaming = $this->resolveStreamingMode($options);
+
+        if ($options->mode === ExecutionMode::SYNC) {
+            $executionId = $executionId ?? $this->generateExecutionId();
+            if ($options->streaming === StreamingMode::NONE) {
+                $finalState = $this->execute($graph, $state, executionId: $executionId);
+
+                return new ExecutionHandle(
+                    executionId: $executionId,
+                    options: $options,
+                    executor: $this,
+                    store: $store,
+                    resolver: $resolver,
+                    checkpoints: $checkpoints,
+                    status: ExecutionStatus::COMPLETED,
+                    finalState: $finalState
+                );
+            }
+
+            $streamOptions = $this->toStreamOptions($options);
+            $streamHandle = $this->executeWithStreaming($graph->name, $state, $streamOptions, $executionId);
+
+            return new ExecutionHandle(
+                executionId: $streamHandle->executionId(),
+                options: $options,
+                executor: $this,
+                store: $store,
+                resolver: $resolver,
+                checkpoints: $checkpoints,
+                streamHandle: $streamHandle,
+                status: ExecutionStatus::COMPLETED,
+                finalState: $streamHandle->getFinalState(),
+                streamId: $streamHandle->streamId()
+            );
+        }
+
+        if ($options->streaming === StreamingMode::NONE) {
+            $asyncExecutionId = $this->executeAsync($graph, $state);
+            $record = $store->get($asyncExecutionId);
+
+            return new ExecutionHandle(
+                executionId: $asyncExecutionId,
+                options: $options,
+                executor: $this,
+                store: $store,
+                resolver: $resolver,
+                checkpoints: $checkpoints,
+                status: $record === null ? ExecutionStatus::QUEUED : $record->status
+            );
+        }
+
+        $result = app(AsyncStreamCoordinator::class)->streamAsyncWorkflow($graph->name, $state, $options);
+        $record = $store->get($result['executionId']);
+
+        return new ExecutionHandle(
+            executionId: $result['executionId'],
+            options: $options,
+            executor: $this,
+            store: $store,
+            resolver: $resolver,
+            checkpoints: $checkpoints,
+            status: $record === null ? ExecutionStatus::QUEUED : $record->status,
+            streamId: $result['streamId']
+        );
+    }
+
+    public function executeWithStreaming(string $name, StateContract $state, StreamOptions $options, ?string $executionId = null): StreamHandle
+    {
+        $state->validate();
+
+        $graph = app(GraphRegistry::class)->getOrBuild($name);
+        if ($graph === null) {
+            throw new \RuntimeException(
+                "Graph '{$name}' not found in registry or config. ".
+                "Please register the graph manually or add it to config/agenticgraph.php 'graphs' array."
+            );
+        }
+
+        $executionId = $executionId ?? $this->generateExecutionId();
+        $repo = $this->repo;
+
+        if (! app()->bound(TraceContext::class)) {
+            $traceContext = new TraceContext(
+                executionId: $executionId,
+                rootSpanId: uniqid('span_', true)
+            );
+            app()->instance(TraceContext::class, $traceContext);
+        } else {
+            $traceContext = app(TraceContext::class);
+        }
+
+        if (! app()->bound(ExecutionClock::class)) {
+            app()->instance(ExecutionClock::class, new ExecutionClock($executionId));
+        }
+
+        if (! app()->bound(ExecutionContext::class)) {
+            $executionContext = new ExecutionContext(
+                executionId: $executionId,
+                startTime: microtime(true),
+            );
+            app()->instance(ExecutionContext::class, $executionContext);
+        } else {
+            $executionContext = app(ExecutionContext::class);
+        }
+
+        $session = null;
+        if (app()->bound(StreamContext::class)) {
+            $session = app(StreamContext::class)->session();
+        }
+        if (! $session) {
+            $session = new StreamSession(
+                streamId: uniqid('stream_', true),
+                executionId: $executionId,
+                options: $options,
+                startedAtUnix: time()
+            );
+        }
+
+        $baseSink = $this->createStreamSink($session, $options);
+        $sink = $this->wrapStreamSink($baseSink, $options, $session);
+        if (app()->bound(StreamContext::class)) {
+            app(StreamContext::class)->setSink($sink);
+        } else {
+            app()->instance(StreamContext::class, new StreamContext($session, $sink));
+        }
+
+        if (! $repo->get($executionId)) {
+            $repo->queued($executionId, $graph->name, $state->toArray(), $session->streamId);
+        }
+        $repo->started($executionId, $graph->name, $state->toArray(), $session->streamId);
+
+        $rootSpanId = $traceContext->getRootSpanId();
+        $executionStartTime = microtime(true);
+        $executionStartDt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $executionStartTime)) ?: new \DateTimeImmutable;
+        $this->events->dispatch(new GraphExecutionStarted($executionId, $graph->name, $state, $executionStartDt, $rootSpanId));
+
+        $this->emitLifecycleEvent(
+            $sink,
+            $session,
+            null,
+            $traceContext->getSpanId(),
+            $traceContext->getParentSpanId(),
+            'graph_start',
+            ['graph_name' => $graph->name]
+        );
+
+        $current = $graph->entryPoint;
+        $start = $executionStartTime;
+        $nodeSeqs = new \stdClass;
+        $interrupted = false;
+
+        try {
+            while (true) {
+                $lockTimeout = (int) config('agenticgraph.lock.timeout', 10);
+                $lockBlockTimeout = (int) config('agenticgraph.lock.block_timeout', 5);
+                $lock = $this->cache->lock('agenticgraph:execution:'.$executionId, $lockTimeout);
+                try {
+                    if (! $lock->block($lockBlockTimeout)) {
+                        throw new \RuntimeException(
+                            "Failed to acquire lock for execution {$executionId} after {$lockBlockTimeout} seconds. ".
+                            'Another process may be holding the lock.'
+                        );
+                    }
+
+                    $executionContext = $executionContext->pushNode($current);
+                    [$executionContext, $cycle] = $executionContext->detectAndRecordCycle($current);
+
+                    try {
+                        $this->loopGuard->check($executionContext, $cycle);
+                    } catch (LoopLimitExceededException $e) {
+                        $this->repo->failed($executionId, $e->getMessage());
+                        throw $e;
+                    }
+
+                    $executionContext = $executionContext->incrementIteration();
+                    app()->instance(ExecutionContext::class, $executionContext);
+
+                    if ($cycle !== null) {
+                        $this->events->dispatch(new CycleCompleted(
+                            executionId: $executionId,
+                            cycleHash: $cycle->cycleHash,
+                            cyclePath: $cycle->cyclePath,
+                            completionCount: $cycle->completionCount,
+                            globalIterations: $executionContext->globalIterations,
+                            completedAt: new \DateTimeImmutable,
+                            spanId: $traceContext->getSpanId(),
+                        ));
+
+                        if ((bool) config('agenticgraph.logging.enabled', true)) {
+                            $this->logger->debug('Cycle completed', [
+                                'execution_id' => $executionId,
+                                'cycle_hash' => $cycle->cycleHash,
+                                'cycle_path' => $cycle->cyclePath,
+                                'completion_count' => $cycle->completionCount,
+                                'global_iterations' => $executionContext->globalIterations,
+                                'node_visit_count' => $executionContext->nodeVisitCounts[$current] ?? 0,
+                            ]);
+                        }
+                    }
+
+                    $node = $graph->getNode($current);
+                    if ($options->interrupts && $this->shouldInterrupt($node, $state)) {
+                        assert($node instanceof \Shahzad\AgenticGraph\Nodes\PrismNode);
+                        $state = $this->handleInterrupt($graph, $executionId, $current, $state, $node, $sink, $session);
+                        $lock->release();
+                        $interrupted = true;
+                        break;
+                    }
+
+                    $spanId = $traceContext->startSpan($current);
+                    $parentSpanId = $traceContext->getParentSpanId();
+                    $nodeStartTime = microtime(true);
+                    $inputState = $state;
+                    $nodeStartDt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $nodeStartTime)) ?: new \DateTimeImmutable;
+
+                    $this->events->dispatch(new NodeExecutionStarted(
+                        $executionId,
+                        $current,
+                        $state,
+                        $nodeStartDt,
+                        $spanId,
+                        $parentSpanId
+                    ));
+
+                    $this->emitLifecycleEvent(
+                        $sink,
+                        $session,
+                        $current,
+                        $spanId,
+                        $parentSpanId,
+                        'node_start',
+                        ['node_name' => $current],
+                        $this->nextNodeSeq($nodeSeqs, $current)
+                    );
+
+                    try {
+                        if ($node instanceof StreamableNodeInterface && $this->shouldExecuteStreaming($node)) {
+                            $node->onBefore($state);
+                            $state = $node->executeStreaming($state, $sink);
+                            $node->onAfter($inputState, $state);
+                        } else {
+                            $state = $this->runNodeWithMiddleware($state, $node, $executionId, $current, $spanId);
+                        }
+                    } catch (\Throwable $e) {
+                        $nodeDuration = microtime(true) - $nodeStartTime;
+                        $this->events->dispatch(new NodeExecutionFailed(
+                            $executionId,
+                            $spanId,
+                            $current,
+                            $state,
+                            $e,
+                            $nodeDuration * 1000,
+                            1,
+                            false,
+                            $nodeStartDt,
+                            $parentSpanId
+                        ));
+
+                        $this->emitLifecycleEvent(
+                            $sink,
+                            $session,
+                            $current,
+                            $spanId,
+                            $parentSpanId,
+                            'node_error',
+                            [
+                                'node_name' => $current,
+                                'error_type' => $e::class,
+                                'message' => $e->getMessage(),
+                            ],
+                            $this->nextNodeSeq($nodeSeqs, $current)
+                        );
+
+                        $sink->close(StreamStatus::ERROR, [
+                            'error_type' => $e::class,
+                            'message' => $e->getMessage(),
+                        ]);
+
+                        throw $e;
+                    } finally {
+                        $traceContext->endSpan();
+                    }
+
+                    $nodeDuration = microtime(true) - $nodeStartTime;
+                    $this->events->dispatch(new NodeExecutionCompleted(
+                        $executionId,
+                        $current,
+                        $inputState,
+                        $state,
+                        $nodeDuration,
+                        ['node_type' => $node::class],
+                        $spanId,
+                        $nodeStartDt,
+                        $parentSpanId
+                    ));
+
+                    $this->checkpoint($graph, $executionId, $current, $state, $executionContext);
+
+                    $this->emitLifecycleEvent(
+                        $sink,
+                        $session,
+                        $current,
+                        $spanId,
+                        $parentSpanId,
+                        'node_complete',
+                        [
+                            'node_name' => $current,
+                            'duration_ms' => $nodeDuration * 1000,
+                        ],
+                        $this->nextNodeSeq($nodeSeqs, $current)
+                    );
+
+                    if (in_array($current, $graph->exitPoints, true)) {
+                        break;
+                    }
+                    $next = $this->determineNext($graph, $current, $state);
+                    if ($next === null) {
+                        break;
+                    }
+                    if (is_array($next)) {
+                        $state = $this->executeParallel($graph, $state, $executionId, $current, $next, $spanId);
+                        $current = $this->determinePostParallelNext($graph, $next, $state) ?? ($graph->exitPoints[0] ?? $current);
+                    } else {
+                        $current = $next;
+                    }
+                } catch (\Illuminate\Contracts\Cache\LockTimeoutException $e) {
+                    $this->repo->failed($executionId, 'Lock timeout: '.$e->getMessage());
+                    throw new \RuntimeException('Execution locked by another process', 0, $e);
+                } finally {
+                    optional($lock)->release();
+                }
+            }
+
+            $duration = microtime(true) - $start;
+            app()->forgetInstance(ExecutionContext::class);
+            if (! $interrupted) {
+                $this->repo->completed($executionId, $state->toArray(), $duration);
+                $completedAt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', microtime(true))) ?: new \DateTimeImmutable;
+                $this->events->dispatch(new GraphExecutionCompleted($executionId, $graph->name, $state, $completedAt, $duration, [], $traceContext->getRootSpanId()));
+
+                $this->emitLifecycleEvent(
+                    $sink,
+                    $session,
+                    null,
+                    $traceContext->getSpanId(),
+                    $traceContext->getParentSpanId(),
+                    'graph_complete',
+                    ['duration_ms' => $duration * 1000]
+                );
+
+                $sink->close(StreamStatus::SUCCESS);
+            }
+
+            return new StreamHandle($session, $baseSink, $state);
+        } catch (\Throwable $e) {
+            $duration = microtime(true) - $start;
+            $this->events->dispatch(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000));
+
+            $this->emitLifecycleEvent(
+                $sink,
+                $session,
+                null,
+                $traceContext->getSpanId(),
+                $traceContext->getParentSpanId(),
+                'graph_failed',
+                [
+                    'error_type' => $e::class,
+                    'message' => $e->getMessage(),
+                ]
+            );
+
+            $sink->close(StreamStatus::ERROR, [
+                'error_type' => $e::class,
+                'message' => $e->getMessage(),
+            ]);
+
+            throw $e;
+        } finally {
+            if (app()->bound(HttpClientInstrumentation::class)) {
+                app(HttpClientInstrumentation::class)->cleanupExecution($executionId);
+            }
+            app()->forgetInstance(ExecutionClock::class);
+            app()->forgetInstance(TraceContext::class);
+            app()->forgetInstance(ExecutionContext::class);
+            app()->forgetInstance(StreamContext::class);
+        }
+    }
+
+    public function executeWithStreamingFromNode(
+        Graph $graph,
+        StateContract $state,
+        string $startNode,
+        string $executionId,
+        StreamOptions $options,
+        ?LoopMetadata $loopMetadata = null,
+        ?StreamResumePayload $resumePayload = null
+    ): StreamHandle {
+        $state->validate();
+
+        if (! app()->bound(TraceContext::class)) {
+            $traceContext = new TraceContext(
+                executionId: $executionId,
+                rootSpanId: uniqid('span_', true)
+            );
+            app()->instance(TraceContext::class, $traceContext);
+        } else {
+            $traceContext = app(TraceContext::class);
+        }
+
+        if (! app()->bound(ExecutionClock::class)) {
+            app()->instance(ExecutionClock::class, new ExecutionClock($executionId));
+        }
+
+        if ($loopMetadata !== null) {
+            $executionContext = ExecutionContext::fromArray($loopMetadata->toArray(), $executionId);
+        } elseif (! app()->bound(ExecutionContext::class)) {
+            $executionContext = new ExecutionContext(
+                executionId: $executionId,
+                startTime: microtime(true),
+            );
+        } else {
+            $executionContext = app(ExecutionContext::class);
+        }
+        app()->instance(ExecutionContext::class, $executionContext);
+
+        $session = null;
+        if (app()->bound(StreamContext::class)) {
+            $session = app(StreamContext::class)->session();
+        }
+        if (! $session) {
+            $session = new StreamSession(
+                streamId: uniqid('stream_', true),
+                executionId: $executionId,
+                options: $options,
+                startedAtUnix: time()
+            );
+        }
+
+        $baseSink = $this->createStreamSink($session, $options);
+        $sink = $this->wrapStreamSink($baseSink, $options, $session);
+        if (app()->bound(StreamContext::class)) {
+            app(StreamContext::class)->setSink($sink);
+        } else {
+            app()->instance(StreamContext::class, new StreamContext($session, $sink));
+        }
+
+        $currentStatus = $this->repo->getStatus($executionId);
+        if ($currentStatus === 'queued' || $currentStatus === 'interrupted') {
+            $this->repo->started($executionId, $graph->name, $state->toArray(), $session->streamId);
+        }
+
+        if ($resumePayload !== null) {
+            $this->emitLifecycleEvent(
+                $sink,
+                $session,
+                $startNode,
+                $traceContext->getSpanId(),
+                $traceContext->getParentSpanId(),
+                'stream_resume',
+                [
+                    'from_seq' => $resumePayload->fromSeq,
+                    'resumed_at_seq' => $resumePayload->resumedAtSeq,
+                    'gap_events' => $resumePayload->gapEvents,
+                    'checkpoint_id' => $resumePayload->checkpointId,
+                ]
+            );
+        }
+
+        if (app()->bound(PulseExporter::class)) {
+            $exporter = app(PulseExporter::class);
+            if ($exporter->isEnabled() && $exporter->getTraceStartTime($executionId) === null) {
+                $rootSpanId = $traceContext->getRootSpanId();
+                $executionStartTime = microtime(true);
+                $executionStartDt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $executionStartTime)) ?: new \DateTimeImmutable;
+                $this->events->dispatch(new GraphExecutionStarted($executionId, $graph->name, $state, $executionStartDt, $rootSpanId));
+            }
+        }
+
+        $current = $startNode;
+        $start = microtime(true);
+        $nodeSeqs = new \stdClass;
+        $interrupted = false;
+
+        try {
+            while (true) {
+                $lockTimeout = (int) config('agenticgraph.lock.timeout', 10);
+                $lockBlockTimeout = (int) config('agenticgraph.lock.block_timeout', 5);
+                $lock = $this->cache->lock('agenticgraph:execution:'.$executionId, $lockTimeout);
+                try {
+                    if (! $lock->block($lockBlockTimeout)) {
+                        throw new \RuntimeException(
+                            "Failed to acquire lock for execution {$executionId} after {$lockBlockTimeout} seconds. ".
+                            'Another process may be holding the lock.'
+                        );
+                    }
+
+                    $executionContext = $executionContext->pushNode($current);
+                    [$executionContext, $cycle] = $executionContext->detectAndRecordCycle($current);
+
+                    try {
+                        $this->loopGuard->check($executionContext, $cycle);
+                    } catch (LoopLimitExceededException $e) {
+                        $this->repo->failed($executionId, $e->getMessage());
+                        throw $e;
+                    }
+
+                    $executionContext = $executionContext->incrementIteration();
+                    app()->instance(ExecutionContext::class, $executionContext);
+
+                    if ($cycle !== null) {
+                        $this->events->dispatch(new CycleCompleted(
+                            executionId: $executionId,
+                            cycleHash: $cycle->cycleHash,
+                            cyclePath: $cycle->cyclePath,
+                            completionCount: $cycle->completionCount,
+                            globalIterations: $executionContext->globalIterations,
+                            completedAt: new \DateTimeImmutable,
+                            spanId: $traceContext->getSpanId(),
+                        ));
+
+                        if ((bool) config('agenticgraph.logging.enabled', true)) {
+                            $this->logger->debug('Cycle completed', [
+                                'execution_id' => $executionId,
+                                'cycle_hash' => $cycle->cycleHash,
+                                'cycle_path' => $cycle->cyclePath,
+                                'completion_count' => $cycle->completionCount,
+                                'global_iterations' => $executionContext->globalIterations,
+                                'node_visit_count' => $executionContext->nodeVisitCounts[$current] ?? 0,
+                            ]);
+                        }
+                    }
+
+                    $node = $graph->getNode($current);
+                    if ($options->interrupts && $this->shouldInterrupt($node, $state)) {
+                        assert($node instanceof \Shahzad\AgenticGraph\Nodes\PrismNode);
+                        $state = $this->handleInterrupt($graph, $executionId, $current, $state, $node, $sink, $session);
+                        $lock->release();
+                        $interrupted = true;
+                        break;
+                    }
+
+                    $spanId = $traceContext->startSpan($current);
+                    $parentSpanId = $traceContext->getParentSpanId();
+                    $nodeStartTime = microtime(true);
+                    $inputState = $state;
+                    $nodeStartDt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $nodeStartTime)) ?: new \DateTimeImmutable;
+
+                    $this->events->dispatch(new NodeExecutionStarted(
+                        $executionId,
+                        $current,
+                        $state,
+                        $nodeStartDt,
+                        $spanId,
+                        $parentSpanId
+                    ));
+
+                    $this->emitLifecycleEvent(
+                        $sink,
+                        $session,
+                        $current,
+                        $spanId,
+                        $parentSpanId,
+                        'node_start',
+                        ['node_name' => $current],
+                        $this->nextNodeSeq($nodeSeqs, $current)
+                    );
+
+                    try {
+                        if ($node instanceof StreamableNodeInterface && $this->shouldExecuteStreaming($node)) {
+                            $node->onBefore($state);
+                            $state = $node->executeStreaming($state, $sink);
+                            $node->onAfter($inputState, $state);
+                        } else {
+                            $state = $this->runNodeWithMiddleware($state, $node, $executionId, $current, $spanId);
+                        }
+                    } catch (\Throwable $e) {
+                        $nodeDuration = microtime(true) - $nodeStartTime;
+                        $this->events->dispatch(new NodeExecutionFailed(
+                            $executionId,
+                            $spanId,
+                            $current,
+                            $state,
+                            $e,
+                            $nodeDuration * 1000,
+                            1,
+                            false,
+                            $nodeStartDt,
+                            $parentSpanId
+                        ));
+
+                        $this->emitLifecycleEvent(
+                            $sink,
+                            $session,
+                            $current,
+                            $spanId,
+                            $parentSpanId,
+                            'node_error',
+                            [
+                                'node_name' => $current,
+                                'error_type' => $e::class,
+                                'message' => $e->getMessage(),
+                            ],
+                            $this->nextNodeSeq($nodeSeqs, $current)
+                        );
+
+                        $sink->close(StreamStatus::ERROR, [
+                            'error_type' => $e::class,
+                            'message' => $e->getMessage(),
+                        ]);
+
+                        throw $e;
+                    } finally {
+                        $traceContext->endSpan();
+                    }
+
+                    $nodeDuration = microtime(true) - $nodeStartTime;
+                    $this->events->dispatch(new NodeExecutionCompleted(
+                        $executionId,
+                        $current,
+                        $inputState,
+                        $state,
+                        $nodeDuration,
+                        ['node_type' => $node::class],
+                        $spanId,
+                        $nodeStartDt,
+                        $parentSpanId
+                    ));
+
+                    $this->checkpoint($graph, $executionId, $current, $state, $executionContext);
+
+                    $this->emitLifecycleEvent(
+                        $sink,
+                        $session,
+                        $current,
+                        $spanId,
+                        $parentSpanId,
+                        'node_complete',
+                        [
+                            'node_name' => $current,
+                            'duration_ms' => $nodeDuration * 1000,
+                        ],
+                        $this->nextNodeSeq($nodeSeqs, $current)
+                    );
+
+                    if (in_array($current, $graph->exitPoints, true)) {
+                        break;
+                    }
+                    $next = $this->determineNext($graph, $current, $state);
+                    if ($next === null) {
+                        break;
+                    }
+                    if (is_array($next)) {
+                        $state = $this->executeParallel($graph, $state, $executionId, $current, $next, $spanId);
+                        $current = $this->determinePostParallelNext($graph, $next, $state) ?? ($graph->exitPoints[0] ?? $current);
+                    } else {
+                        $current = $next;
+                    }
+                } catch (\Illuminate\Contracts\Cache\LockTimeoutException $e) {
+                    $this->repo->failed($executionId, 'Lock timeout: '.$e->getMessage());
+                    throw new \RuntimeException('Execution locked by another process', 0, $e);
+                } finally {
+                    optional($lock)->release();
+                }
+            }
+
+            $duration = microtime(true) - $start;
+            app()->forgetInstance(ExecutionContext::class);
+            if (! $interrupted) {
+                $this->repo->completed($executionId, $state->toArray(), $duration);
+                $completedAt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', microtime(true))) ?: new \DateTimeImmutable;
+                $this->events->dispatch(new GraphExecutionCompleted($executionId, $graph->name, $state, $completedAt, $duration, [], $traceContext->getRootSpanId()));
+
+                $this->emitLifecycleEvent(
+                    $sink,
+                    $session,
+                    null,
+                    $traceContext->getSpanId(),
+                    $traceContext->getParentSpanId(),
+                    'graph_complete',
+                    ['duration_ms' => $duration * 1000]
+                );
+
+                $sink->close(StreamStatus::SUCCESS);
+            }
+
+            return new StreamHandle($session, $baseSink, $state);
+        } catch (\Throwable $e) {
+            $duration = microtime(true) - $start;
+            $this->events->dispatch(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000));
+
+            $this->emitLifecycleEvent(
+                $sink,
+                $session,
+                null,
+                $traceContext->getSpanId(),
+                $traceContext->getParentSpanId(),
+                'graph_failed',
+                [
+                    'error_type' => $e::class,
+                    'message' => $e->getMessage(),
+                ]
+            );
+
+            $sink->close(StreamStatus::ERROR, [
+                'error_type' => $e::class,
+                'message' => $e->getMessage(),
+            ]);
+
+            throw $e;
+        } finally {
+            if (app()->bound(HttpClientInstrumentation::class)) {
+                app(HttpClientInstrumentation::class)->cleanupExecution($executionId);
+            }
+            app()->forgetInstance(ExecutionClock::class);
+            app()->forgetInstance(TraceContext::class);
+            app()->forgetInstance(ExecutionContext::class);
+            app()->forgetInstance(StreamContext::class);
+        }
+    }
+
     protected function runNodeWithMiddleware(StateContract $state, NodeInterface $node, string $executionId, string $nodeName, ?string $spanId): StateContract
     {
         $stack = [];
@@ -340,6 +1086,209 @@ class GraphExecutor
         return $pipeline($state);
     }
 
+    private function createStreamSink(StreamSession $session, StreamOptions $options): StreamSinkInterface
+    {
+        return match ($options->delivery) {
+            'broadcast' => new BroadcastSink(app(Broadcaster::class), $session->streamId),
+            'sse' => new SSESink,
+            default => new MemorySink,
+        };
+    }
+
+    private function wrapStreamSink(StreamSinkInterface $sink, StreamOptions $options, StreamSession $session): StreamSinkInterface
+    {
+        $store = $options->storeEnabled ? app(StreamStoreInterface::class) : null;
+        $nodeFilter = $options->nodeFilter;
+        $eventTypeFilter = $options->eventTypeFilter;
+        $rateLimitEnabled = (bool) config('agenticgraph.streaming.rate_limit.enabled', false);
+        if ($rateLimitEnabled) {
+            $maxEvents = (int) config('agenticgraph.streaming.rate_limit.max_events_per_second', 100);
+            $sink = new RateLimitedSink($sink, $maxEvents);
+        }
+        $retentionEnabled = (int) config('agenticgraph.streaming.retention.max_events_per_stream', 0) > 0
+            || (int) config('agenticgraph.streaming.retention.max_age_hours', 0) > 0;
+        $retention = $store && $retentionEnabled ? new RetentionPolicy : null;
+        $observer = new StreamObserver(
+            new StreamMetrics,
+            $session->streamId,
+            $session->executionId,
+            (float) $session->startedAtUnix
+        );
+        $errorHandler = new StreamErrorHandler;
+
+        return new class($sink, $store, $nodeFilter, $eventTypeFilter, $retention, $observer, $errorHandler) implements StreamSinkInterface
+        {
+            public function __construct(
+                private readonly StreamSinkInterface $sink,
+                private readonly ?StreamStoreInterface $store,
+                private readonly mixed $nodeFilter,
+                private readonly mixed $eventTypeFilter,
+                private readonly ?RetentionPolicy $retention,
+                private readonly StreamObserver $observer,
+                private readonly StreamErrorHandler $errorHandler
+            ) {}
+
+            public function emit(\Shahzad\AgenticGraph\Streaming\Contracts\StreamEvent $event): void
+            {
+                if (! $this->shouldEmit($event)) {
+                    return;
+                }
+                if ($this->store) {
+                    try {
+                        $this->store->append($event);
+                        if ($this->retention) {
+                            $this->retention->enforce($this->store, $event);
+                        }
+                    } catch (\Throwable $e) {
+                        $this->handleError($e, $event, 'store');
+
+                        return;
+                    }
+                }
+                try {
+                    $this->sink->emit($event);
+                    $this->observer->record($event);
+                } catch (\Throwable $e) {
+                    $this->handleError($e, $event, 'emit');
+                }
+            }
+
+            public function close(StreamStatus $status, mixed $meta = null): void
+            {
+                $this->sink->close($status, $meta);
+                $this->observer->flush();
+            }
+
+            private function shouldEmit(\Shahzad\AgenticGraph\Streaming\Contracts\StreamEvent $event): bool
+            {
+                if ($this->eventTypeFilter !== null) {
+                    if (is_callable($this->eventTypeFilter)) {
+                        if (! (bool) ($this->eventTypeFilter)($event)) {
+                            return false;
+                        }
+                    } elseif (is_array($this->eventTypeFilter)) {
+                        if (! in_array($event->type(), $this->eventTypeFilter, true)) {
+                            return false;
+                        }
+                    }
+                }
+
+                if ($this->nodeFilter !== null && $event->nodeName() !== null) {
+                    if (is_callable($this->nodeFilter)) {
+                        if (! (bool) ($this->nodeFilter)($event)) {
+                            return false;
+                        }
+                    } elseif (is_array($this->nodeFilter)) {
+                        if (! in_array($event->nodeName(), $this->nodeFilter, true)) {
+                            return false;
+                        }
+                    }
+                }
+
+                return true;
+            }
+
+            private function handleError(\Throwable $error, ?\Shahzad\AgenticGraph\Streaming\Contracts\StreamEvent $event, string $stage): void
+            {
+                $decision = $this->errorHandler->decide($error, $event, $stage);
+                $this->observer->recordError();
+                try {
+                    $this->sink->emit(new \Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl(
+                        $event?->streamId() ?? '',
+                        $event?->executionId() ?? '',
+                        $event?->nodeName(),
+                        $event?->spanId(),
+                        $event?->parentSpanId(),
+                        'stream_error',
+                        $decision->payload,
+                        $event?->seq() ?? 0,
+                        $event?->nodeSeq(),
+                        new \DateTimeImmutable('now')
+                    ));
+                } catch (\Throwable) {
+                }
+                if ($decision->fatal) {
+                    try {
+                        $this->sink->close(StreamStatus::ERROR, $decision->payload);
+                    } catch (\Throwable) {
+                    }
+                    throw $error;
+                }
+            }
+        };
+    }
+
+    public function resolveStreamingMode(ExecutionOptions $options): StreamingMode
+    {
+        if ($options->streaming !== StreamingMode::AUTO) {
+            return $options->streaming;
+        }
+
+        $sseEnabled = (bool) config('agenticgraph.streaming.sse.enabled', true);
+        $forceAboveSeconds = (int) config('agenticgraph.streaming.broadcast.force_above_seconds', 0);
+        $estimated = $options->estimatedDurationSeconds;
+
+        if (! $sseEnabled) {
+            return StreamingMode::BROADCAST;
+        }
+
+        if ($estimated !== null && $forceAboveSeconds > 0 && $estimated >= $forceAboveSeconds) {
+            return StreamingMode::BROADCAST;
+        }
+
+        return StreamingMode::SSE;
+    }
+
+    private function toStreamOptions(ExecutionOptions $options): StreamOptions
+    {
+        return new StreamOptions(
+            delivery: $options->streaming->value,
+            interrupts: $options->interrupts
+        );
+    }
+
+    private function emitLifecycleEvent(
+        StreamSinkInterface $sink,
+        StreamSession $session,
+        ?string $nodeName,
+        ?string $spanId,
+        ?string $parentSpanId,
+        string $type,
+        mixed $payload,
+        ?int $nodeSeq = null
+    ): void {
+        $seq = ++$session->seq;
+        $payloadWithStream = is_array($payload) ? $payload : ['payload' => $payload];
+        $payloadWithStream['stream'] = [
+            'seq' => $seq,
+            'node_seq' => $nodeSeq,
+            'event_type' => $type,
+            'bytes' => strlen(json_encode($payload, JSON_UNESCAPED_SLASHES)),
+        ];
+
+        $sink->emit(new StreamEventImpl(
+            $session->streamId,
+            $session->executionId,
+            $nodeName,
+            $spanId,
+            $parentSpanId,
+            $type,
+            $payloadWithStream,
+            $seq,
+            $nodeSeq,
+            new \DateTimeImmutable
+        ));
+    }
+
+    private function nextNodeSeq(\stdClass $nodeSeqs, string $nodeName): int
+    {
+        $current = property_exists($nodeSeqs, $nodeName) ? (int) $nodeSeqs->{$nodeName} : 0;
+        $next = $current + 1;
+        $nodeSeqs->{$nodeName} = $next;
+
+        return $next;
+    }
+
     /**
      * Check if a node should interrupt execution.
      */
@@ -361,7 +1310,9 @@ class GraphExecutor
         string $executionId,
         string $nodeName,
         StateContract $state,
-        \Shahzad\AgenticGraph\Nodes\PrismNode $node
+        \Shahzad\AgenticGraph\Nodes\PrismNode $node,
+        ?StreamSinkInterface $sink = null,
+        ?StreamSession $session = null
     ): StateContract {
         // Get interrupt reason
         $reason = $node->getInterruptReason($state);
@@ -374,6 +1325,11 @@ class GraphExecutor
         $checkpoint->currentNode = $nodeName;
         $checkpoint->metadata['interrupted'] = true;
         $checkpoint->metadata['interrupt_reason'] = $reason;
+        if ($session) {
+            $checkpoint->metadata['stream_id'] = $session->streamId;
+            $checkpoint->metadata['last_seq'] = $session->seq;
+            $checkpoint->metadata['stream_cursor'] = $session->seq;
+        }
         $checkpoint->createdAt = new \DateTimeImmutable;
 
         // Save trace context to checkpoint for resuming (ensures trace continuity)
@@ -388,6 +1344,8 @@ class GraphExecutor
         // NOW add interrupt metadata to state (with checkpoint ID)
         $state = $state->setInterrupt($reason, $checkpointId);
 
+        $this->repo->interrupted($executionId);
+
         // Dispatch event
         $this->events->dispatch(new \Shahzad\AgenticGraph\Events\NodeInterrupted(
             executionId: $executionId,
@@ -397,6 +1355,29 @@ class GraphExecutor
             stateSnapshot: $state->toArray(),
             interruptedAt: new \DateTimeImmutable
         ));
+
+        if ($sink && $session) {
+            $this->emitLifecycleEvent(
+                $sink,
+                $session,
+                $nodeName,
+                app(TraceContext::class)->getSpanId(),
+                app(TraceContext::class)->getParentSpanId(),
+                'node_interrupt',
+                [
+                    'node_name' => $nodeName,
+                    'reason' => $reason,
+                    'checkpoint_id' => $checkpointId,
+                ]
+            );
+
+            if ($session->options->interrupts) {
+                $sink->close(StreamStatus::CANCELLED, [
+                    'reason' => $reason,
+                    'checkpoint_id' => $checkpointId,
+                ]);
+            }
+        }
 
         // Flush trace with interrupted status to ensure it's not lost
         // This ensures partial traces are captured before the long pause
@@ -544,14 +1525,18 @@ class GraphExecutor
         $checkpoint = $storage->load($checkpointId);
 
         if ($checkpoint === null) {
-            throw new \RuntimeException("Checkpoint {$checkpointId} not found");
+            throw new \RuntimeException(
+                "Interrupt checkpoint {$checkpointId} not found. ".
+                'Persist the interrupt checkpoint id returned by State::getInterruptCheckpointId() and resume with it.'
+            );
         }
 
         // Validate this is an interrupt checkpoint
         if (! isset($checkpoint->metadata['interrupted']) ||
             $checkpoint->metadata['interrupted'] !== true) {
             throw new \InvalidArgumentException(
-                "Checkpoint {$checkpointId} is not an interrupt checkpoint"
+                "Checkpoint {$checkpointId} is not an interrupt checkpoint. ".
+                'Use the checkpoint id from State::getInterruptCheckpointId() or the interrupt event payload.'
             );
         }
 
@@ -660,6 +1645,17 @@ class GraphExecutor
         $this->checkpoint($graph, $executionId, $sourceNode, $merged);
 
         return $merged;
+    }
+
+    private function shouldExecuteStreaming(StreamableNodeInterface $node): bool
+    {
+        if ($node instanceof \Shahzad\AgenticGraph\Nodes\PrismNode) {
+            $method = new \ReflectionMethod($node, 'executeStreaming');
+
+            return $method->getDeclaringClass()->getName() !== \Shahzad\AgenticGraph\Nodes\PrismNode::class;
+        }
+
+        return true;
     }
 
     /**
@@ -942,7 +1938,8 @@ class GraphExecutor
                         throw new \RuntimeException("Failed to acquire lock for execution {$executionId}");
                     }
 
-                    if ($repo->getStatus($executionId) === 'queued') {
+                    $currentStatus = $repo->getStatus($executionId);
+                    if ($currentStatus === 'queued' || $currentStatus === 'interrupted') {
                         $repo->started($executionId, $graph->name, $state->toArray());
                     }
 
@@ -1112,6 +2109,12 @@ class GraphExecutor
         if ($executionContext !== null) {
             $loopMetadata = LoopMetadata::fromExecutionContext($executionContext);
             $checkpoint->metadata['loop'] = $loopMetadata->toArray();
+        }
+        if (app()->bound(StreamContext::class)) {
+            $session = app(StreamContext::class)->session();
+            $checkpoint->metadata['stream_id'] = $session->streamId;
+            $checkpoint->metadata['last_seq'] = $session->seq;
+            $checkpoint->metadata['stream_cursor'] = $session->seq;
         }
 
         $checkpointManager = app(CheckpointManager::class);

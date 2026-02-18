@@ -12,6 +12,8 @@ interface StorageInterface
 
     public function load(string $id): ?Checkpoint;
 
+    public function loadLatestForExecution(string $executionId): ?Checkpoint;
+
     /**
      * @return array<int, mixed>
      */

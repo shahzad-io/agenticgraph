@@ -1,9 +1,13 @@
 <?php
 
 use Prism\Prism\Facades\Prism;
+use Prism\Prism\Streaming\Events\TextCompleteEvent;
+use Prism\Prism\Streaming\Events\TextDeltaEvent;
+use Prism\Prism\Streaming\Events\TextStartEvent;
 use Prism\Prism\Testing\EmbeddingsResponseFake;
 use Prism\Prism\Testing\ImageResponseFake;
 use Prism\Prism\Testing\TextResponseFake;
+use Prism\Prism\Text\PendingRequest as PendingTextRequest;
 use Prism\Prism\ValueObjects\EmbeddingsUsage;
 use Prism\Prism\ValueObjects\GeneratedImage;
 use Prism\Prism\ValueObjects\Media\Audio;
@@ -14,6 +18,7 @@ use Prism\Prism\ValueObjects\Usage;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Nodes\PrismNode;
 use Shahzad\AgenticGraph\State\State;
+use Shahzad\AgenticGraph\Streaming\Sinks\MemorySink;
 
 class TestPrismNode extends PrismNode
 {
@@ -80,6 +85,72 @@ class VideoPrismNode extends PrismNode
         );
 
         return $state->set('text', $text);
+    }
+}
+
+class FakeStreamingRequest extends PendingTextRequest
+{
+    public function __construct(private array $events) {}
+
+    public function asStream(): Generator
+    {
+        foreach ($this->events as $event) {
+            yield $event;
+        }
+    }
+}
+
+class ThrowingStreamingRequest extends PendingTextRequest
+{
+    public function asStream(): Generator
+    {
+        throw new RuntimeException('streaming failed');
+    }
+}
+
+class StreamingPrismNode extends PrismNode
+{
+    public function __construct(private array $events) {}
+
+    public function execute(StateContract $state): StateContract
+    {
+        return $state;
+    }
+
+    protected function buildStreamingRequest(StateContract $state): PendingTextRequest
+    {
+        return new FakeStreamingRequest($this->events);
+    }
+}
+
+class ThrowingStreamingPrismNode extends PrismNode
+{
+    public function execute(StateContract $state): StateContract
+    {
+        return $state;
+    }
+
+    protected function buildStreamingRequest(StateContract $state): PendingTextRequest
+    {
+        return new ThrowingStreamingRequest;
+    }
+}
+
+class CompareStreamingPrismNode extends PrismNode
+{
+    public function execute(StateContract $state): StateContract
+    {
+        return $state->set('text', 'Hello world');
+    }
+
+    protected function buildStreamingRequest(StateContract $state): PendingTextRequest
+    {
+        return new FakeStreamingRequest([
+            new TextStartEvent('evt-1', 111, 'msg-1'),
+            new TextDeltaEvent('evt-2', 112, 'Hello ', 'msg-1'),
+            new TextDeltaEvent('evt-3', 113, 'world', 'msg-1'),
+            new TextCompleteEvent('evt-4', 114, 'msg-1'),
+        ]);
     }
 }
 
@@ -174,4 +245,46 @@ it('supports video media prompts with Prism fake', function () {
     $result = $node->execute(new State);
 
     expect($result->get('text'))->toBe('Video summary');
+});
+
+it('streams Prism events and rebuilds final state', function () {
+    $events = [
+        new TextStartEvent('evt-1', 111, 'msg-1'),
+        new TextDeltaEvent('evt-2', 112, 'Hello ', 'msg-1'),
+        new TextDeltaEvent('evt-3', 113, 'world', 'msg-1'),
+        new TextCompleteEvent('evt-4', 114, 'msg-1'),
+    ];
+
+    $node = new StreamingPrismNode($events);
+    $sink = new MemorySink;
+    $state = new State(['prompt' => 'Hello']);
+    $result = $node->executeStreaming($state, $sink);
+
+    expect($result->get('text'))->toBe('Hello world')
+        ->and($sink->status()?->value)->toBe('success')
+        ->and(iterator_count($sink->events()))->toBe(4);
+});
+
+it('closes sink on streaming error', function () {
+    $node = new ThrowingStreamingPrismNode;
+    $sink = new MemorySink;
+    $state = new State(['prompt' => 'Hello']);
+
+    try {
+        $node->executeStreaming($state, $sink);
+    } catch (Throwable) {
+    }
+
+    expect($sink->status()?->value)->toBe('error');
+});
+
+it('streams output matches non-streaming output', function () {
+    $node = new CompareStreamingPrismNode;
+    $state = new State(['prompt' => 'Hello']);
+    $sink = new MemorySink;
+
+    $streamed = $node->executeStreaming($state, $sink);
+    $nonStreamed = $node->execute($state);
+
+    expect($streamed->get('text'))->toBe($nonStreamed->get('text'));
 });

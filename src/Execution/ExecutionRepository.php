@@ -7,7 +7,7 @@ namespace Shahzad\AgenticGraph\Execution;
 use Illuminate\Database\DatabaseManager;
 use Psr\Log\LoggerInterface;
 
-class ExecutionRepository
+class ExecutionRepository implements ExecutionStore
 {
     private DatabaseManager $db;
 
@@ -21,8 +21,9 @@ class ExecutionRepository
      * @var array<string, array<int, string>>
      */
     protected array $validTransitions = [
-        'queued' => ['running', 'failed'],
-        'running' => ['completed', 'failed'],
+        'queued' => ['running', 'failed', 'interrupted'],
+        'running' => ['completed', 'failed', 'interrupted'],
+        'interrupted' => ['running', 'failed', 'completed'],
         'completed' => [],
         'failed' => [],
     ];
@@ -36,9 +37,9 @@ class ExecutionRepository
     /**
      * @param  array<string, mixed>  $initialState
      */
-    public function queued(string $id, string $graphName, array $initialState = []): void
+    public function queued(string $id, string $graphName, array $initialState = [], ?string $streamId = null): void
     {
-        $this->db->transaction(function () use ($id, $graphName, $initialState) {
+        $this->db->transaction(function () use ($id, $graphName, $initialState, $streamId) {
             $this->db->table($this->table)->updateOrInsert(
                 ['id' => $id],
                 [
@@ -49,6 +50,7 @@ class ExecutionRepository
                     'completed_at' => null,
                     'duration' => null,
                     'error' => null,
+                    'stream_id' => $streamId,
                     'updated_at' => now(),
                     'created_at' => now(),
                 ]
@@ -66,9 +68,9 @@ class ExecutionRepository
     /**
      * @param  array<string, mixed>  $initialState
      */
-    public function started(string $id, string $graphName, array $initialState = []): void
+    public function started(string $id, string $graphName, array $initialState = [], ?string $streamId = null): void
     {
-        $this->db->transaction(function () use ($id, $graphName, $initialState) {
+        $this->db->transaction(function () use ($id, $graphName, $initialState, $streamId) {
             // Verify the record exists and get current status with lock
             $current = $this->db->table($this->table)
                 ->where('id', $id)
@@ -102,6 +104,7 @@ class ExecutionRepository
             $this->db->table($this->table)->where('id', $id)->update([
                 'status' => 'running',
                 'started_at' => now(),
+                'stream_id' => $streamId,
                 'updated_at' => now(),
             ]);
 
@@ -209,12 +212,24 @@ class ExecutionRepository
         return $this->db->table($this->table)->where('id', $id)->value('status');
     }
 
-    /**
-     * Get full execution record
-     */
-    public function get(string $id): ?object
+    public function get(string $executionId): ?ExecutionRecord
     {
-        return $this->db->table($this->table)->where('id', $id)->first();
+        $row = $this->db->table($this->table)->where('id', $executionId)->first();
+        if (! $row) {
+            return null;
+        }
+
+        return new ExecutionRecord(
+            executionId: $row->id,
+            graphName: $row->graph_name,
+            status: ExecutionStatus::from($row->status),
+            initialState: json_decode($row->initial_state ?? '[]', true),
+            finalState: $row->final_state ? json_decode($row->final_state, true) : null,
+            streamId: $row->stream_id ?? null,
+            interruptedAt: $row->interrupted_at ? new \DateTimeImmutable($row->interrupted_at) : null,
+            completedAt: $row->completed_at ? new \DateTimeImmutable($row->completed_at) : null,
+            error: $row->error ?? null
+        );
     }
 
     /**
@@ -262,6 +277,48 @@ class ExecutionRepository
             'duration' => $execution->duration,
             'error' => $execution->error,
         ];
+    }
+
+    public function store(ExecutionRecord $record): void
+    {
+        $this->db->table($this->table)->updateOrInsert(
+            ['id' => $record->executionId],
+            [
+                'graph_name' => $record->graphName,
+                'status' => $record->status->value,
+                'initial_state' => $record->initialState ? json_encode($record->initialState) : null,
+                'final_state' => $record->finalState ? json_encode($record->finalState) : null,
+                'stream_id' => $record->streamId,
+                'interrupted_at' => $record->interruptedAt?->format('Y-m-d H:i:s'),
+                'completed_at' => $record->completedAt?->format('Y-m-d H:i:s'),
+                'error' => $record->error,
+                'updated_at' => now(),
+                'created_at' => now(),
+            ]
+        );
+    }
+
+    public function updateStatus(string $executionId, ExecutionStatus $status, mixed $finalState = null): void
+    {
+        $payload = [
+            'status' => $status->value,
+            'updated_at' => now(),
+        ];
+        if ($finalState !== null) {
+            $payload['final_state'] = json_encode($finalState);
+        }
+        if ($status === ExecutionStatus::COMPLETED) {
+            $payload['completed_at'] = now();
+        }
+        if ($status === ExecutionStatus::INTERRUPTED) {
+            $payload['interrupted_at'] = now();
+        }
+        $this->db->table($this->table)->where('id', $executionId)->update($payload);
+    }
+
+    public function interrupted(string $id): void
+    {
+        $this->updateStatus($id, ExecutionStatus::INTERRUPTED);
     }
 
     /**

@@ -59,6 +59,30 @@ class DatabaseStorage implements StorageInterface
         return $c;
     }
 
+    public function loadLatestForExecution(string $executionId): ?Checkpoint
+    {
+        $row = $this->db->table($this->table)
+            ->where('execution_id', $executionId)
+            ->orderByDesc('created_at')
+            ->first();
+        if (! $row) {
+            return null;
+        }
+        $c = new Checkpoint;
+        $c->id = $row->id;
+        $c->graphName = $row->graph_name;
+        $c->executionId = $row->execution_id;
+        $c->state = \Shahzad\AgenticGraph\State\State::fromArray(json_decode($row->state, true) ?? []);
+        $c->currentNode = $row->current_node;
+        $c->completedNodes = json_decode($row->completed_nodes, true) ?? [];
+        $c->pendingNodes = json_decode($row->pending_nodes, true) ?? [];
+        $c->metadata = json_decode($row->metadata, true) ?? [];
+        $c->createdAt = new \DateTimeImmutable($row->created_at);
+        $c->parentCheckpointId = $row->parent_checkpoint_id;
+
+        return $c;
+    }
+
     /**
      * @return array<int, array{id: string, execution_id: string, current_node: string, created_at: mixed}>
      */

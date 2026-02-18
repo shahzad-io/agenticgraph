@@ -100,6 +100,47 @@ return [
         ],
     ],
 
+    'streaming' => [
+        'sse' => [
+            'enabled' => env('AGENTICGRAPH_STREAM_SSE_ENABLED', true),
+            'max_duration_seconds' => env('AGENTICGRAPH_STREAM_SSE_MAX_DURATION', 120),
+            'poll_interval_ms' => env('AGENTICGRAPH_STREAM_SSE_POLL_INTERVAL', 250),
+            'use_blocking_reads' => env('AGENTICGRAPH_STREAM_SSE_BLOCKING_READS', true),
+            'heartbeat_interval' => env('AGENTICGRAPH_STREAM_SSE_HEARTBEAT', 30),
+        ],
+        'broadcast' => [
+            'force_above_seconds' => env('AGENTICGRAPH_STREAM_BROADCAST_FORCE_ABOVE', 300),
+        ],
+        'store' => [
+            'default_ttl_seconds' => env('AGENTICGRAPH_STREAM_DEFAULT_TTL', 3600),
+            'extended_ttl_seconds' => env('AGENTICGRAPH_STREAM_EXTENDED_TTL', 86400),
+            'extend_threshold_seconds' => env('AGENTICGRAPH_STREAM_EXTEND_THRESHOLD', 300),
+            'driver' => env('STREAM_STORE_DRIVER', 'redis'),
+            'redis' => [
+                'connection' => env('STREAM_STORE_REDIS_CONNECTION', 'default'),
+                'ttl' => env('STREAM_STORE_TTL', 86400),
+                'max_len' => env('STREAM_STORE_MAX_LEN', 10000),
+            ],
+            'database' => [
+                'table' => 'stream_events',
+                'connection' => env('STREAM_STORE_DB_CONNECTION'),
+            ],
+        ],
+        'rate_limit' => [
+            'enabled' => env('AGENTICGRAPH_STREAM_RATE_LIMIT_ENABLED', false),
+            'max_events_per_second' => env('AGENTICGRAPH_STREAM_RATE_LIMIT_MAX', 100),
+        ],
+        'retention' => [
+            'max_age_hours' => env('AGENTICGRAPH_STREAM_RETENTION_AGE_HOURS', 24),
+            'max_events_per_stream' => env('AGENTICGRAPH_STREAM_RETENTION_MAX_EVENTS', 10000),
+        ],
+        'routes' => [
+            'enabled' => env('AGENTICGRAPH_STREAMING_ROUTES', true),
+            'prefix' => env('AGENTICGRAPH_STREAMING_PREFIX', 'agentic-graph/streams'),
+            'middleware' => ['api'],
+        ],
+    ],
+
     'api' => [
         'timeout' => env('AGENTICGRAPH_API_TIMEOUT', 30), // seconds
         'connect_timeout' => env('AGENTICGRAPH_API_CONNECT_TIMEOUT', 10), // seconds

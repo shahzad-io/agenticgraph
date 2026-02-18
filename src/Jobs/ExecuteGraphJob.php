@@ -11,9 +11,15 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Shahzad\AgenticGraph\Execution\ExecutionMode;
+use Shahzad\AgenticGraph\Execution\ExecutionOptions;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
+use Shahzad\AgenticGraph\Execution\StreamingMode;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\State\State;
+use Shahzad\AgenticGraph\Streaming\StreamContext;
+use Shahzad\AgenticGraph\Streaming\StreamOptions;
+use Shahzad\AgenticGraph\Streaming\StreamSession;
 
 class ExecuteGraphJob implements ShouldBeUnique, ShouldQueue
 {
@@ -28,6 +34,9 @@ class ExecuteGraphJob implements ShouldBeUnique, ShouldQueue
         public readonly array $stateData,  // ✅ Plain array instead of StateContract
         public readonly ?string $checkpointId = null,
         public readonly ?string $rootSpanId = null,
+        public readonly ?ExecutionOptions $executionOptions = null,
+        public readonly ?string $streamId = null,
+        public readonly ?int $streamSeq = null,
     ) {
         $this->onConnection(config('agenticgraph.execution.queue_connection'));
         $this->onQueue(config('agenticgraph.execution.queue_name'));
@@ -73,12 +82,32 @@ class ExecuteGraphJob implements ShouldBeUnique, ShouldQueue
         app()->instance(\Shahzad\AgenticGraph\Execution\ExecutionContext::class, $executionContext);
 
         try {
-            $executor->execute($graph, $state, useBatch: true, executionId: $this->executionId);
+            $options = $this->executionOptions ?? new ExecutionOptions(ExecutionMode::ASYNC, StreamingMode::NONE);
+            $options->streaming = $executor->resolveStreamingMode($options);
+            if ($options->streaming !== StreamingMode::NONE) {
+                $streamOptions = new StreamOptions(
+                    delivery: $options->streaming->value,
+                    interrupts: $options->interrupts
+                );
+                $session = new StreamSession(
+                    streamId: $this->streamId ?? uniqid('stream_', true),
+                    executionId: $this->executionId,
+                    options: $streamOptions,
+                    startedAtUnix: time(),
+                    seq: $this->streamSeq ?? 0
+                );
+                app()->instance(StreamContext::class, new StreamContext($session));
+
+                $executor->executeWithStreaming($graph->name, $state, $streamOptions, $this->executionId);
+            } else {
+                $executor->execute($graph, $state, useBatch: true, executionId: $this->executionId);
+            }
         } finally {
             // Clean up container instances
             app()->forgetInstance(\Shahzad\AgenticGraph\Tracing\TraceContext::class);
             app()->forgetInstance(\Shahzad\AgenticGraph\Tracing\ExecutionClock::class);
             app()->forgetInstance(\Shahzad\AgenticGraph\Execution\ExecutionContext::class);
+            app()->forgetInstance(StreamContext::class);
         }
     }
 }
