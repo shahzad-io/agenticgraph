@@ -50,26 +50,37 @@ class CheckpointManager
      */
     public function save(string $executionId, Checkpoint $checkpoint): ?string
     {
-        // Increment node counter for this execution
+        return $this->saveWithOptions($executionId, $checkpoint, false);
+    }
+
+    public function saveInterrupt(string $executionId, Checkpoint $checkpoint): string
+    {
+        $id = $this->saveWithOptions($executionId, $checkpoint, true);
+        if ($id === null) {
+            throw new \RuntimeException('Interrupt checkpoint was not saved.');
+        }
+
+        return $id;
+    }
+
+    private function saveWithOptions(string $executionId, Checkpoint $checkpoint, bool $force): ?string
+    {
         if (! isset($this->nodeCounters[$executionId])) {
             $this->nodeCounters[$executionId] = 0;
         }
         $this->nodeCounters[$executionId]++;
         $nodeCount = $this->nodeCounters[$executionId];
 
-        // Check checkpoint frequency - skip if not on frequency boundary
-        if ($this->checkpointFrequency > 1 && $nodeCount % $this->checkpointFrequency !== 0) {
+        if (! $force && $this->checkpointFrequency > 1 && $nodeCount % $this->checkpointFrequency !== 0) {
             return null;
         }
 
-        // Set checkpoint metadata
         $checkpoint->executionId = $executionId;
         if (! isset($checkpoint->id) || $checkpoint->id === '') {
             $checkpoint->id = Str::uuid()->toString();
         }
         $checkpoint->createdAt = new \DateTimeImmutable;
 
-        // Validate state size before saving
         $stateSize = $this->calculateStateSize($checkpoint);
         if ($stateSize > $this->maxStateSize) {
             throw new \RuntimeException(
@@ -82,7 +93,6 @@ class CheckpointManager
             );
         }
 
-        // Perform atomic save with optional transaction and event dispatch
         return $this->performAtomicSave($executionId, $checkpoint);
     }
 

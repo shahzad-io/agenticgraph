@@ -120,6 +120,26 @@ describe('checkpoint frequency', function () {
         expect($id3)->toBe('chk-3');
     });
 
+    it('saves interrupt checkpoints regardless of frequency', function () {
+        $manager = new CheckpointManager(
+            $this->storage,
+            $this->db,
+            $this->events,
+            checkpointFrequency: 5
+        );
+
+        $executionId = 'exec-999';
+        $checkpoint = createCheckpoint('test-graph', $executionId);
+
+        $this->db->shouldReceive('transaction')->andReturnUsing(fn ($callback) => $callback());
+        $this->storage->shouldReceive('save')->once()->andReturn('chk-int');
+        $this->events->shouldReceive('dispatch')->once();
+
+        $id = $manager->saveInterrupt($executionId, $checkpoint);
+
+        expect($id)->toBe('chk-int');
+    });
+
     it('tracks node count per execution', function () {
         $manager = new CheckpointManager(
             $this->storage,

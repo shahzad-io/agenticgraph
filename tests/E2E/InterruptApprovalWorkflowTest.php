@@ -1,5 +1,6 @@
 <?php
 
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Event;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Contracts\StorageInterface;
@@ -7,8 +8,10 @@ use Shahzad\AgenticGraph\Events\NodeInterrupted;
 use Shahzad\AgenticGraph\Events\NodeResumed;
 use Shahzad\AgenticGraph\Execution\Checkpoint;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
+use Shahzad\AgenticGraph\Execution\InterruptRecord;
 use Shahzad\AgenticGraph\Facades\AgenticGraph;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
+use Shahzad\AgenticGraph\Jobs\ResumeExecutionJob;
 use Shahzad\AgenticGraph\Nodes\PrismNode;
 use Shahzad\AgenticGraph\State\State;
 
@@ -247,6 +250,65 @@ it('resumes interrupt via facade using checkpoint id', function () {
         ->and($final->get('approved'))->toBeTrue()
         ->and($final->get('approval_comments'))->toBe('OK')
         ->and($final->hasInterrupt())->toBeFalse();
+});
+
+it('resumes interrupt via facade using execution id', function () {
+    Bus::fake();
+
+    $graph = GraphBuilder::create('approval-workflow-resume-id')
+        ->addNode('generate', GenerateContentNode::class)
+        ->addNode('approve', ApprovalInterruptNode::class)
+        ->addNode('publish', PublishNode::class)
+        ->addEdge('generate', 'approve')
+        ->addEdge('approve', 'publish')
+        ->setEntryPoint('generate')
+        ->addExitPoint('publish')
+        ->build();
+
+    AgenticGraph::register('approval-workflow-resume-id', $graph);
+
+    $handle = AgenticGraph::execute('approval-workflow-resume-id', new State(['topic' => 'Facade']));
+    $executionId = $handle->id();
+
+    $pending = InterruptRecord::query()
+        ->forExecution($executionId)
+        ->pending()
+        ->latest('id')
+        ->first();
+
+    expect($pending)->not->toBeNull();
+
+    $result = AgenticGraph::resume($executionId, [
+        'approved' => true,
+        'comments' => 'OK',
+    ]);
+
+    Bus::assertDispatched(ResumeExecutionJob::class);
+
+    expect($result->alreadyResolved)->toBeFalse()
+        ->and($result->interrupt?->status())->toBe('resolving')
+        ->and($result->interrupt?->executionId())->toBe($executionId);
+});
+
+it('exposes pending interrupt on the execution handle', function () {
+    $graph = GraphBuilder::create('approval-workflow-pending')
+        ->addNode('generate', GenerateContentNode::class)
+        ->addNode('approve', ApprovalInterruptNode::class)
+        ->addNode('publish', PublishNode::class)
+        ->addEdge('generate', 'approve')
+        ->addEdge('approve', 'publish')
+        ->setEntryPoint('generate')
+        ->addExitPoint('publish')
+        ->build();
+
+    AgenticGraph::register('approval-workflow-pending', $graph);
+
+    $handle = AgenticGraph::execute('approval-workflow-pending', new State(['topic' => 'Facade']));
+    $interrupt = $handle->pendingInterrupt();
+
+    expect($interrupt)->not->toBeNull()
+        ->and($interrupt?->status())->toBe('pending')
+        ->and($interrupt?->executionId())->toBe($handle->id());
 });
 
 it('throws helpful error when interrupt checkpoint is missing', function () {

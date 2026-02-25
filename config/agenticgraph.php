@@ -32,6 +32,14 @@ return [
         'max_state_size' => env('AGENTICGRAPH_MAX_STATE_SIZE', 10485760), // 10MB in bytes
     ],
 
+    'interrupts' => [
+        'persistence_enabled' => env('AGENTICGRAPH_INTERRUPT_PERSISTENCE', true),
+        'default_expiry_days' => env('AGENTICGRAPH_INTERRUPT_EXPIRY_DAYS', 7),
+        'auto_cleanup_days' => env('AGENTICGRAPH_INTERRUPT_CLEANUP_DAYS', 30),
+        'broadcast_enabled' => env('AGENTICGRAPH_INTERRUPT_BROADCAST', true),
+        'handler' => env('AGENTICGRAPH_INTERRUPT_HANDLER'),
+    ],
+
     'execution' => [
         'queue_connection' => env('AGENTICGRAPH_QUEUE_CONNECTION', 'redis'),
         'queue_name' => env('AGENTICGRAPH_QUEUE_NAME', 'agenticgraph'),

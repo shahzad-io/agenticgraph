@@ -126,6 +126,20 @@ final class ExecutionHandle
         throw new \RuntimeException('Final state is unavailable.');
     }
 
+    public function latestState(): ?StateContract
+    {
+        if ($this->finalState !== null) {
+            return $this->finalState;
+        }
+
+        $record = $this->store->get($this->executionId);
+        if ($record?->finalState !== null) {
+            return State::fromArray($record->finalState);
+        }
+
+        return $this->checkpoints->getLatestForExecution($this->executionId)?->state;
+    }
+
     public function checkpoint(): ?Checkpoint
     {
         return $this->checkpoints->getLatestForExecution($this->executionId);
@@ -150,6 +164,15 @@ final class ExecutionHandle
     public function isInterrupted(): bool
     {
         return $this->status === ExecutionStatus::INTERRUPTED;
+    }
+
+    public function pendingInterrupt(): ?InterruptRecord
+    {
+        return InterruptRecord::query()
+            ->forExecution($this->executionId)
+            ->pending()
+            ->latest('id')
+            ->first();
     }
 
     public function resume(mixed $input): ExecutionHandle

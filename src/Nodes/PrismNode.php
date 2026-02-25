@@ -61,6 +61,7 @@ use Shahzad\AgenticGraph\Tracing\TraceContext;
  * @method string chatPrompt(ChatPromptTemplate $template, array<string, mixed> $variables = [], array<int, \Prism\Prism\ValueObjects\Media\Media|\Prism\Prism\ValueObjects\Media\Text> $additionalContent = []) Use a chat prompt template
  * @method bool shouldInterrupt(StateContract $state) Check if execution should pause
  * @method string getInterruptReason(StateContract $state) Get human-readable interrupt reason
+ * @method mixed getInterruptPayload(StateContract $state) Get structured interrupt payload for UI
  * @method StateContract onResume(StateContract $state, mixed $humanInput) Process human input when resuming
  * @method StateContract handleApproval(StateContract $state, bool $approved, ?string $comments = null) Handle approval workflows
  */
@@ -1348,6 +1349,11 @@ abstract class PrismNode extends AbstractNode implements StreamableNodeInterface
     public function getInterruptReason(\Shahzad\AgenticGraph\Contracts\StateContract $state): string
     {
         return "Node '{$this->getName()}' requires human review";
+    }
+
+    public function getInterruptPayload(\Shahzad\AgenticGraph\Contracts\StateContract $state): mixed
+    {
+        return null;
     }
 
     /**

@@ -43,6 +43,7 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
             ->hasMigration('create_agenticgraph_executions_table')
             ->hasMigration('create_agenticgraph_checkpoints_table')
             ->hasMigration('create_agenticgraph_stream_events_table')
+            ->hasMigration('create_agenticgraph_interrupts_table')
             ->hasCommand(AgenticGraphCommand::class)
             ->hasCommand(\Shahzad\AgenticGraph\Console\ListGraphsCommand::class)
             ->hasCommand(\Shahzad\AgenticGraph\Console\VisualizeGraphCommand::class)

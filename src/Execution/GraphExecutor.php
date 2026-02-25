@@ -12,6 +12,7 @@ use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Log;
 use Psr\Log\LoggerInterface;
+use Shahzad\AgenticGraph\Contracts\InterruptHandlerInterface;
 use Shahzad\AgenticGraph\Contracts\LoopAwareRouterInterface;
 use Shahzad\AgenticGraph\Contracts\NodeInterface;
 use Shahzad\AgenticGraph\Contracts\RouterInterface;
@@ -21,6 +22,7 @@ use Shahzad\AgenticGraph\Events\CycleCompleted;
 use Shahzad\AgenticGraph\Events\GraphExecutionCompleted;
 use Shahzad\AgenticGraph\Events\GraphExecutionFailed;
 use Shahzad\AgenticGraph\Events\GraphExecutionStarted;
+use Shahzad\AgenticGraph\Events\InterruptPending;
 use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
 use Shahzad\AgenticGraph\Events\NodeExecutionFailed;
 use Shahzad\AgenticGraph\Events\NodeExecutionStarted;
@@ -1302,6 +1304,21 @@ class GraphExecutor
         return $node->shouldInterrupt($state);
     }
 
+    private function resolveInterruptHandler(): ?InterruptHandlerInterface
+    {
+        $handler = config('agenticgraph.interrupts.handler');
+        if (! $handler) {
+            return null;
+        }
+
+        $instance = is_string($handler) ? app($handler) : $handler;
+        if (! $instance instanceof InterruptHandlerInterface) {
+            return null;
+        }
+
+        return $instance;
+    }
+
     /**
      * Handle node interrupt by creating checkpoint and pausing execution.
      */
@@ -1314,10 +1331,9 @@ class GraphExecutor
         ?StreamSinkInterface $sink = null,
         ?StreamSession $session = null
     ): StateContract {
-        // Get interrupt reason
         $reason = $node->getInterruptReason($state);
+        $interruptPayload = $node->getInterruptPayload($state);
 
-        // Create checkpoint FIRST (before modifying state)
         $checkpoint = new Checkpoint;
         $checkpoint->graphName = $graph->name;
         $checkpoint->executionId = $executionId;
@@ -1325,6 +1341,9 @@ class GraphExecutor
         $checkpoint->currentNode = $nodeName;
         $checkpoint->metadata['interrupted'] = true;
         $checkpoint->metadata['interrupt_reason'] = $reason;
+        if ($interruptPayload !== null) {
+            $checkpoint->metadata['interrupt_payload'] = $interruptPayload;
+        }
         if ($session) {
             $checkpoint->metadata['stream_id'] = $session->streamId;
             $checkpoint->metadata['last_seq'] = $session->seq;
@@ -1332,21 +1351,17 @@ class GraphExecutor
         }
         $checkpoint->createdAt = new \DateTimeImmutable;
 
-        // Save trace context to checkpoint for resuming (ensures trace continuity)
         if (app()->bound(TraceContext::class)) {
             $traceContext = app(TraceContext::class);
             $checkpoint->metadata['trace_context'] = $traceContext->toArray();
         }
 
-        // Save checkpoint
-        $checkpointId = app(CheckpointManager::class)->save($executionId, $checkpoint);
+        $checkpointId = app(CheckpointManager::class)->saveInterrupt($executionId, $checkpoint);
 
-        // NOW add interrupt metadata to state (with checkpoint ID)
         $state = $state->setInterrupt($reason, $checkpointId);
 
         $this->repo->interrupted($executionId);
 
-        // Dispatch event
         $this->events->dispatch(new \Shahzad\AgenticGraph\Events\NodeInterrupted(
             executionId: $executionId,
             nodeName: $nodeName,
@@ -1355,6 +1370,51 @@ class GraphExecutor
             stateSnapshot: $state->toArray(),
             interruptedAt: new \DateTimeImmutable
         ));
+
+        $interruptRecord = null;
+        if ((bool) config('agenticgraph.interrupts.persistence_enabled', true)) {
+            $metadata = $state->getMetadata();
+            if ($session) {
+                $metadata['stream_delivery'] = $session->options->delivery;
+                $metadata['stream_id'] = $session->streamId;
+                $metadata['stream_last_seq'] = $session->seq;
+            }
+            $expiryDays = (int) config('agenticgraph.interrupts.default_expiry_days', 7);
+            $interruptRecord = InterruptRecord::query()->create([
+                'execution_id' => $executionId,
+                'checkpoint_id' => $checkpointId,
+                'graph_name' => $graph->name,
+                'node_name' => $nodeName,
+                'reason' => $reason,
+                'interrupt_payload' => $interruptPayload,
+                'status' => 'pending',
+                'expires_at' => $expiryDays > 0 ? now()->addDays($expiryDays) : null,
+                'metadata' => $metadata,
+            ]);
+
+            $handler = $this->resolveInterruptHandler();
+            if ($handler) {
+                $interruptRecord = $handler->handle($interruptRecord);
+            }
+
+            if ((bool) config('agenticgraph.interrupts.broadcast_enabled', true)) {
+                $interruptId = $interruptRecord->interruptId();
+                if ($interruptId === null) {
+                    throw new \RuntimeException('Interrupt id is missing.');
+                }
+                $this->events->dispatch(new InterruptPending(
+                    interruptId: $interruptId,
+                    executionId: $executionId,
+                    graphName: $graph->name,
+                    nodeName: $nodeName,
+                    reason: $reason,
+                    checkpointId: $checkpointId,
+                    payload: $interruptPayload,
+                    metadata: $metadata,
+                    occurredAt: new \DateTimeImmutable
+                ));
+            }
+        }
 
         if ($sink && $session) {
             $this->emitLifecycleEvent(
@@ -1379,8 +1439,6 @@ class GraphExecutor
             }
         }
 
-        // Flush trace with interrupted status to ensure it's not lost
-        // This ensures partial traces are captured before the long pause
         if (app()->bound(PulseExporter::class)) {
             $exporter = app(PulseExporter::class);
             if ($exporter->isEnabled()) {
@@ -1388,13 +1446,13 @@ class GraphExecutor
             }
         }
 
-        // Log
         if ((bool) config('agenticgraph.logging.enabled', true)) {
             $this->logger->info('Execution interrupted', [
                 'execution_id' => $executionId,
                 'node' => $nodeName,
                 'reason' => $reason,
                 'checkpoint_id' => $checkpointId,
+                'interrupt_id' => $interruptRecord?->interruptId(),
             ]);
         }
 

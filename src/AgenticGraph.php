@@ -9,13 +9,18 @@ use Shahzad\AgenticGraph\Execution\CheckpointManager;
 use Shahzad\AgenticGraph\Execution\ExecutionHandle;
 use Shahzad\AgenticGraph\Execution\ExecutionMode;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
+use Shahzad\AgenticGraph\Execution\ExecutionStatus;
 use Shahzad\AgenticGraph\Execution\ExecutionStatusResolver;
 use Shahzad\AgenticGraph\Execution\ExecutionStore;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
+use Shahzad\AgenticGraph\Execution\InterruptRecord;
+use Shahzad\AgenticGraph\Execution\InterruptStatus;
+use Shahzad\AgenticGraph\Execution\ResumeResult;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
 use Shahzad\AgenticGraph\Graph\Graph;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
+use Shahzad\AgenticGraph\Jobs\ResumeExecutionJob;
 
 class AgenticGraph
 {
@@ -84,7 +89,100 @@ class AgenticGraph
             throw new \RuntimeException("Interrupt checkpoint {$checkpointId} not found");
         }
 
+        $interrupt = InterruptRecord::query()
+            ->where('checkpoint_id', $checkpointId)
+            ->whereIn('status', ['pending', 'resolving'])
+            ->latest('id')
+            ->first();
+
+        if ($interrupt) {
+            $metadata = $interrupt->metadata();
+            $resolution = ['input' => $humanInput];
+            $interrupt->resolve($resolution, $metadata['user_id'] ?? null);
+        }
+
         return $state;
+    }
+
+    public function resume(string $executionId, mixed $humanInput): ResumeResult
+    {
+        $interrupt = InterruptRecord::query()
+            ->forExecution($executionId)
+            ->pending()
+            ->latest('id')
+            ->first();
+
+        $handle = $this->getExecution($executionId);
+        $record = app(ExecutionStore::class)->get($executionId);
+        $streamId = $record?->streamId;
+        if ($interrupt) {
+            $metadata = $interrupt->metadata();
+            $candidate = $metadata['stream_id'] ?? null;
+            if (is_string($candidate) && $candidate !== '') {
+                $streamId = $candidate;
+            }
+        }
+
+        if (! $interrupt) {
+            $resolved = InterruptRecord::query()
+                ->forExecution($executionId)
+                ->resolved()
+                ->latest('id')
+                ->first();
+            if ($resolved) {
+                $metadata = $resolved->metadata();
+                $candidate = $metadata['stream_id'] ?? null;
+                if (is_string($candidate) && $candidate !== '') {
+                    $streamId = $candidate;
+                }
+            }
+
+            return new ResumeResult(
+                handle: $handle,
+                interrupt: $resolved,
+                alreadyResolved: $resolved !== null,
+                streamId: $streamId
+            );
+        }
+
+        $interrupt->markResolving();
+        $interruptId = $interrupt->interruptId();
+        if ($interruptId === null) {
+            throw new \RuntimeException('Interrupt id is missing.');
+        }
+        dispatch(new ResumeExecutionJob($interruptId, $humanInput));
+
+        return new ResumeResult(
+            handle: $handle,
+            interrupt: $interrupt,
+            alreadyResolved: false,
+            streamId: $streamId
+        );
+    }
+
+    public function interruptStatus(string $executionId): InterruptStatus
+    {
+        $handle = $this->getExecution($executionId)->refresh();
+        $interrupt = $handle->pendingInterrupt();
+        $record = app(ExecutionStore::class)->get($executionId);
+        $streamId = $record?->streamId;
+        $status = $handle->status();
+
+        if ($interrupt) {
+            $metadata = $interrupt->metadata();
+            $candidate = $metadata['stream_id'] ?? null;
+            if (is_string($candidate) && $candidate !== '') {
+                $streamId = $candidate;
+            }
+            $status = ExecutionStatus::INTERRUPTED;
+        }
+
+        return new InterruptStatus(
+            status: $status,
+            interrupt: $interrupt,
+            streamId: $streamId,
+            latestState: $handle->latestState()
+        );
     }
 
     /**
