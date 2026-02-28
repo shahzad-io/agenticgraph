@@ -1,0 +1,386 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Shahzad\AgenticGraph\Execution;
+
+use Illuminate\Bus\Batch;
+use Illuminate\Cache\CacheManager;
+use Illuminate\Contracts\Bus\Dispatcher as BusDispatcher;
+use Illuminate\Contracts\Container\Container;
+use Illuminate\Contracts\Events\Dispatcher;
+use Psr\Log\LoggerInterface;
+use Shahzad\AgenticGraph\Contracts\NodeInterface;
+use Shahzad\AgenticGraph\Contracts\ParallelExecutorInterface;
+use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
+use Shahzad\AgenticGraph\Events\NodeExecutionFailed;
+use Shahzad\AgenticGraph\Events\NodeExecutionStarted;
+use Shahzad\AgenticGraph\Graph\Graph;
+use Shahzad\AgenticGraph\Jobs\ContinueExecutionJob;
+use Shahzad\AgenticGraph\Jobs\ExecuteNodeJob;
+use Shahzad\AgenticGraph\State\State;
+use Shahzad\AgenticGraph\State\StateManager;
+use Shahzad\AgenticGraph\Streaming\StreamContext;
+use Shahzad\AgenticGraph\Tracing\TraceContext;
+
+final class ParallelExecutionCoordinator implements ParallelExecutorInterface
+{
+    /**
+     * @var array<int, class-string|object>
+     */
+    private array $globalMiddleware;
+
+    /**
+     * @param  array<int, class-string|object>|null  $globalMiddleware
+     * @param  \Closure(): ?TraceContext  $traceContextProvider
+     * @param  \Closure(): ?ExecutionContext  $executionContextProvider
+     * @param  \Closure(object): \Illuminate\Foundation\Bus\PendingDispatch  $dispatchCallable
+     */
+    public function __construct(
+        private readonly RoutingEngine $routingEngine,
+        private readonly StateManager $stateManager,
+        private readonly CacheManager $cache,
+        private readonly BusDispatcher $bus,
+        private readonly LoggerInterface $logger,
+        private readonly ExecutionRepository $repo,
+        private readonly Dispatcher $events,
+        private readonly Container $container,
+        private readonly CheckpointManager $checkpoints,
+        ?array $globalMiddleware,
+        private readonly \Closure $traceContextProvider,
+        private readonly \Closure $executionContextProvider,
+        private readonly \Closure $dispatchCallable
+    ) {
+        $this->globalMiddleware = $globalMiddleware ?? config('agenticgraph.middleware.global', [
+            \Shahzad\AgenticGraph\Middleware\LoggingMiddleware::class,
+            \Shahzad\AgenticGraph\Middleware\TimingMiddleware::class,
+            \Shahzad\AgenticGraph\Middleware\ValidationMiddleware::class,
+        ]);
+    }
+
+    /**
+     * @param  array<int, string>  $parallelNodes
+     */
+    public function executeParallel(
+        Graph $graph,
+        array $parallelNodes,
+        StateContract $state,
+        string $executionId,
+        ?StreamContext $streamContext = null
+    ): ParallelResult {
+        $results = [];
+        $traceContext = ($this->traceContextProvider)();
+        $parentSpanId = $traceContext instanceof TraceContext ? $traceContext->getSpanId() : null;
+        foreach ($parallelNodes as $nodeName) {
+            $node = $graph->getNode($nodeName);
+            $spanId = $traceContext instanceof TraceContext ? $traceContext->startSpan($nodeName) : null;
+            $inputState = $state;
+            $nodeStartTime = microtime(true);
+            $nodeStartDt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $nodeStartTime)) ?: new \DateTimeImmutable;
+            $this->events->dispatch(new NodeExecutionStarted(
+                $executionId,
+                $nodeName,
+                $state,
+                $nodeStartDt,
+                $spanId,
+                $parentSpanId
+            ));
+            try {
+                $resultState = $this->runNodeWithMiddleware($state, $node, $executionId, $nodeName, $spanId);
+            } finally {
+                if ($traceContext instanceof TraceContext) {
+                    $traceContext->endSpan();
+                }
+            }
+            $nodeDuration = microtime(true) - $nodeStartTime;
+            $this->events->dispatch(new NodeExecutionCompleted(
+                $executionId,
+                $nodeName,
+                $inputState,
+                $resultState,
+                $nodeDuration,
+                ['node_type' => $node::class],
+                $spanId
+            ));
+            $results[] = $resultState;
+        }
+        $merged = $this->stateManager->mergeAll($results);
+        $sourceNode = $this->resolveSourceNode($graph, $parallelNodes);
+        $this->checkpoint($graph, $executionId, $sourceNode, $merged, $streamContext);
+        $next = $this->routingEngine->determinePostParallelNext($graph, $parallelNodes, $merged);
+        $fallback = $next ?? ($graph->exitPoints[0] ?? $sourceNode);
+
+        return new ParallelResult($merged, $fallback, false);
+    }
+
+    /**
+     * @param  array<int, string>  $parallelNodes
+     */
+    public function executeParallelViaBatch(
+        Graph $graph,
+        array $parallelNodes,
+        StateContract $state,
+        string $executionId
+    ): ParallelResult {
+        $jobs = [];
+        $traceContext = ($this->traceContextProvider)();
+        $parentSpanId = $traceContext instanceof TraceContext ? $traceContext->getSpanId() : null;
+        foreach ($parallelNodes as $nodeName) {
+            $jobs[] = new ExecuteNodeJob(
+                $executionId,
+                $nodeName,
+                $state->toArray(),
+                $graph->name,
+                $parentSpanId
+            );
+        }
+
+        $this->logger->debug('Dispatching parallel batch jobs', [
+            'execution_id' => $executionId,
+            'node_count' => count($parallelNodes),
+            'nodes' => $parallelNodes,
+            'parent_span_id' => $parentSpanId,
+        ]);
+
+        $sourceNode = $this->resolveSourceNode($graph, $parallelNodes);
+        $this->bus->batch($jobs)
+            ->name("agenticgraph-parallel-{$executionId}")
+            ->onConnection(config('agenticgraph.execution.queue_connection'))
+            ->onQueue(config('agenticgraph.execution.queue_name'))
+            ->allowFailures(false)
+            ->then(function (Batch $batch) use ($graph, $executionId, $sourceNode, $parallelNodes): void {
+                $this->handleBatchCompletion($batch, $graph, $executionId, $sourceNode, $parallelNodes);
+            })
+            ->catch(function (Batch $batch, \Throwable $e) use ($executionId): void {
+                $this->handleBatchFailure($batch, $executionId, $e);
+            })
+            ->finally(function (Batch $batch) use ($executionId, $parallelNodes): void {
+                $this->cleanupBatchResults($executionId, $parallelNodes);
+            })
+            ->dispatch();
+
+        return new ParallelResult($state, $sourceNode, true);
+    }
+
+    /**
+     * @param  array<int, string>  $targets
+     */
+    private function handleBatchCompletion(
+        Batch $batch,
+        Graph $graph,
+        string $executionId,
+        string $sourceNode,
+        array $targets
+    ): void {
+        $results = [];
+        $missing = [];
+
+        foreach ($targets as $nodeName) {
+            $key = $this->batchResultCacheKey($executionId, $nodeName);
+            $resultData = null;
+            $maxAttempts = 5;
+
+            for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+                $resultData = $this->cache->get($key);
+
+                if ($resultData !== null) {
+                    break;
+                }
+
+                if ($attempt < $maxAttempts) {
+                    $delayMs = 100 * pow(2, $attempt - 1);
+                    usleep($delayMs * 1000);
+                }
+            }
+
+            if ($resultData === null) {
+                $missing[] = $nodeName;
+
+                continue;
+            }
+
+            $results[] = State::fromArray($resultData);
+        }
+
+        if (! empty($missing)) {
+            $errorMsg = sprintf(
+                'Missing batch results for nodes: %s. Batch ID: %s, Execution: %s',
+                implode(', ', $missing),
+                $batch->id,
+                $executionId
+            );
+
+            if ((bool) config('agenticgraph.logging.enabled', true)) {
+                $this->logger->error('Batch completion failed - missing results', [
+                    'execution_id' => $executionId,
+                    'batch_id' => $batch->id,
+                    'missing_nodes' => $missing,
+                    'expected_nodes' => $targets,
+                ]);
+            }
+
+            throw new \RuntimeException($errorMsg);
+        }
+
+        $merged = $this->stateManager->mergeAll($results);
+        $this->checkpoint($graph, $executionId, $sourceNode, $merged, null);
+        $next = $this->routingEngine->determinePostParallelNext($graph, $targets, $merged);
+
+        $loopMetadataArray = null;
+        $executionContext = ($this->executionContextProvider)();
+        if ($executionContext instanceof ExecutionContext) {
+            $loopMetadata = LoopMetadata::fromExecutionContext($executionContext);
+            $loopMetadataArray = $loopMetadata->toArray();
+        }
+
+        $job = new ContinueExecutionJob(
+            $graph->name,
+            $executionId,
+            $merged->toArray(),
+            $next ?? ($graph->exitPoints[0] ?? $sourceNode),
+            $loopMetadataArray
+        );
+
+        ($this->dispatchCallable)($job)
+            ->onConnection(config('agenticgraph.execution.queue_connection'))
+            ->onQueue(config('agenticgraph.execution.queue_name'));
+    }
+
+    private function handleBatchFailure(Batch $batch, string $executionId, \Throwable $e): void
+    {
+        $this->repo->failed(
+            $executionId,
+            "Batch execution failed: {$e->getMessage()}"
+        );
+
+        if ((bool) config('agenticgraph.logging.enabled', true)) {
+            $this->logger->error('Batch execution failed', [
+                'execution_id' => $executionId,
+                'batch_id' => $batch->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+        }
+    }
+
+    /**
+     * @param  array<int, string>  $targets
+     */
+    private function cleanupBatchResults(string $executionId, array $targets): void
+    {
+        foreach ($targets as $nodeName) {
+            $key = $this->batchResultCacheKey($executionId, $nodeName);
+            $this->cache->forget($key);
+        }
+    }
+
+    private function batchResultCacheKey(string $executionId, string $nodeName): string
+    {
+        return 'agenticgraph:batch:'.$executionId.':'.$nodeName;
+    }
+
+    /**
+     * @param  array<int, string>  $parallelNodes
+     */
+    private function resolveSourceNode(Graph $graph, array $parallelNodes): string
+    {
+        $executionContext = ($this->executionContextProvider)();
+        if ($executionContext instanceof ExecutionContext && $executionContext->pathStack !== []) {
+            $lastIndex = array_key_last($executionContext->pathStack);
+
+            return $executionContext->pathStack[$lastIndex];
+        }
+
+        return $graph->entryPoint ?? ($parallelNodes[0] ?? '');
+    }
+
+    private function checkpoint(
+        Graph $graph,
+        string $executionId,
+        string $currentNode,
+        StateContract $state,
+        ?StreamContext $streamContext
+    ): void {
+        if (! config('agenticgraph.checkpoint.enabled')) {
+            return;
+        }
+        $checkpoint = new Checkpoint;
+        $checkpoint->graphName = $graph->name;
+        $checkpoint->executionId = $executionId;
+        $checkpoint->state = $state;
+        $checkpoint->currentNode = $currentNode;
+        $checkpoint->createdAt = new \DateTimeImmutable;
+
+        if ($streamContext) {
+            $session = $streamContext->session();
+            $checkpoint->metadata['stream_id'] = $session->streamId;
+            $checkpoint->metadata['last_seq'] = $session->seq;
+            $checkpoint->metadata['stream_cursor'] = $session->seq;
+        }
+
+        $this->checkpoints->save($executionId, $checkpoint);
+    }
+
+    private function runNodeWithMiddleware(
+        StateContract $state,
+        NodeInterface $node,
+        string $executionId,
+        string $nodeName,
+        ?string $spanId
+    ): StateContract {
+        $stack = [];
+        foreach ($this->globalMiddleware as $mw) {
+            $stack[] = is_string($mw) ? $this->container->make($mw) : $mw;
+        }
+        $pipeline = array_reduce(
+            array_reverse($stack),
+            function ($next, $mw) use ($node) {
+                return function (StateContract $state) use ($mw, $node, $next) {
+                    return $mw->handle($state, $node, $next);
+                };
+            },
+            function (StateContract $state) use ($node, $executionId, $nodeName, $spanId) {
+                $attempts = 0;
+                $max = $node->getRetryAttempts();
+                $delay = $node->getRetryDelay();
+                while (true) {
+                    $attemptStart = microtime(true);
+                    try {
+                        $node->onBefore($state);
+                        $result = $node->execute($state);
+                        $node->onAfter($state, $result);
+
+                        return $result;
+                    } catch (\Throwable $e) {
+                        $attempts++;
+                        $durationMs = (microtime(true) - $attemptStart) * 1000;
+                        $willRetry = $attempts <= $max && $node->shouldRetry($e);
+                        $startedAt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $attemptStart)) ?: new \DateTimeImmutable;
+                        $traceContext = ($this->traceContextProvider)();
+                        $parentSpanId = $traceContext instanceof TraceContext ? $traceContext->getParentSpanId() : null;
+                        $this->events->dispatch(new NodeExecutionFailed(
+                            $executionId,
+                            $spanId,
+                            $nodeName,
+                            $state,
+                            $e,
+                            $durationMs,
+                            $attempts,
+                            $willRetry,
+                            $startedAt,
+                            $parentSpanId
+                        ));
+                        $node->onError($e, $state);
+                        if (! $willRetry) {
+                            throw $e;
+                        }
+                        usleep($delay * 1000);
+                    }
+                }
+            }
+        );
+
+        return $pipeline($state);
+    }
+}

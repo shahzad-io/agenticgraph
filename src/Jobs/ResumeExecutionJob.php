@@ -13,7 +13,7 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Contracts\InterruptHandlerInterface;
-use Shahzad\AgenticGraph\Execution\GraphExecutor;
+use Shahzad\AgenticGraph\Contracts\InterruptServiceInterface;
 use Shahzad\AgenticGraph\Execution\InterruptRecord;
 use Shahzad\AgenticGraph\Streaming\StreamOptions;
 use Shahzad\AgenticGraph\Streaming\StreamResumption;
@@ -35,7 +35,7 @@ class ResumeExecutionJob implements ShouldBeUnique, ShouldQueue
         return 'interrupt-'.$this->interruptId;
     }
 
-    public function handle(GraphExecutor $executor, StreamResumption $streamResumption): void
+    public function handle(InterruptServiceInterface $interrupts, StreamResumption $streamResumption): void
     {
         $interrupt = InterruptRecord::find($this->interruptId);
         if (! $interrupt || $interrupt->status() !== 'resolving') {
@@ -58,7 +58,7 @@ class ResumeExecutionJob implements ShouldBeUnique, ShouldQueue
                 );
                 $streamResumption->resumeStream($checkpointId, $this->humanInput, $streamOptions);
             } else {
-                $executor->resumeWithInput($checkpointId, $this->humanInput);
+                $interrupts->resumeWithInput($checkpointId, $this->humanInput);
             }
 
             $resolution = ['input' => $this->humanInput];

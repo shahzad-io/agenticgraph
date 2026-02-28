@@ -85,9 +85,6 @@ class AgenticGraph
     public function resumeInterrupt(string $checkpointId, mixed $humanInput): StateContract
     {
         $state = $this->executor()->resumeWithInput($checkpointId, $humanInput);
-        if ($state === null) {
-            throw new \RuntimeException("Interrupt checkpoint {$checkpointId} not found");
-        }
 
         $interrupt = InterruptRecord::query()
             ->where('checkpoint_id', $checkpointId)

@@ -151,11 +151,26 @@ final class State implements Arrayable, JsonSerializable, StateContract
         return $this->data;
     }
 
+    public static function toStoragePayload(StateContract $state): mixed
+    {
+        return [
+            '__agenticgraph_state' => [
+                'data' => $state->toArray(),
+                'metadata' => $state->getMetadata(),
+            ],
+        ];
+    }
+
     /**
      * @param  array<string, mixed>  $data
      */
     public static function fromArray(array $data): static
     {
+        $payload = $data['__agenticgraph_state'] ?? null;
+        if (is_array($payload)) {
+            return new static($payload['data'] ?? [], $payload['metadata'] ?? []);
+        }
+
         return new static($data);
     }
 

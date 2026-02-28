@@ -1,16 +1,28 @@
 <?php
 
-use Shahzad\AgenticGraph\Execution\GraphExecutor;
+use Illuminate\Contracts\Broadcasting\Broadcaster;
+use Illuminate\Support\Facades\Event;
+use Mockery;
+use Shahzad\AgenticGraph\Events\StreamStatsUpdated;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamEvent;
+use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
 use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
+use Shahzad\AgenticGraph\Streaming\RetentionPolicyFactory;
 use Shahzad\AgenticGraph\Streaming\Sinks\MemorySink;
 use Shahzad\AgenticGraph\Streaming\Sinks\RateLimitedSink;
 use Shahzad\AgenticGraph\Streaming\StreamClock;
+use Shahzad\AgenticGraph\Streaming\StreamErrorDecision;
+use Shahzad\AgenticGraph\Streaming\StreamErrorHandler;
 use Shahzad\AgenticGraph\Streaming\StreamErrorPayload;
+use Shahzad\AgenticGraph\Streaming\StreamMetrics;
+use Shahzad\AgenticGraph\Streaming\StreamObserver;
+use Shahzad\AgenticGraph\Streaming\StreamObserverFactory;
 use Shahzad\AgenticGraph\Streaming\StreamOptions;
 use Shahzad\AgenticGraph\Streaming\StreamSession;
+use Shahzad\AgenticGraph\Streaming\StreamSinkFactory;
 use Shahzad\AgenticGraph\Streaming\StreamStatus;
+use Shahzad\AgenticGraph\Streaming\WrappedStreamSink;
 
 test('memory sink stores events and close status', function () {
     $sink = new MemorySink;
@@ -126,8 +138,6 @@ test('wrapped sink emits stream_error on redis store failure', function () {
 
         public function truncate(string $streamId, int $beforeSeq): void {}
     };
-    app()->instance(StreamStoreInterface::class, $store);
-
     $baseSink = new MemorySink;
     $options = new StreamOptions(delivery: 'iterator', storeEnabled: true);
     $session = new StreamSession(
@@ -137,10 +147,17 @@ test('wrapped sink emits stream_error on redis store failure', function () {
         startedAtUnix: time()
     );
 
-    $executor = new GraphExecutor;
-    $method = new ReflectionMethod(GraphExecutor::class, 'wrapStreamSink');
-    $method->setAccessible(true);
-    $wrapped = $method->invoke($executor, $baseSink, $options, $session);
+    $factory = new StreamSinkFactory(
+        Mockery::mock(Broadcaster::class),
+        $store,
+        false,
+        100,
+        false,
+        new RetentionPolicyFactory,
+        new StreamObserverFactory,
+        new StreamErrorHandler
+    );
+    $wrapped = $factory->wrap($baseSink, $options, $session);
 
     $event = new StreamEventImpl(
         streamId: 'stream-1',
@@ -192,8 +209,6 @@ test('wrapped sink emits stream_error on database store failure', function () {
 
         public function truncate(string $streamId, int $beforeSeq): void {}
     };
-    app()->instance(StreamStoreInterface::class, $store);
-
     $baseSink = new MemorySink;
     $options = new StreamOptions(delivery: 'iterator', storeEnabled: true);
     $session = new StreamSession(
@@ -203,10 +218,17 @@ test('wrapped sink emits stream_error on database store failure', function () {
         startedAtUnix: time()
     );
 
-    $executor = new GraphExecutor;
-    $method = new ReflectionMethod(GraphExecutor::class, 'wrapStreamSink');
-    $method->setAccessible(true);
-    $wrapped = $method->invoke($executor, $baseSink, $options, $session);
+    $factory = new StreamSinkFactory(
+        Mockery::mock(Broadcaster::class),
+        $store,
+        false,
+        100,
+        false,
+        new RetentionPolicyFactory,
+        new StreamObserverFactory,
+        new StreamErrorHandler
+    );
+    $wrapped = $factory->wrap($baseSink, $options, $session);
 
     $event = new StreamEventImpl(
         streamId: 'stream-2',
@@ -265,10 +287,17 @@ test('wrapped sink handles client disconnect mid-stream', function () {
         startedAtUnix: time()
     );
 
-    $executor = new GraphExecutor;
-    $method = new ReflectionMethod(GraphExecutor::class, 'wrapStreamSink');
-    $method->setAccessible(true);
-    $wrapped = $method->invoke($executor, $baseSink, $options, $session);
+    $factory = new StreamSinkFactory(
+        Mockery::mock(Broadcaster::class),
+        Mockery::mock(StreamStoreInterface::class),
+        false,
+        100,
+        false,
+        new RetentionPolicyFactory,
+        new StreamObserverFactory,
+        new StreamErrorHandler
+    );
+    $wrapped = $factory->wrap($baseSink, $options, $session);
 
     $event = new StreamEventImpl(
         streamId: 'stream-3',
@@ -295,4 +324,741 @@ test('wrapped sink handles client disconnect mid-stream', function () {
         ->and($payload)->toBeInstanceOf(StreamErrorPayload::class)
         ->and($payload->stage)->toBe('emit')
         ->and($baseSink->status?->value)->toBe('error');
+});
+
+test('wrapped sink enforces retention and emits metrics on close', function () {
+    config()->set('agenticgraph.streaming.retention.max_events_per_stream', 1);
+    config()->set('agenticgraph.streaming.retention.max_age_hours', 0);
+
+    $truncateCalls = [];
+    $store = new class($truncateCalls) implements StreamStoreInterface
+    {
+        public array $events = [];
+
+        private array $truncateCalls;
+
+        public function __construct(array &$truncateCalls)
+        {
+            $this->truncateCalls = &$truncateCalls;
+        }
+
+        public function append(StreamEvent $event): void
+        {
+            $this->events[] = $event;
+        }
+
+        public function readFrom(string $streamId, int $fromSeq, int $limit = 200): \Generator
+        {
+            if (false) {
+                yield $streamId;
+            }
+        }
+
+        public function lastSeq(string $streamId): ?int
+        {
+            return null;
+        }
+
+        public function truncate(string $streamId, int $beforeSeq): void
+        {
+            $this->truncateCalls[] = [$streamId, $beforeSeq];
+        }
+    };
+    Event::fake([StreamStatsUpdated::class]);
+
+    $baseSink = new MemorySink;
+    $options = new StreamOptions(delivery: 'iterator', storeEnabled: true);
+    $session = new StreamSession(
+        streamId: 'stream-retention',
+        executionId: 'exec-retention',
+        options: $options,
+        startedAtUnix: time()
+    );
+
+    $factory = new StreamSinkFactory(
+        Mockery::mock(Broadcaster::class),
+        $store,
+        false,
+        100,
+        true,
+        new RetentionPolicyFactory,
+        new StreamObserverFactory,
+        new StreamErrorHandler
+    );
+    $wrapped = $factory->wrap($baseSink, $options, $session);
+
+    $event = new StreamEventImpl(
+        streamId: 'stream-retention',
+        executionId: 'exec-retention',
+        nodeName: 'node-a',
+        spanId: null,
+        parentSpanId: null,
+        type: 'text_delta',
+        payload: ['delta' => 'b'],
+        seq: 2,
+        nodeSeq: 1,
+        occurredAt: new DateTimeImmutable('now')
+    );
+
+    $wrapped->emit($event);
+    $wrapped->close(StreamStatus::SUCCESS);
+
+    expect($truncateCalls)->toBe([['stream-retention', 2]]);
+    Event::assertDispatched(StreamStatsUpdated::class, function (StreamStatsUpdated $event) {
+        return $event->streamId === 'stream-retention'
+            && $event->executionId === 'exec-retention'
+            && $event->metrics->eventsEmitted === 1
+            && $event->metrics->lastSeq === 2;
+    });
+});
+
+test('wrapped sink applies retention metrics and error handling in order', function () {
+    $order = [];
+    $store = new class($order) implements StreamStoreInterface
+    {
+        public function __construct(private array &$order) {}
+
+        public function append(StreamEvent $event): void
+        {
+            $this->order[] = 'append';
+        }
+
+        public function readFrom(string $streamId, int $fromSeq, int $limit = 200): \Generator
+        {
+            if (false) {
+                yield $streamId;
+            }
+        }
+
+        public function lastSeq(string $streamId): ?int
+        {
+            return null;
+        }
+
+        public function truncate(string $streamId, int $beforeSeq): void
+        {
+            $this->order[] = 'truncate';
+        }
+    };
+    config()->set('agenticgraph.streaming.retention.max_events_per_stream', 2);
+    config()->set('agenticgraph.streaming.retention.max_age_hours', 0);
+
+    $baseSink = new class($order) implements StreamSinkInterface
+    {
+        public array $events = [];
+
+        public ?StreamStatus $status = null;
+
+        public function __construct(private array &$order) {}
+
+        public function emit(StreamEvent $event): void
+        {
+            $this->order[] = 'emit';
+            $this->events[] = $event;
+        }
+
+        public function close(StreamStatus $status, mixed $meta = null): void
+        {
+            $this->order[] = 'close';
+            $this->status = $status;
+        }
+    };
+
+    $options = new StreamOptions(delivery: 'iterator', storeEnabled: true);
+    $session = new StreamSession(
+        streamId: 'stream-1',
+        executionId: 'exec-1',
+        options: $options,
+        startedAtUnix: time()
+    );
+    $factory = new StreamSinkFactory(
+        Mockery::mock(Broadcaster::class),
+        $store,
+        false,
+        100,
+        true,
+        new RetentionPolicyFactory,
+        new StreamObserverFactory,
+        new StreamErrorHandler
+    );
+    $wrapped = $factory->wrap($baseSink, $options, $session);
+
+    Event::listen(StreamStatsUpdated::class, function () use (&$order) {
+        $order[] = 'metrics';
+    });
+
+    $wrapped->emit(new StreamEventImpl(
+        streamId: 'stream-1',
+        executionId: 'exec-1',
+        nodeName: 'node-a',
+        spanId: null,
+        parentSpanId: null,
+        type: 'text_delta',
+        payload: ['delta' => 'a'],
+        seq: 5,
+        nodeSeq: 1,
+        occurredAt: new DateTimeImmutable('now')
+    ));
+    $wrapped->close(StreamStatus::SUCCESS);
+
+    $appendIndex = array_search('append', $order, true);
+    $truncateIndex = array_search('truncate', $order, true);
+    $emitIndex = array_search('emit', $order, true);
+    $closeIndex = array_search('close', $order, true);
+    $metricsIndex = array_search('metrics', $order, true);
+
+    expect($appendIndex)->toBeLessThan($truncateIndex)
+        ->and($truncateIndex)->toBeLessThan($emitIndex)
+        ->and($closeIndex)->toBeLessThan($metricsIndex);
+
+    $order = [];
+    $store = new class($order) implements StreamStoreInterface
+    {
+        public function __construct(private array &$order) {}
+
+        public function append(StreamEvent $event): void
+        {
+            $this->order[] = 'append';
+            throw new RuntimeException('Store failure');
+        }
+
+        public function readFrom(string $streamId, int $fromSeq, int $limit = 200): \Generator
+        {
+            if (false) {
+                yield $streamId;
+            }
+        }
+
+        public function lastSeq(string $streamId): ?int
+        {
+            return null;
+        }
+
+        public function truncate(string $streamId, int $beforeSeq): void
+        {
+            $this->order[] = 'truncate';
+        }
+    };
+    $factory = new StreamSinkFactory(
+        Mockery::mock(Broadcaster::class),
+        $store,
+        false,
+        100,
+        false,
+        new RetentionPolicyFactory,
+        new StreamObserverFactory,
+        new StreamErrorHandler
+    );
+    $baseSink = new class($order) implements StreamSinkInterface
+    {
+        public array $events = [];
+
+        public ?StreamStatus $status = null;
+
+        public function __construct(private array &$order) {}
+
+        public function emit(StreamEvent $event): void
+        {
+            $this->order[] = 'emit';
+            $this->events[] = $event;
+        }
+
+        public function close(StreamStatus $status, mixed $meta = null): void
+        {
+            $this->order[] = 'close';
+            $this->status = $status;
+        }
+    };
+    $session = new StreamSession(
+        streamId: 'stream-2',
+        executionId: 'exec-2',
+        options: $options,
+        startedAtUnix: time()
+    );
+    $wrapped = $factory->wrap($baseSink, $options, $session);
+
+    try {
+        $wrapped->emit(new StreamEventImpl(
+            streamId: 'stream-2',
+            executionId: 'exec-2',
+            nodeName: 'node-b',
+            spanId: null,
+            parentSpanId: null,
+            type: 'text_delta',
+            payload: ['delta' => 'b'],
+            seq: 1,
+            nodeSeq: 1,
+            occurredAt: new DateTimeImmutable('now')
+        ));
+    } catch (RuntimeException) {
+    }
+
+    expect($baseSink->events)->toHaveCount(1)
+        ->and($baseSink->events[0]->type())->toBe('stream_error');
+
+    $appendIndex = array_search('append', $order, true);
+    $emitIndex = array_search('emit', $order, true);
+    $closeIndex = array_search('close', $order, true);
+
+    expect($appendIndex)->toBeLessThan($emitIndex)
+        ->and($emitIndex)->toBeLessThan($closeIndex);
+});
+
+test('wrapped sink preserves broadcast sink behavior', function () {
+    $broadcaster = Mockery::mock(Broadcaster::class);
+    $broadcaster->shouldReceive('broadcast')->once()->with(
+        ['agenticgraph.stream.stream-broadcast'],
+        'text_delta',
+        Mockery::on(function ($payload) {
+            return $payload['stream_id'] === 'stream-broadcast'
+                && $payload['execution_id'] === 'exec-broadcast'
+                && $payload['type'] === 'text_delta'
+                && $payload['seq'] === 1;
+        })
+    );
+    $broadcaster->shouldReceive('broadcast')->once()->with(
+        ['agenticgraph.stream.stream-broadcast'],
+        'stream_close',
+        ['status' => 'success', 'meta' => null]
+    );
+    $options = new StreamOptions(delivery: 'broadcast', storeEnabled: false);
+    $session = new StreamSession(
+        streamId: 'stream-broadcast',
+        executionId: 'exec-broadcast',
+        options: $options,
+        startedAtUnix: time()
+    );
+
+    $factory = new StreamSinkFactory(
+        $broadcaster,
+        Mockery::mock(StreamStoreInterface::class),
+        false,
+        100,
+        false,
+        new RetentionPolicyFactory,
+        new StreamObserverFactory,
+        new StreamErrorHandler
+    );
+    $baseSink = $factory->create($session, $options);
+    $wrapped = $factory->wrap($baseSink, $options, $session);
+
+    $event = new StreamEventImpl(
+        streamId: 'stream-broadcast',
+        executionId: 'exec-broadcast',
+        nodeName: 'node-a',
+        spanId: null,
+        parentSpanId: null,
+        type: 'text_delta',
+        payload: ['delta' => 'hi'],
+        seq: 1,
+        nodeSeq: 1,
+        occurredAt: new DateTimeImmutable('now')
+    );
+
+    $wrapped->emit($event);
+    $wrapped->close(StreamStatus::SUCCESS);
+});
+
+test('wrapped sink preserves sse sink behavior', function () {
+    $options = new StreamOptions(delivery: 'sse', storeEnabled: false);
+    $session = new StreamSession(
+        streamId: 'stream-sse',
+        executionId: 'exec-sse',
+        options: $options,
+        startedAtUnix: time()
+    );
+
+    $factory = new StreamSinkFactory(
+        Mockery::mock(Broadcaster::class),
+        Mockery::mock(StreamStoreInterface::class),
+        false,
+        100,
+        false,
+        new RetentionPolicyFactory,
+        new StreamObserverFactory,
+        new StreamErrorHandler
+    );
+    $baseSink = $factory->create($session, $options);
+    $wrapped = $factory->wrap($baseSink, $options, $session);
+
+    $event = new StreamEventImpl(
+        streamId: 'stream-sse',
+        executionId: 'exec-sse',
+        nodeName: 'node-a',
+        spanId: null,
+        parentSpanId: null,
+        type: 'text_delta',
+        payload: ['delta' => 'hi'],
+        seq: 1,
+        nodeSeq: 1,
+        occurredAt: new DateTimeImmutable('now')
+    );
+
+    $wrapped->emit($event);
+    $wrapped->close(StreamStatus::SUCCESS);
+
+    $lines = $baseSink->lines();
+    $count = 0;
+    foreach ($lines as $line) {
+        $count++;
+        if ($count === 1) {
+            expect($line)->toContain('event: text_delta');
+        }
+    }
+
+    expect($count)->toBe(2);
+});
+
+test('wrapped sink preserves memory sink behavior', function () {
+    $options = new StreamOptions(delivery: 'iterator', storeEnabled: false);
+    $session = new StreamSession(
+        streamId: 'stream-memory',
+        executionId: 'exec-memory',
+        options: $options,
+        startedAtUnix: time()
+    );
+
+    $factory = new StreamSinkFactory(
+        Mockery::mock(Broadcaster::class),
+        Mockery::mock(StreamStoreInterface::class),
+        false,
+        100,
+        false,
+        new RetentionPolicyFactory,
+        new StreamObserverFactory,
+        new StreamErrorHandler
+    );
+    $baseSink = $factory->create($session, $options);
+    $wrapped = $factory->wrap($baseSink, $options, $session);
+
+    $event = new StreamEventImpl(
+        streamId: 'stream-memory',
+        executionId: 'exec-memory',
+        nodeName: 'node-a',
+        spanId: null,
+        parentSpanId: null,
+        type: 'text_delta',
+        payload: ['delta' => 'hi'],
+        seq: 1,
+        nodeSeq: 1,
+        occurredAt: new DateTimeImmutable('now')
+    );
+
+    $wrapped->emit($event);
+    $wrapped->close(StreamStatus::SUCCESS);
+
+    expect($baseSink->events()->count())->toBe(1)
+        ->and($baseSink->status()?->value)->toBe('success');
+});
+
+test('wrapped stream sink emits when no filters set', function () {
+    Event::fake([StreamStatsUpdated::class]);
+    $sink = new MemorySink;
+    $observer = new StreamObserver(new StreamMetrics, 'stream-emit', 'exec-emit', (float) time());
+    $wrapped = new WrappedStreamSink(
+        $sink,
+        null,
+        null,
+        null,
+        null,
+        $observer,
+        new StreamErrorHandler
+    );
+
+    $wrapped->emit(new StreamEventImpl(
+        streamId: 'stream-emit',
+        executionId: 'exec-emit',
+        nodeName: 'node-a',
+        spanId: null,
+        parentSpanId: null,
+        type: 'text_delta',
+        payload: ['delta' => 'ok'],
+        seq: 1,
+        nodeSeq: 1,
+        occurredAt: new DateTimeImmutable('now')
+    ));
+
+    expect($sink->events()->count())->toBe(1);
+});
+
+test('wrapped stream sink blocks by node filter', function () {
+    Event::fake([StreamStatsUpdated::class]);
+    $sink = new MemorySink;
+    $observer = new StreamObserver(new StreamMetrics, 'stream-node', 'exec-node', (float) time());
+    $wrapped = new WrappedStreamSink(
+        $sink,
+        null,
+        ['node-b'],
+        null,
+        null,
+        $observer,
+        new StreamErrorHandler
+    );
+
+    $wrapped->emit(new StreamEventImpl(
+        streamId: 'stream-node',
+        executionId: 'exec-node',
+        nodeName: 'node-a',
+        spanId: null,
+        parentSpanId: null,
+        type: 'text_delta',
+        payload: ['delta' => 'blocked'],
+        seq: 1,
+        nodeSeq: 1,
+        occurredAt: new DateTimeImmutable('now')
+    ));
+
+    expect($sink->events()->count())->toBe(0);
+});
+
+test('wrapped stream sink blocks by event type filter', function () {
+    Event::fake([StreamStatsUpdated::class]);
+    $sink = new MemorySink;
+    $observer = new StreamObserver(new StreamMetrics, 'stream-type', 'exec-type', (float) time());
+    $wrapped = new WrappedStreamSink(
+        $sink,
+        null,
+        null,
+        ['other_event'],
+        null,
+        $observer,
+        new StreamErrorHandler
+    );
+
+    $wrapped->emit(new StreamEventImpl(
+        streamId: 'stream-type',
+        executionId: 'exec-type',
+        nodeName: 'node-a',
+        spanId: null,
+        parentSpanId: null,
+        type: 'text_delta',
+        payload: ['delta' => 'blocked'],
+        seq: 1,
+        nodeSeq: 1,
+        occurredAt: new DateTimeImmutable('now')
+    ));
+
+    expect($sink->events()->count())->toBe(0);
+});
+
+test('wrapped stream sink handles nonfatal store failure without rethrowing', function () {
+    Event::fake([StreamStatsUpdated::class]);
+    $store = new class implements StreamStoreInterface
+    {
+        public function append(StreamEvent $event): void
+        {
+            throw new RuntimeException('Store failure');
+        }
+
+        public function readFrom(string $streamId, int $fromSeq, int $limit = 200): \Generator
+        {
+            if (false) {
+                yield $streamId;
+            }
+        }
+
+        public function lastSeq(string $streamId): ?int
+        {
+            return null;
+        }
+
+        public function truncate(string $streamId, int $beforeSeq): void {}
+    };
+    $sink = new MemorySink;
+    $observer = new StreamObserver(new StreamMetrics, 'stream-store', 'exec-store', (float) time());
+    $errorHandler = new class extends StreamErrorHandler
+    {
+        public function decide(\Throwable $error, StreamEvent $event, string $stage): StreamErrorDecision
+        {
+            return new StreamErrorDecision(false, new StreamErrorPayload(
+                errorType: $error::class,
+                message: $error->getMessage(),
+                stage: $stage,
+                eventType: $event->type(),
+                eventSeq: $event->seq(),
+                eventNodeName: $event->nodeName(),
+                eventNodeSeq: $event->nodeSeq()
+            ));
+        }
+    };
+    $wrapped = new WrappedStreamSink(
+        $sink,
+        $store,
+        null,
+        null,
+        null,
+        $observer,
+        $errorHandler
+    );
+
+    $wrapped->emit(new StreamEventImpl(
+        streamId: 'stream-store',
+        executionId: 'exec-store',
+        nodeName: 'node-a',
+        spanId: null,
+        parentSpanId: null,
+        type: 'text_delta',
+        payload: ['delta' => 'x'],
+        seq: 1,
+        nodeSeq: 1,
+        occurredAt: new DateTimeImmutable('now')
+    ));
+
+    expect($sink->events()->count())->toBe(1)
+        ->and($sink->events()->offsetGet(0)->type())->toBe('stream_error');
+});
+
+test('wrapped stream sink handles fatal store failure by rethrowing', function () {
+    Event::fake([StreamStatsUpdated::class]);
+    $store = new class implements StreamStoreInterface
+    {
+        public function append(StreamEvent $event): void
+        {
+            throw new RuntimeException('Store failure');
+        }
+
+        public function readFrom(string $streamId, int $fromSeq, int $limit = 200): \Generator
+        {
+            if (false) {
+                yield $streamId;
+            }
+        }
+
+        public function lastSeq(string $streamId): ?int
+        {
+            return null;
+        }
+
+        public function truncate(string $streamId, int $beforeSeq): void {}
+    };
+    $sink = new MemorySink;
+    $observer = new StreamObserver(new StreamMetrics, 'stream-store-fatal', 'exec-store-fatal', (float) time());
+    $errorHandler = new class extends StreamErrorHandler
+    {
+        public function decide(\Throwable $error, StreamEvent $event, string $stage): StreamErrorDecision
+        {
+            return new StreamErrorDecision(true, new StreamErrorPayload(
+                errorType: $error::class,
+                message: $error->getMessage(),
+                stage: $stage,
+                eventType: $event->type(),
+                eventSeq: $event->seq(),
+                eventNodeName: $event->nodeName(),
+                eventNodeSeq: $event->nodeSeq()
+            ));
+        }
+    };
+    $wrapped = new WrappedStreamSink(
+        $sink,
+        $store,
+        null,
+        null,
+        null,
+        $observer,
+        $errorHandler
+    );
+
+    try {
+        $wrapped->emit(new StreamEventImpl(
+            streamId: 'stream-store-fatal',
+            executionId: 'exec-store-fatal',
+            nodeName: 'node-a',
+            spanId: null,
+            parentSpanId: null,
+            type: 'text_delta',
+            payload: ['delta' => 'x'],
+            seq: 1,
+            nodeSeq: 1,
+            occurredAt: new DateTimeImmutable('now')
+        ));
+    } catch (RuntimeException) {
+    }
+
+    expect($sink->status()?->value)->toBe('error');
+});
+
+test('wrapped stream sink handles sink failure correctly', function () {
+    Event::fake([StreamStatsUpdated::class]);
+    $sink = new class implements StreamSinkInterface
+    {
+        public array $events = [];
+
+        public ?StreamStatus $status = null;
+
+        public function emit(StreamEvent $event): void
+        {
+            if ($event->type() !== 'stream_error') {
+                throw new RuntimeException('Sink failure');
+            }
+            $this->events[] = $event;
+        }
+
+        public function close(StreamStatus $status, mixed $meta = null): void
+        {
+            $this->status = $status;
+        }
+    };
+    $observer = new StreamObserver(new StreamMetrics, 'stream-sink', 'exec-sink', (float) time());
+    $errorHandler = new class extends StreamErrorHandler
+    {
+        public function decide(\Throwable $error, StreamEvent $event, string $stage): StreamErrorDecision
+        {
+            return new StreamErrorDecision(false, new StreamErrorPayload(
+                errorType: $error::class,
+                message: $error->getMessage(),
+                stage: $stage,
+                eventType: $event->type(),
+                eventSeq: $event->seq(),
+                eventNodeName: $event->nodeName(),
+                eventNodeSeq: $event->nodeSeq()
+            ));
+        }
+    };
+    $wrapped = new WrappedStreamSink(
+        $sink,
+        null,
+        null,
+        null,
+        null,
+        $observer,
+        $errorHandler
+    );
+
+    $wrapped->emit(new StreamEventImpl(
+        streamId: 'stream-sink',
+        executionId: 'exec-sink',
+        nodeName: 'node-a',
+        spanId: null,
+        parentSpanId: null,
+        type: 'text_delta',
+        payload: ['delta' => 'x'],
+        seq: 1,
+        nodeSeq: 1,
+        occurredAt: new DateTimeImmutable('now')
+    ));
+
+    expect($sink->events)->toHaveCount(1)
+        ->and($sink->events[0]->type())->toBe('stream_error');
+});
+
+test('wrapped stream sink flushes observer on close', function () {
+    Event::fake([StreamStatsUpdated::class]);
+    $sink = new MemorySink;
+    $observer = new StreamObserver(new StreamMetrics, 'stream-close', 'exec-close', (float) time());
+    $wrapped = new WrappedStreamSink(
+        $sink,
+        null,
+        null,
+        null,
+        null,
+        $observer,
+        new StreamErrorHandler
+    );
+
+    $wrapped->close(StreamStatus::SUCCESS);
+
+    expect($sink->status()?->value)->toBe('success');
+    Event::assertDispatched(StreamStatsUpdated::class, function (StreamStatsUpdated $event) {
+        return $event->streamId === 'stream-close' && $event->executionId === 'exec-close';
+    });
 });

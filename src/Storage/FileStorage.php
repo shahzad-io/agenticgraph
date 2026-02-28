@@ -6,6 +6,7 @@ namespace Shahzad\AgenticGraph\Storage;
 
 use Shahzad\AgenticGraph\Contracts\StorageInterface;
 use Shahzad\AgenticGraph\Execution\Checkpoint;
+use Shahzad\AgenticGraph\State\State;
 
 class FileStorage implements StorageInterface
 {
@@ -40,11 +41,12 @@ class FileStorage implements StorageInterface
         $path = $this->path($checkpoint->id);
 
         // Remove JSON_PRETTY_PRINT for production (30-50% smaller files)
+        $statePayload = State::toStoragePayload($checkpoint->state);
         file_put_contents($path, json_encode([
             'id' => $checkpoint->id,
             'graph_name' => $checkpoint->graphName,
             'execution_id' => $checkpoint->executionId,
-            'state' => $checkpoint->state->toArray(),
+            'state' => $statePayload,
             'current_node' => $checkpoint->currentNode,
             'completed_nodes' => $checkpoint->completedNodes,
             'pending_nodes' => $checkpoint->pendingNodes,

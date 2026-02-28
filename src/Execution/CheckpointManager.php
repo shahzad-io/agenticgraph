@@ -9,6 +9,7 @@ use Illuminate\Database\DatabaseManager;
 use Illuminate\Support\Str;
 use Shahzad\AgenticGraph\Contracts\StorageInterface;
 use Shahzad\AgenticGraph\Events\CheckpointCreated;
+use Shahzad\AgenticGraph\State\State;
 
 class CheckpointManager
 {
@@ -137,13 +138,14 @@ class CheckpointManager
      */
     private function calculateStateSize(Checkpoint $checkpoint): int
     {
+        $payload = State::toStoragePayload($checkpoint->state);
         try {
-            $serialized = serialize($checkpoint->state->toArray());
+            $serialized = serialize($payload);
 
             return strlen($serialized);
         } catch (\Throwable $e) {
             // If serialization fails, estimate using JSON
-            $json = json_encode($checkpoint->state->toArray());
+            $json = json_encode($payload);
 
             return $json !== false ? strlen($json) : 0;
         }

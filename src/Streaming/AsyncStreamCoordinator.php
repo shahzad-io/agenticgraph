@@ -9,6 +9,7 @@ use Shahzad\AgenticGraph\Execution\ExecutionOptions;
 use Shahzad\AgenticGraph\Execution\ExecutionRepository;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Jobs\ExecuteGraphJob;
+use Shahzad\AgenticGraph\State\State;
 
 final class AsyncStreamCoordinator
 {
@@ -36,12 +37,14 @@ final class AsyncStreamCoordinator
         $streamId = uniqid('stream_', true);
         $rootSpanId = uniqid('span_', true);
 
-        $this->repository->queued($executionId, $graph->name, $state->toArray(), $streamId);
+        $statePayload = State::toStoragePayload($state);
+
+        $this->repository->queued($executionId, $graph->name, $statePayload, $streamId);
 
         dispatch(new ExecuteGraphJob(
             graphName: $graph->name,
             executionId: $executionId,
-            stateData: $state->toArray(),
+            stateData: $statePayload,
             checkpointId: null,
             rootSpanId: $rootSpanId,
             executionOptions: $options,

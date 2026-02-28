@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Str;
 use Shahzad\AgenticGraph\Execution\Checkpoint;
+use Shahzad\AgenticGraph\Execution\ExecutionRepository;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Storage\DatabaseStorage;
 
@@ -11,13 +12,14 @@ it('stores and retrieves checkpoint from database', function () {
     $c->id = (string) Str::uuid();
     $c->graphName = 'g';
     $c->executionId = 'e';
-    $c->state = new State(['value' => 42]);
+    $c->state = new State(['value' => 42], ['source' => 'db']);
     $c->currentNode = 'n';
     $c->createdAt = new DateTimeImmutable;
     $id = $storage->save($c);
     $retrieved = $storage->load($id);
     expect($retrieved)->not->toBeNull()
-        ->and($retrieved->state->get('value'))->toBe(42);
+        ->and($retrieved->state->get('value'))->toBe(42)
+        ->and($retrieved->state->getMetadata())->toBe(['source' => 'db']);
 });
 
 it('lists and deletes checkpoints', function () {
@@ -42,4 +44,20 @@ it('lists and deletes checkpoints', function () {
     expect($list)->toHaveCount(2);
     $ok = $storage->delete($c1->id);
     expect($ok)->toBeTrue();
+});
+
+it('persists execution state metadata', function () {
+    $repository = new ExecutionRepository;
+    $executionId = (string) Str::uuid();
+    $state = new State(['value' => 123], ['meta' => 'yes']);
+    $payload = State::toStoragePayload($state);
+
+    $repository->queued($executionId, 'g-meta', $payload);
+    $repository->completed($executionId, $payload, 0.0);
+
+    $record = $repository->get($executionId);
+    $restored = State::fromArray($record?->finalState ?? []);
+
+    expect($restored->get('value'))->toBe(123)
+        ->and($restored->getMetadata())->toBe(['meta' => 'yes']);
 });

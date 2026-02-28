@@ -191,9 +191,6 @@ final class ExecutionHandle
 
         if ($this->options->streaming === StreamingMode::NONE) {
             $state = $this->executor->resumeWithInput($checkpoint->id, $input);
-            if ($state === null) {
-                throw new \RuntimeException('Resume failed.');
-            }
             $status = $state->hasInterrupt() ? ExecutionStatus::INTERRUPTED : ExecutionStatus::COMPLETED;
 
             return new self(

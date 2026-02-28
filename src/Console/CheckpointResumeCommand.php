@@ -17,9 +17,10 @@ class CheckpointResumeCommand extends Command
     {
         $id = $this->argument('id');
         $executor = app(GraphExecutor::class);
-        $state = $executor->resume($id);
-        if (! $state) {
-            $this->error('Checkpoint not found');
+        try {
+            $state = $executor->resume($id);
+        } catch (\RuntimeException $e) {
+            $this->error($e->getMessage());
 
             return self::FAILURE;
         }

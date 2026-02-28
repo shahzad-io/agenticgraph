@@ -4,26 +4,47 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph;
 
+use Illuminate\Contracts\Broadcasting\Broadcaster;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\DatabaseManager;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Route;
 use Shahzad\AgenticGraph\Adapters\PrismFacadeClient;
 use Shahzad\AgenticGraph\Commands\AgenticGraphCommand;
+use Shahzad\AgenticGraph\Contracts\InterruptServiceInterface;
+use Shahzad\AgenticGraph\Contracts\ParallelExecutorInterface;
 use Shahzad\AgenticGraph\Contracts\PrismClient;
+use Shahzad\AgenticGraph\Contracts\RouterResolverInterface;
+use Shahzad\AgenticGraph\Contracts\StorageInterface;
+use Shahzad\AgenticGraph\Contracts\StreamingExecutorInterface;
 use Shahzad\AgenticGraph\Execution\CheckpointManager;
+use Shahzad\AgenticGraph\Execution\ExecutionContextManager;
 use Shahzad\AgenticGraph\Execution\ExecutionRepository;
+use Shahzad\AgenticGraph\Execution\ExecutionResumer;
 use Shahzad\AgenticGraph\Execution\ExecutionStatusResolver;
 use Shahzad\AgenticGraph\Execution\ExecutionStore;
+use Shahzad\AgenticGraph\Execution\InterruptHandlerResolver;
+use Shahzad\AgenticGraph\Execution\InterruptManager;
+use Shahzad\AgenticGraph\Execution\ParallelExecutionCoordinator;
+use Shahzad\AgenticGraph\Execution\RoutingEngine;
+use Shahzad\AgenticGraph\Execution\TraceContextProvider;
 use Shahzad\AgenticGraph\Http\Controllers\StreamController;
 use Shahzad\AgenticGraph\State\StateManager;
 use Shahzad\AgenticGraph\Storage\DatabaseStorage;
 use Shahzad\AgenticGraph\Storage\FileStorage;
 use Shahzad\AgenticGraph\Storage\RedisStorage;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
+use Shahzad\AgenticGraph\Streaming\RetentionPolicyFactory;
 use Shahzad\AgenticGraph\Streaming\Store\StreamStoreManager;
+use Shahzad\AgenticGraph\Streaming\StreamErrorHandler;
+use Shahzad\AgenticGraph\Streaming\StreamingExecutionCoordinator;
+use Shahzad\AgenticGraph\Streaming\StreamObserverFactory;
+use Shahzad\AgenticGraph\Streaming\StreamSinkFactory;
+use Shahzad\AgenticGraph\Tracing\ExecutionClockFactory;
 use Shahzad\AgenticGraph\Tracing\Listeners\TracingListener;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
+use Shahzad\AgenticGraph\Tracing\TraceContext;
+use Shahzad\AgenticGraph\Tracing\TraceContextFactory;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
 
@@ -110,6 +131,19 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
             );
         });
 
+        $this->app->singleton(ExecutionContextManager::class, function ($app) {
+            return new ExecutionContextManager(
+                $app->bound(PulseExporter::class) ? $app->make(PulseExporter::class) : null,
+                $app->bound(\Shahzad\AgenticGraph\Tracing\Instrumentation\HttpClientInstrumentation::class)
+                    ? $app->make(\Shahzad\AgenticGraph\Tracing\Instrumentation\HttpClientInstrumentation::class)
+                    : null,
+                $app->make(TraceContextFactory::class),
+                $app->make(ExecutionClockFactory::class),
+                $app,
+                $app->make(\Psr\Log\LoggerInterface::class)
+            );
+        });
+
         $this->app->bind(ExecutionStore::class, function ($app) {
             return $app->make(ExecutionRepository::class);
         });
@@ -121,6 +155,108 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
             );
         });
 
+        $this->app->bind(RouterResolverInterface::class, function ($app) {
+            return new RoutingEngine($app);
+        });
+
+        $this->app->bind(ParallelExecutorInterface::class, function ($app) {
+            return new ParallelExecutionCoordinator(
+                $app->make(RoutingEngine::class),
+                $app->make(StateManager::class),
+                $app->make(\Illuminate\Cache\CacheManager::class),
+                $app->make(\Illuminate\Contracts\Bus\Dispatcher::class),
+                $app->make(\Psr\Log\LoggerInterface::class),
+                $app->make(ExecutionRepository::class),
+                $app->make(Dispatcher::class),
+                $app,
+                $app->make(CheckpointManager::class),
+                config('agenticgraph.middleware.global'),
+                static fn () => $app->bound(\Shahzad\AgenticGraph\Tracing\TraceContext::class)
+                    ? $app->make(\Shahzad\AgenticGraph\Tracing\TraceContext::class)
+                    : null,
+                static fn () => $app->bound(\Shahzad\AgenticGraph\Execution\ExecutionContext::class)
+                    ? $app->make(\Shahzad\AgenticGraph\Execution\ExecutionContext::class)
+                    : null,
+                static fn ($job) => dispatch($job)
+            );
+        });
+
+        $this->app->bind(InterruptServiceInterface::class, function ($app) {
+            $resumer = new class($app) implements ExecutionResumer
+            {
+                public function __construct(
+                    private readonly \Illuminate\Contracts\Container\Container $container
+                ) {}
+
+                public function __invoke(
+                    \Shahzad\AgenticGraph\Graph\Graph $graph,
+                    \Shahzad\AgenticGraph\Contracts\StateContract $state,
+                    string $startNode,
+                    string $executionId,
+                    bool $useBatch = false,
+                    ?\Shahzad\AgenticGraph\Execution\LoopMetadata $loopMetadata = null
+                ): \Shahzad\AgenticGraph\Contracts\StateContract {
+                    return $this->container
+                        ->make(\Shahzad\AgenticGraph\Execution\GraphExecutor::class)
+                        ->executeFromNode($graph, $state, $startNode, $executionId, $useBatch, $loopMetadata);
+                }
+            };
+
+            $handlerResolver = new class($app) implements InterruptHandlerResolver
+            {
+                public function __construct(
+                    private readonly \Illuminate\Contracts\Container\Container $container
+                ) {}
+
+                public function __invoke(): ?\Shahzad\AgenticGraph\Contracts\InterruptHandlerInterface
+                {
+                    $handler = config('agenticgraph.interrupts.handler');
+                    if (! $handler) {
+                        return null;
+                    }
+
+                    $instance = is_string($handler) ? $this->container->make($handler) : $handler;
+                    if (! $instance instanceof \Shahzad\AgenticGraph\Contracts\InterruptHandlerInterface) {
+                        return null;
+                    }
+
+                    return $instance;
+                }
+            };
+
+            $traceContextProvider = new class($app) implements TraceContextProvider
+            {
+                public function __construct(
+                    private readonly \Illuminate\Contracts\Container\Container $container
+                ) {}
+
+                public function __invoke(): ?\Shahzad\AgenticGraph\Tracing\TraceContext
+                {
+                    return $this->container->bound(TraceContext::class)
+                        ? $this->container->make(TraceContext::class)
+                        : null;
+                }
+            };
+
+            return new InterruptManager(
+                $app->make(Dispatcher::class),
+                $app->make(ExecutionRepository::class),
+                $app->make(CheckpointManager::class),
+                $app->make(StorageInterface::class),
+                $app->make(\Shahzad\AgenticGraph\Graph\GraphRegistry::class),
+                $app->make(\Psr\Log\LoggerInterface::class),
+                $app,
+                $resumer,
+                $handlerResolver,
+                $traceContextProvider,
+                (bool) config('agenticgraph.interrupts.persistence_enabled', true),
+                (bool) config('agenticgraph.interrupts.broadcast_enabled', true),
+                (int) config('agenticgraph.interrupts.default_expiry_days', 7),
+                (bool) config('agenticgraph.logging.enabled', true),
+                $app->bound(PulseExporter::class) ? $app->make(PulseExporter::class) : null
+            );
+        });
+
         $this->app->bind(StreamStoreManager::class, function ($app) {
             return new StreamStoreManager($app);
         });
@@ -128,6 +264,24 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
         $this->app->bind(StreamStoreInterface::class, function ($app) {
             return $app->make(StreamStoreManager::class)->store();
         });
+        $this->app->bind(StreamSinkFactory::class, function ($app) {
+            $rateLimitEnabled = (bool) config('agenticgraph.streaming.rate_limit.enabled', false);
+            $rateLimitMaxEvents = (int) config('agenticgraph.streaming.rate_limit.max_events_per_second', 100);
+            $retentionEnabled = (int) config('agenticgraph.streaming.retention.max_events_per_stream', 0) > 0
+                || (int) config('agenticgraph.streaming.retention.max_age_hours', 0) > 0;
+
+            return new StreamSinkFactory(
+                $app->make(Broadcaster::class),
+                $app->make(StreamStoreInterface::class),
+                $rateLimitEnabled,
+                $rateLimitMaxEvents,
+                $retentionEnabled,
+                new RetentionPolicyFactory,
+                new StreamObserverFactory,
+                $app->make(StreamErrorHandler::class)
+            );
+        });
+        $this->app->bind(StreamingExecutorInterface::class, StreamingExecutionCoordinator::class);
 
         // Register tracing instrumentation if tracing is enabled
         if (config('agenticgraph.tracing.enabled', false)) {

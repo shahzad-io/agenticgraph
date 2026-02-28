@@ -4,7 +4,6 @@ use Illuminate\Contracts\Broadcasting\Broadcaster;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Str;
-use Mockery;
 use Prism\Prism\Streaming\Events\TextCompleteEvent;
 use Prism\Prism\Streaming\Events\TextDeltaEvent;
 use Prism\Prism\Streaming\Events\TextStartEvent;
@@ -916,7 +915,8 @@ it('emits stream resume event with preserved stream id', function () {
 
     expect($checkpoint)->not->toBeNull()
         ->and($checkpoint->metadata['stream_id'] ?? null)->toBe($handle->streamId())
-        ->and($checkpoint->metadata['last_seq'] ?? null)->toBeInt();
+        ->and($checkpoint->metadata['last_seq'] ?? null)->toBeInt()
+        ->and($checkpoint->metadata['stream_cursor'] ?? null)->toBeInt();
 
     $resumeHandle = $handle->resume([
         'approved' => true,
@@ -941,7 +941,9 @@ it('emits stream resume event with preserved stream id', function () {
         ->and($resumeHandle->getFinalState()->get('processed'))->toBeTrue();
 
     $resumePayload = $resumeEvent?->payload();
-    expect($resumePayload['checkpoint_id'] ?? null)->toBe($checkpointId);
+    expect($resumePayload['checkpoint_id'] ?? null)->toBe($checkpointId)
+        ->and($resumePayload['from_seq'] ?? null)->toBe($checkpoint->metadata['last_seq'] ?? null)
+        ->and($resumePayload['resumed_at_seq'] ?? null)->toBe(($checkpoint->metadata['last_seq'] ?? 0) + 1);
 });
 
 it('interrupt emits node_interrupt and closes stream', function () {

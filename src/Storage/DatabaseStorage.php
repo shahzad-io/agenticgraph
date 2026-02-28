@@ -7,6 +7,7 @@ namespace Shahzad\AgenticGraph\Storage;
 use Illuminate\Database\DatabaseManager;
 use Shahzad\AgenticGraph\Contracts\StorageInterface;
 use Shahzad\AgenticGraph\Execution\Checkpoint;
+use Shahzad\AgenticGraph\State\State;
 
 class DatabaseStorage implements StorageInterface
 {
@@ -21,11 +22,12 @@ class DatabaseStorage implements StorageInterface
 
     public function save(Checkpoint $checkpoint): string
     {
+        $statePayload = State::toStoragePayload($checkpoint->state);
         $payload = [
             'id' => $checkpoint->id,
             'graph_name' => $checkpoint->graphName,
             'execution_id' => $checkpoint->executionId,
-            'state' => json_encode($checkpoint->state->toArray()),
+            'state' => json_encode($statePayload),
             'current_node' => $checkpoint->currentNode,
             'completed_nodes' => json_encode($checkpoint->completedNodes),
             'pending_nodes' => json_encode($checkpoint->pendingNodes),
