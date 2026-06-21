@@ -261,9 +261,10 @@ it('returns interrupt status with latest state', function () {
     $status = AgenticGraph::interruptStatus($handle->id());
 
     expect($status->status)->toBe(ExecutionStatus::INTERRUPTED);
-    expect($status->interrupt)->not->toBeNull();
+    expect($status->interrupt)->not->toBeNull()
+        ->and($status->interrupt->reason())->toBe('Content requires approval');
     expect($status->latestState)->not->toBeNull()
-        ->and($status->latestState->toArray()['_interrupt']['reason'])->toBe('Content requires approval');
+        ->and($status->latestState->get('topic'))->toBe('Status');
 });
 
 it('supports interrupt record scopes', function () {

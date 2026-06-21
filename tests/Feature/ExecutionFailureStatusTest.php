@@ -156,7 +156,7 @@ it('does not mark a clean SYNC interrupt as failed', function () {
     $record = app(ExecutionStore::class)->get($executionId);
 
     expect($record)->not->toBeNull()
-        ->and($record->status)->not->toBe(ExecutionStatus::FAILED);
+        ->and($record->status)->toBe(ExecutionStatus::INTERRUPTED);
 
     Event::assertDispatched(NodeInterrupted::class);
     Event::assertNotDispatched(GraphExecutionFailed::class);

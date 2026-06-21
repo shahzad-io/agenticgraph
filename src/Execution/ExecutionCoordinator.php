@@ -146,6 +146,7 @@ class ExecutionCoordinator
         $this->events->dispatch(new GraphExecutionStarted($executionId, $graph->name, $state, $executionStartDt, $rootSpanId));
         $current = $graph->entryPoint;
         $start = $executionStartTime;
+        $interrupted = false;
 
         try {
             while (true) {
@@ -199,6 +200,7 @@ class ExecutionCoordinator
                     $node = $graph->getNode($current);
                     if ($options->interrupts && $this->shouldInterrupt($node, $state)) {
                         $state = $this->handleInterrupt($executionId, $graph->name, $current, $state);
+                        $interrupted = true;
                         $lock->release();
                         break;
                     }
@@ -278,11 +280,13 @@ class ExecutionCoordinator
             }
 
             $duration = microtime(true) - $start;
-            $this->repo->completed($executionId, State::toStoragePayload($state), $duration);
-            $completedAt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', microtime(true))) ?: new \DateTimeImmutable;
-            $this->events->dispatch(new GraphExecutionCompleted($executionId, $graph->name, $state, $completedAt, $duration, [], $traceContext->getRootSpanId()));
+            if (! $interrupted && ! $state->hasInterrupt()) {
+                $this->repo->completed($executionId, State::toStoragePayload($state), $duration);
+                $completedAt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', microtime(true))) ?: new \DateTimeImmutable;
+                $this->events->dispatch(new GraphExecutionCompleted($executionId, $graph->name, $state, $completedAt, $duration, [], $traceContext->getRootSpanId()));
+            }
 
-            $exitState = $state->hasInterrupt() ? null : $state;
+            $exitState = ($interrupted || $state->hasInterrupt()) ? null : $state;
             $this->contextManager->exit($scope, $exitState);
 
             return $state;
@@ -303,6 +307,9 @@ class ExecutionCoordinator
             $executionId = $executionId ?? $this->generateExecutionId();
             if ($options->streaming === StreamingMode::NONE) {
                 $finalState = $this->execute($graph, $state, $options, executionId: $executionId);
+                $status = $finalState->hasInterrupt()
+                    ? ExecutionStatus::INTERRUPTED
+                    : ExecutionStatus::COMPLETED;
 
                 return new ExecutionHandle(
                     executionId: $executionId,
@@ -311,7 +318,7 @@ class ExecutionCoordinator
                     store: $this->store,
                     resolver: $this->statusResolver,
                     checkpoints: $this->checkpoints,
-                    status: ExecutionStatus::COMPLETED,
+                    status: $status,
                     finalState: $finalState
                 );
             }
@@ -321,6 +328,10 @@ class ExecutionCoordinator
                 interrupts: $options->interrupts
             );
             $streamHandle = $this->executeWithStreaming($graph->name, $state, $streamOptions, $executionId);
+            $finalState = $streamHandle->getFinalState();
+            $status = $finalState->hasInterrupt()
+                ? ExecutionStatus::INTERRUPTED
+                : ExecutionStatus::COMPLETED;
 
             return new ExecutionHandle(
                 executionId: $streamHandle->executionId(),
@@ -330,8 +341,8 @@ class ExecutionCoordinator
                 resolver: $this->statusResolver,
                 checkpoints: $this->checkpoints,
                 streamHandle: $streamHandle,
-                status: ExecutionStatus::COMPLETED,
-                finalState: $streamHandle->getFinalState(),
+                status: $status,
+                finalState: $finalState,
                 streamId: $streamHandle->streamId()
             );
         }

@@ -69,7 +69,7 @@ final class ExecutionHandle
         if ($resolved !== null) {
             $this->status = $resolved;
         }
-        if ($this->status === ExecutionStatus::COMPLETED && $this->finalState === null) {
+        if (in_array($this->status, [ExecutionStatus::COMPLETED, ExecutionStatus::INTERRUPTED], true) && $this->finalState === null) {
             $record = $this->store->get($this->executionId);
             if ($record?->finalState !== null) {
                 $this->finalState = State::fromArray($record->finalState);
@@ -113,7 +113,7 @@ final class ExecutionHandle
 
     public function getFinalState(): StateContract
     {
-        if ($this->status !== ExecutionStatus::COMPLETED) {
+        if (! in_array($this->status, [ExecutionStatus::COMPLETED, ExecutionStatus::INTERRUPTED], true)) {
             throw new NotYetCompleteException('Execution is not complete.');
         }
         if ($this->finalState !== null) {
