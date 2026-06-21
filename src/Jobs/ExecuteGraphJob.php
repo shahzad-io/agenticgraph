@@ -100,7 +100,7 @@ class ExecuteGraphJob implements ShouldBeUnique, ShouldQueue
 
                 $executor->executeWithStreaming($graph->name, $state, $streamOptions, $this->executionId);
             } else {
-                $executor->execute($graph, $state, useBatch: true, executionId: $this->executionId);
+                $executor->execute($graph, $state, $options, useBatch: true, executionId: $this->executionId);
             }
         } finally {
             // Clean up container instances

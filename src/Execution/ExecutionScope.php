@@ -16,5 +16,11 @@ readonly class ExecutionScope
         public ExecutionContext $context,
         public float $startTime,
         public \stdClass $bindings,
+        public ExecutionOptions $options,
     ) {}
+
+    public function options(): ExecutionOptions
+    {
+        return $this->options;
+    }
 }

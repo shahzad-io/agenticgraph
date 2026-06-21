@@ -76,7 +76,8 @@ final class ExecutionContextManager implements ExecutionScopeInterface
             clock: $clock,
             context: $context,
             startTime: $startTime,
-            bindings: $bindings
+            bindings: $bindings,
+            options: $options,
         );
     }
 
@@ -127,7 +128,8 @@ final class ExecutionContextManager implements ExecutionScopeInterface
             clock: $clock,
             context: $context,
             startTime: $startTime,
-            bindings: $bindings
+            bindings: $bindings,
+            options: $options,
         );
     }
 

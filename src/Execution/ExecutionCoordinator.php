@@ -121,12 +121,18 @@ class ExecutionCoordinator
         $this->streamingCoordinator->setDelegate($delegate);
     }
 
-    public function execute(Graph $graph, StateContract $state, bool $useBatch = false, ?string $executionId = null): StateContract
+    public function execute(
+        Graph $graph,
+        StateContract $state,
+        ExecutionOptions $options = new ExecutionOptions,
+        bool $useBatch = false,
+        ?string $executionId = null
+    ): StateContract
     {
         $state->validate();
 
         $executionId = $executionId ?? $this->generateExecutionId();
-        $scope = $this->enterScope($executionId, $graph, new ExecutionOptions);
+        $scope = $this->enterScope($executionId, $graph, $options);
         $traceContext = $scope->traceContext;
         $executionContext = $scope->context;
 
@@ -191,7 +197,7 @@ class ExecutionCoordinator
                     }
 
                     $node = $graph->getNode($current);
-                    if ($this->shouldInterrupt($node, $state)) {
+                    if ($options->interrupts && $this->shouldInterrupt($node, $state)) {
                         $state = $this->handleInterrupt($executionId, $graph->name, $current, $state);
                         $lock->release();
                         break;
@@ -296,7 +302,7 @@ class ExecutionCoordinator
         if ($options->mode === ExecutionMode::SYNC) {
             $executionId = $executionId ?? $this->generateExecutionId();
             if ($options->streaming === StreamingMode::NONE) {
-                $finalState = $this->execute($graph, $state, executionId: $executionId);
+                $finalState = $this->execute($graph, $state, $options, executionId: $executionId);
 
                 return new ExecutionHandle(
                     executionId: $executionId,

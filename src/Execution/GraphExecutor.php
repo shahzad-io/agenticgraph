@@ -54,9 +54,15 @@ class GraphExecutor implements ExecutionLoopDelegate
         $this->coordinator->setDelegate($this);
     }
 
-    public function execute(Graph $graph, StateContract $state, bool $useBatch = false, ?string $executionId = null): StateContract
+    public function execute(
+        Graph $graph,
+        StateContract $state,
+        ExecutionOptions $options = new ExecutionOptions,
+        bool $useBatch = false,
+        ?string $executionId = null
+    ): StateContract
     {
-        return $this->coordinator->execute($graph, $state, $useBatch, $executionId);
+        return $this->coordinator->execute($graph, $state, $options, $useBatch, $executionId);
     }
 
     public function executeWithOptions(Graph $graph, StateContract $state, ExecutionOptions $options, ?string $executionId = null): ExecutionHandle
