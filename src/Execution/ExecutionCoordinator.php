@@ -425,9 +425,6 @@ class ExecutionCoordinator
         $rootSpanId = $traceContext->getRootSpanId();
 
         $this->repo->queued($executionId, $graph->name, State::toStoragePayload($state));
-        $this->repo->started($executionId, $graph->name, State::toStoragePayload($state));
-        $executionStartDt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', microtime(true))) ?: new \DateTimeImmutable;
-        $this->events->dispatch(new GraphExecutionStarted($executionId, $graph->name, $state, $executionStartDt, $rootSpanId));
 
         $this->contextManager->exit($scope);
         if ($this->httpClientInstrumentation) {
