@@ -180,6 +180,80 @@ test('wrapped sink emits stream_error on redis store failure', function () {
     $events = iterator_to_array($baseSink->events());
     $payload = $events[0]->payload();
 
+    expect($events)->toHaveCount(2)
+        ->and($events[0]->type())->toBe('stream_error')
+        ->and($events[1]->type())->toBe('text_delta')
+        ->and($payload)->toBeInstanceOf(StreamErrorPayload::class)
+        ->and($payload->stage)->toBe('store')
+        ->and($baseSink->status())->toBeNull();
+});
+
+test('wrapped sink treats store failure as fatal when configured', function () {
+    config()->set('agenticgraph.streaming.errors.store_fatal', true);
+
+    $store = new class implements StreamStoreInterface
+    {
+        public function append(StreamEvent $event): void
+        {
+            throw new RuntimeException('Database connection lost');
+        }
+
+        public function readFrom(string $streamId, int $fromSeq, int $limit = 200): \Generator
+        {
+            if (false) {
+                yield $streamId;
+            }
+        }
+
+        public function lastSeq(string $streamId): ?int
+        {
+            return null;
+        }
+
+        public function truncate(string $streamId, int $beforeSeq): void {}
+    };
+    $baseSink = new MemorySink;
+    $options = new StreamOptions(delivery: 'iterator', storeEnabled: true);
+    $session = new StreamSession(
+        streamId: 'stream-2-fatal',
+        executionId: 'exec-2-fatal',
+        options: $options,
+        startedAtUnix: time()
+    );
+
+    $factory = new StreamSinkFactory(
+        Mockery::mock(Broadcaster::class),
+        $store,
+        false,
+        100,
+        false,
+        new RetentionPolicyFactory,
+        new StreamObserverFactory,
+        new StreamErrorHandler
+    );
+    $wrapped = $factory->wrap($baseSink, $options, $session);
+
+    $event = new StreamEventImpl(
+        streamId: 'stream-2-fatal',
+        executionId: 'exec-2-fatal',
+        nodeName: 'node-b',
+        spanId: null,
+        parentSpanId: null,
+        type: 'text_delta',
+        payload: ['delta' => 'b'],
+        seq: 1,
+        nodeSeq: 1,
+        occurredAt: new DateTimeImmutable('now')
+    );
+
+    try {
+        $wrapped->emit($event);
+    } catch (RuntimeException) {
+    }
+
+    $events = iterator_to_array($baseSink->events());
+    $payload = $events[0]->payload();
+
     expect($events)->toHaveCount(1)
         ->and($events[0]->type())->toBe('stream_error')
         ->and($payload)->toBeInstanceOf(StreamErrorPayload::class)
@@ -251,11 +325,12 @@ test('wrapped sink emits stream_error on database store failure', function () {
     $events = iterator_to_array($baseSink->events());
     $payload = $events[0]->payload();
 
-    expect($events)->toHaveCount(1)
+    expect($events)->toHaveCount(2)
         ->and($events[0]->type())->toBe('stream_error')
+        ->and($events[1]->type())->toBe('text_delta')
         ->and($payload)->toBeInstanceOf(StreamErrorPayload::class)
         ->and($payload->stage)->toBe('store')
-        ->and($baseSink->status()?->value)->toBe('error');
+        ->and($baseSink->status())->toBeNull();
 });
 
 test('wrapped sink handles client disconnect mid-stream', function () {
@@ -322,7 +397,7 @@ test('wrapped sink handles client disconnect mid-stream', function () {
     expect($baseSink->events)->toHaveCount(1)
         ->and($baseSink->events[0]->type())->toBe('stream_error')
         ->and($payload)->toBeInstanceOf(StreamErrorPayload::class)
-        ->and($payload->stage)->toBe('emit')
+        ->and($payload->stage)->toBe('transport')
         ->and($baseSink->status?->value)->toBe('error');
 });
 
@@ -593,15 +668,16 @@ test('wrapped sink applies retention metrics and error handling in order', funct
     } catch (RuntimeException) {
     }
 
-    expect($baseSink->events)->toHaveCount(1)
-        ->and($baseSink->events[0]->type())->toBe('stream_error');
+    expect($baseSink->events)->toHaveCount(2)
+        ->and($baseSink->events[0]->type())->toBe('stream_error')
+        ->and($baseSink->events[1]->type())->toBe('text_delta');
 
     $appendIndex = array_search('append', $order, true);
-    $emitIndex = array_search('emit', $order, true);
-    $closeIndex = array_search('close', $order, true);
+    $emitIndices = array_keys(array_filter($order, fn (string $value): bool => $value === 'emit'));
 
-    expect($appendIndex)->toBeLessThan($emitIndex)
-        ->and($emitIndex)->toBeLessThan($closeIndex);
+    expect($appendIndex)->toBeLessThan($emitIndices[0])
+        ->and($emitIndices[0])->toBeLessThan($emitIndices[1])
+        ->and(array_search('close', $order, true))->toBeFalse();
 });
 
 test('wrapped sink preserves broadcast sink behavior', function () {
@@ -904,8 +980,9 @@ test('wrapped stream sink handles nonfatal store failure without rethrowing', fu
         occurredAt: new DateTimeImmutable('now')
     ));
 
-    expect($sink->events()->count())->toBe(1)
-        ->and($sink->events()->offsetGet(0)->type())->toBe('stream_error');
+    expect($sink->events()->count())->toBe(2)
+        ->and($sink->events()->offsetGet(0)->type())->toBe('stream_error')
+        ->and($sink->events()->offsetGet(1)->type())->toBe('text_delta');
 });
 
 test('wrapped stream sink handles fatal store failure by rethrowing', function () {

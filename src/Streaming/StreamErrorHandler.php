@@ -20,6 +20,13 @@ class StreamErrorHandler
             eventNodeSeq: $event->nodeSeq()
         );
 
-        return new StreamErrorDecision(true, $payload);
+        $fatal = match ($stage) {
+            'store' => (bool) config('agenticgraph.streaming.errors.store_fatal', false),
+            'observer' => false,
+            'transport', 'emit' => (bool) config('agenticgraph.streaming.errors.transport_fatal', true),
+            default => (bool) config('agenticgraph.streaming.errors.transport_fatal', true),
+        };
+
+        return new StreamErrorDecision($fatal, $payload);
     }
 }

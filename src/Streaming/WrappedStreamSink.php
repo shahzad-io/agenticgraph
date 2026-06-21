@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph\Streaming;
 
+use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamEvent;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
@@ -35,15 +36,17 @@ final class WrappedStreamSink implements StreamSinkInterface
                 }
             } catch (\Throwable $e) {
                 $this->handleError($e, $event, 'store');
-
-                return;
             }
         }
         try {
             $this->sink->emit($event);
+        } catch (\Throwable $e) {
+            $this->handleError($e, $event, 'transport');
+        }
+        try {
             $this->observer->record($event);
         } catch (\Throwable $e) {
-            $this->handleError($e, $event, 'emit');
+            $this->handleError($e, $event, 'observer');
         }
     }
 
@@ -108,5 +111,15 @@ final class WrappedStreamSink implements StreamSinkInterface
             }
             throw $error;
         }
+
+        Log::warning('Non-fatal stream error', [
+            'stage' => $stage,
+            'error_type' => $error::class,
+            'message' => $error->getMessage(),
+            'stream_id' => $event->streamId(),
+            'execution_id' => $event->executionId(),
+            'event_type' => $event->type(),
+            'event_seq' => $event->seq(),
+        ]);
     }
 }

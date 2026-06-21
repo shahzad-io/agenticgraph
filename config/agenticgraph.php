@@ -142,6 +142,10 @@ return [
             'max_age_hours' => env('AGENTICGRAPH_STREAM_RETENTION_AGE_HOURS', 24),
             'max_events_per_stream' => env('AGENTICGRAPH_STREAM_RETENTION_MAX_EVENTS', 10000),
         ],
+        'errors' => [
+            'store_fatal' => env('AGENTICGRAPH_STREAM_STORE_FATAL', false),
+            'transport_fatal' => env('AGENTICGRAPH_STREAM_TRANSPORT_FATAL', true),
+        ],
         'routes' => [
             'enabled' => env('AGENTICGRAPH_STREAMING_ROUTES', true),
             'prefix' => env('AGENTICGRAPH_STREAMING_PREFIX', 'agentic-graph/streams'),
