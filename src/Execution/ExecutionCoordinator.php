@@ -283,6 +283,7 @@ class ExecutionCoordinator
         } catch (\Throwable $e) {
             $duration = microtime(true) - $start;
             $this->events->dispatch(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000));
+            $this->repo->failed($executionId, $e->getMessage());
             $this->contextManager->exitWithException($scope, $e);
             throw $e;
         }
@@ -595,6 +596,7 @@ class ExecutionCoordinator
 
             return $state;
         } catch (\Throwable $e) {
+            $this->repo->failed($executionId, $e->getMessage());
             $this->contextManager->exitWithException($scope, $e);
             throw $e;
         }
@@ -674,6 +676,7 @@ class ExecutionCoordinator
 
             return ['executionId' => $executionId, 'checkpointId' => $lastCheckpointId];
         } catch (\Throwable $e) {
+            $this->repo->failed($executionId, $e->getMessage());
             $this->contextManager->exitWithException($scope, $e);
             throw $e;
         }

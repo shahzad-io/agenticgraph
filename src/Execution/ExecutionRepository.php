@@ -157,19 +157,36 @@ class ExecutionRepository implements ExecutionStore
 
     public function failed(string $id, string $error): void
     {
-        $this->db->transaction(function () use ($id, $error) {
-            // Verify state transition with lock
-            if (! $this->canTransitionTo($id, 'failed')) {
-                $current = $this->db->table($this->table)
-                    ->where('id', $id)
-                    ->lockForUpdate()
-                    ->value('status');
+        $updated = $this->db->transaction(function () use ($id, $error) {
+            $current = $this->db->table($this->table)
+                ->where('id', $id)
+                ->lockForUpdate()
+                ->first();
+
+            if ($current === null) {
+                if ((bool) config('agenticgraph.logging.enabled', true)) {
+                    $this->logger->warning('Execution record not found when marking failed', [
+                        'execution_id' => $id,
+                    ]);
+                }
+
+                return false;
+            }
+
+            if (in_array($current->status, ['completed', 'failed'], true)) {
+                return false;
+            }
+
+            $allowedTransitions = $this->validTransitions[$current->status] ?? [];
+            if (! in_array('failed', $allowedTransitions, true)) {
                 if ((bool) config('agenticgraph.logging.enabled', true)) {
                     $this->logger->warning('Invalid state transition to failed', [
                         'execution_id' => $id,
-                        'current_status' => $current,
+                        'current_status' => $current->status,
                     ]);
                 }
+
+                return false;
             }
 
             $this->db->table($this->table)->where('id', $id)->update([
@@ -177,9 +194,11 @@ class ExecutionRepository implements ExecutionStore
                 'error' => $error,
                 'updated_at' => now(),
             ]);
+
+            return true;
         });
 
-        if ((bool) config('agenticgraph.logging.enabled', true)) {
+        if ($updated && (bool) config('agenticgraph.logging.enabled', true)) {
             $this->logger->error('Execution failed', [
                 'execution_id' => $id,
                 'error' => $error,

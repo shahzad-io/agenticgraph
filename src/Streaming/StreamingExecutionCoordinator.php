@@ -538,6 +538,8 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                 'message' => $e->getMessage(),
             ]);
 
+            $this->repo->failed($executionId, $e->getMessage());
+
             throw $e;
         }
     }
