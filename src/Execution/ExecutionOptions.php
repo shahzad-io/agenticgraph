@@ -10,7 +10,6 @@ final class ExecutionOptions
         public readonly ExecutionMode $mode = ExecutionMode::SYNC,
         public readonly StreamingMode $streaming = StreamingMode::NONE,
         public readonly bool $interrupts = true,
-        public readonly ?int $timeout = null,
         public readonly ?int $estimatedDurationSeconds = null
     ) {}
 
@@ -20,7 +19,6 @@ final class ExecutionOptions
             mode: $this->mode,
             streaming: $streaming,
             interrupts: $this->interrupts,
-            timeout: $this->timeout,
             estimatedDurationSeconds: $this->estimatedDurationSeconds,
         );
     }

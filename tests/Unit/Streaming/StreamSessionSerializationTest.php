@@ -4,7 +4,7 @@ use Shahzad\AgenticGraph\Streaming\StreamOptions;
 use Shahzad\AgenticGraph\Streaming\StreamSession;
 
 test('stream session serializes with seq', function () {
-    $options = new StreamOptions(delivery: 'iterator', mode: 'all_nodes');
+    $options = new StreamOptions(delivery: 'iterator');
     $session = new StreamSession(
         streamId: 'stream-1',
         executionId: 'exec-1',

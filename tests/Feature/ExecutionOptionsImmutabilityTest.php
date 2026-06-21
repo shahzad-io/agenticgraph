@@ -78,7 +78,6 @@ it('withStreaming returns a clone with streaming replaced and other fields prese
         mode: ExecutionMode::SYNC,
         streaming: StreamingMode::AUTO,
         interrupts: false,
-        timeout: 99,
         estimatedDurationSeconds: 42
     );
 
@@ -89,7 +88,6 @@ it('withStreaming returns a clone with streaming replaced and other fields prese
         ->and($original->streaming)->toBe(StreamingMode::AUTO)
         ->and($resolved->mode)->toBe(ExecutionMode::SYNC)
         ->and($resolved->interrupts)->toBeFalse()
-        ->and($resolved->timeout)->toBe(99)
         ->and($resolved->estimatedDurationSeconds)->toBe(42);
 });
 

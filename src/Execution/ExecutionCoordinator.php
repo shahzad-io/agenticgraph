@@ -478,14 +478,6 @@ class ExecutionCoordinator
         return $this->routerResolver->determineNext($graph, $current, $state);
     }
 
-    /**
-     * @param  array<int, string>  $parallelNodes
-     */
-    public function determinePostParallelNext(Graph $graph, array $parallelNodes, StateContract $state): ?string
-    {
-        return $this->routerResolver->determinePostParallelNext($graph, $parallelNodes, $state);
-    }
-
     public function executeFromNode(
         Graph $graph,
         StateContract $state,

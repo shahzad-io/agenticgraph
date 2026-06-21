@@ -122,9 +122,9 @@ it('computes post-parallel next using joins', function () {
         ->setEntryPoint('start')
         ->addExitPoint('c')
         ->build();
-    $executor = new GraphExecutor;
     $state = new State;
-    $next = (new ReflectionClass($executor))->getMethod('determinePostParallelNext')->invoke($executor, $graph, ['a', 'b'], $state);
+    $routingEngine = new RoutingEngine(app());
+    $next = $routingEngine->determinePostParallelNext($graph, ['a', 'b'], $state);
     expect($next)->toBe('c');
 });
 
@@ -195,9 +195,9 @@ it('returns null for post-parallel next without join', function () {
         ->addExitPoint('a')
         ->addExitPoint('b')
         ->build();
-    $executor = new GraphExecutor;
+    $routingEngine = new RoutingEngine(app());
     $state = new State;
-    $next = (new ReflectionClass($executor))->getMethod('determinePostParallelNext')->invoke($executor, $graph, ['a', 'b'], $state);
+    $next = $routingEngine->determinePostParallelNext($graph, ['a', 'b'], $state);
     expect($next)->toBeNull();
 });
 

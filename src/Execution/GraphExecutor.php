@@ -148,14 +148,6 @@ class GraphExecutor implements ExecutionLoopDelegate
         return $this->coordinator->resumeWithInput($checkpointId, $humanInput);
     }
 
-    /**
-     * @param  array<int, string>  $parallelNodes
-     */
-    protected function determinePostParallelNext(Graph $graph, array $parallelNodes, StateContract $state): ?string
-    {
-        return $this->coordinator->determinePostParallelNext($graph, $parallelNodes, $state);
-    }
-
     public function executeFromNode(Graph $graph, StateContract $state, string $startNode, string $executionId, bool $useBatch = false, ?LoopMetadata $loopMetadata = null): StateContract
     {
         return $this->coordinator->executeFromNode($graph, $state, $startNode, $executionId, $useBatch, $loopMetadata);
