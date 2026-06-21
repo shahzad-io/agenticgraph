@@ -7,10 +7,21 @@ namespace Shahzad\AgenticGraph\Execution;
 final class ExecutionOptions
 {
     public function __construct(
-        public ExecutionMode $mode = ExecutionMode::SYNC,
-        public StreamingMode $streaming = StreamingMode::NONE,
-        public bool $interrupts = true,
-        public ?int $timeout = null,
-        public ?int $estimatedDurationSeconds = null
+        public readonly ExecutionMode $mode = ExecutionMode::SYNC,
+        public readonly StreamingMode $streaming = StreamingMode::NONE,
+        public readonly bool $interrupts = true,
+        public readonly ?int $timeout = null,
+        public readonly ?int $estimatedDurationSeconds = null
     ) {}
+
+    public function withStreaming(StreamingMode $streaming): self
+    {
+        return new self(
+            mode: $this->mode,
+            streaming: $streaming,
+            interrupts: $this->interrupts,
+            timeout: $this->timeout,
+            estimatedDurationSeconds: $this->estimatedDurationSeconds,
+        );
+    }
 }

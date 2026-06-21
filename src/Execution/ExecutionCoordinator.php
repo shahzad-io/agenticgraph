@@ -291,7 +291,7 @@ class ExecutionCoordinator
 
     public function executeWithOptions(Graph $graph, StateContract $state, ExecutionOptions $options, ?string $executionId = null): ExecutionHandle
     {
-        $options->streaming = $this->resolveStreamingMode($options);
+        $options = $options->withStreaming($this->resolveStreamingMode($options));
 
         if ($options->mode === ExecutionMode::SYNC) {
             $executionId = $executionId ?? $this->generateExecutionId();
