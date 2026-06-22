@@ -281,11 +281,7 @@ class ExecutionCoordinator
 
             $duration = microtime(true) - $start;
             if (! $interrupted && ! $state->hasInterrupt()) {
-                $this->repo->completed(
-                    $executionId,
-                    array_merge($state->toArray(), State::toStoragePayload($state)),
-                    $duration
-                );
+                $this->repo->completed($executionId, State::toStoragePayload($state), $duration);
                 $completedAt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', microtime(true))) ?: new \DateTimeImmutable;
                 $this->events->dispatch(new GraphExecutionCompleted($executionId, $graph->name, $state, $completedAt, $duration, [], $traceContext->getRootSpanId()));
             }

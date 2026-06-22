@@ -70,10 +70,7 @@ final class ExecutionHandle
             $this->status = $resolved;
         }
         if (in_array($this->status, [ExecutionStatus::COMPLETED, ExecutionStatus::INTERRUPTED], true) && $this->finalState === null) {
-            $record = $this->store->get($this->executionId);
-            if ($record?->finalState !== null) {
-                $this->finalState = State::fromArray($record->finalState);
-            }
+            $this->finalState = $this->loadPersistedFinalState();
         }
 
         return $this;
@@ -119,10 +116,12 @@ final class ExecutionHandle
         if ($this->finalState !== null) {
             return $this->finalState;
         }
-        $record = $this->store->get($this->executionId);
-        if ($record?->finalState !== null) {
-            return State::fromArray($record->finalState);
+
+        $finalState = $this->loadPersistedFinalState();
+        if ($finalState !== null) {
+            return $finalState;
         }
+
         throw new \RuntimeException('Final state is unavailable.');
     }
 
@@ -132,12 +131,7 @@ final class ExecutionHandle
             return $this->finalState;
         }
 
-        $record = $this->store->get($this->executionId);
-        if ($record?->finalState !== null) {
-            return State::fromArray($record->finalState);
-        }
-
-        return $this->checkpoints->getLatestForExecution($this->executionId)?->state;
+        return $this->loadPersistedFinalState();
     }
 
     public function checkpoint(): ?Checkpoint
@@ -223,5 +217,31 @@ final class ExecutionHandle
             finalState: $handle->getFinalState(),
             streamId: $handle->streamId()
         );
+    }
+
+    private function loadPersistedFinalState(): ?StateContract
+    {
+        $record = $this->store->get($this->executionId);
+        if ($record?->finalState !== null) {
+            return State::fromArray($record->finalState);
+        }
+
+        if ($this->status !== ExecutionStatus::INTERRUPTED) {
+            return null;
+        }
+
+        $checkpoint = $this->checkpoints->getLatestForExecution($this->executionId);
+        if ($checkpoint === null) {
+            return null;
+        }
+
+        $state = $checkpoint->state;
+        if ($state->hasInterrupt()) {
+            return $state;
+        }
+
+        $reason = $checkpoint->metadata['interrupt_reason'] ?? 'Interrupted';
+
+        return $state->setInterrupt($reason, $checkpoint->id);
     }
 }

@@ -116,11 +116,11 @@ it('ASYNC+NONE worker completes without interrupting when interrupts is false', 
     );
 
     $record = app(ExecutionStore::class)->get($handle->id());
+    $finalState = AgenticGraph::getExecution($handle->id())->refresh()->getFinalState();
 
     expect($record)->not->toBeNull()
         ->and($record->status)->toBe(ExecutionStatus::COMPLETED)
-        ->and($record->finalState)->toBeArray()
-        ->and($record->finalState['executed'] ?? null)->toBeTrue();
+        ->and($finalState->get('executed'))->toBeTrue();
 
     Event::assertNotDispatched(NodeInterrupted::class);
 });
