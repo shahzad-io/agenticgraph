@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Shahzad\AgenticGraph;
 
 use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Exceptions\InterruptPersistenceDisabledException;
 use Shahzad\AgenticGraph\Execution\CheckpointManager;
 use Shahzad\AgenticGraph\Execution\ExecutionHandle;
 use Shahzad\AgenticGraph\Execution\ExecutionMode;
@@ -103,6 +104,10 @@ class AgenticGraph
 
     public function resume(string $executionId, mixed $humanInput): ResumeResult
     {
+        if (! (bool) config('agenticgraph.interrupts.persistence_enabled', true)) {
+            throw new InterruptPersistenceDisabledException;
+        }
+
         $interrupt = InterruptRecord::query()
             ->forExecution($executionId)
             ->pending()

@@ -166,6 +166,16 @@ final class InterruptManager implements InterruptServiceInterface
                 'status' => 'pending',
                 'metadata' => $metadata,
             ]);
+
+            $this->logger->warning(
+                'Interrupt persistence is disabled; AgenticGraph::resume() will not be available for this execution. '.
+                'Use AgenticGraph::resumeInterrupt() or a SYNC ExecutionHandle::resume() with the checkpoint id instead.',
+                [
+                    'execution_id' => $executionId,
+                    'checkpoint_id' => $checkpointId,
+                    'node' => $nodeName,
+                ]
+            );
         }
 
         $sink = $streamContext?->sink();
