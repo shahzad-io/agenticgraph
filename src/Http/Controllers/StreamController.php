@@ -36,7 +36,7 @@ final class StreamController
             $nextHeartbeat = $heartbeatInterval > 0 ? $start + $heartbeatInterval : null;
             $lastEventSeq = $fromSeq;
             $replayNotified = false;
-            $terminalTypes = ['graph_complete', 'graph_failed'];
+            $terminalType = StreamEventEnvelope::TYPE_EXECUTION_TERMINAL;
 
             while (microtime(true) - $start < $maxDuration) {
                 $hasEvents = false;
@@ -44,7 +44,7 @@ final class StreamController
                     $hasEvents = true;
                     $lastEventSeq = $event->seq() + 1;
                     echo $this->formatEvent($event);
-                    if (in_array($event->type(), $terminalTypes, true)) {
+                    if ($event->type() === $terminalType) {
                         $this->flushOutput();
 
                         return;
