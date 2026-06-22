@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph\Execution;
 
+use Shahzad\AgenticGraph\AgenticGraph;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
@@ -171,6 +172,34 @@ final class ExecutionHandle
 
     public function resume(mixed $input): ExecutionHandle
     {
+        if ($this->isAsync()) {
+            $result = app(AgenticGraph::class)->resume($this->executionId, $input);
+
+            if ($result->alreadyResolved) {
+                return new self(
+                    executionId: $this->executionId,
+                    options: $this->options,
+                    executor: $this->executor,
+                    store: $this->store,
+                    resolver: $this->resolver,
+                    checkpoints: $this->checkpoints,
+                    status: $result->handle->refresh()->status(),
+                    streamId: $result->streamId ?? $this->streamId(),
+                );
+            }
+
+            return new self(
+                executionId: $this->executionId,
+                options: $this->options,
+                executor: $this->executor,
+                store: $this->store,
+                resolver: $this->resolver,
+                checkpoints: $this->checkpoints,
+                status: ExecutionStatus::RUNNING,
+                streamId: $result->streamId ?? $this->streamId(),
+            );
+        }
+
         $checkpointId = null;
         if ($this->finalState !== null && $this->finalState->hasInterrupt()) {
             $checkpointId = $this->finalState->getInterruptCheckpointId();
