@@ -205,7 +205,7 @@ it('marks streaming execution failed when transport delivery fails', function ()
     $broadcaster = Mockery::mock(Broadcaster::class);
     $broadcaster->shouldReceive('broadcast')
         ->andReturnUsing(function ($channels, $event, $payload): void {
-            if (is_array($payload) && ($payload['type'] ?? null) === 'text_delta') {
+            if ($event === 'text_delta') {
                 throw new RuntimeException('broadcast transport failed');
             }
         });

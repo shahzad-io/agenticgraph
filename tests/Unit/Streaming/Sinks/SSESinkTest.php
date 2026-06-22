@@ -2,9 +2,10 @@
 
 use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
 use Shahzad\AgenticGraph\Streaming\Sinks\SSESink;
+use Shahzad\AgenticGraph\Streaming\StreamEventEnvelope;
 use Shahzad\AgenticGraph\Streaming\StreamStatus;
 
-test('sse sink formats events', function () {
+test('sse sink formats events from unified envelope', function () {
     $sink = new SSESink;
     $event = new StreamEventImpl(
         streamId: 'stream-1',
@@ -30,7 +31,7 @@ test('sse sink formats events', function () {
         ->and($content)->toContain('"status":"success"');
 });
 
-test('sse sink payload includes required fields', function () {
+test('sse sink wire body omits duplicate type field', function () {
     $sink = new SSESink;
     $event = new StreamEventImpl(
         streamId: 'stream-1',
@@ -58,14 +59,6 @@ test('sse sink payload includes required fields', function () {
     }
     $payload = json_decode($dataLine, true);
 
-    expect($payload)->toBeArray()
-        ->and($payload['stream_id'])->toBe('stream-1')
-        ->and($payload['execution_id'])->toBe('exec-1')
-        ->and($payload['node_name'])->toBe('node-a')
-        ->and($payload['span_id'])->toBe('span-1')
-        ->and($payload['parent_span_id'])->toBe('span-0')
-        ->and($payload['type'])->toBe('text_delta')
-        ->and($payload['seq'])->toBe(5)
-        ->and($payload['node_seq'])->toBe(2)
-        ->and($payload['payload'])->toBe(['delta' => 'hello']);
+    expect($payload)->toBe(StreamEventEnvelope::fromStreamEvent($event)->toWireArray())
+        ->and($payload)->not->toHaveKey('type');
 });

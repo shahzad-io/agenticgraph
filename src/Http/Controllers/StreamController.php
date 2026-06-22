@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Shahzad\AgenticGraph\Execution\ExecutionStore;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
 use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
+use Shahzad\AgenticGraph\Streaming\StreamEventEnvelope;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 final class StreamController
@@ -101,32 +102,14 @@ final class StreamController
 
     private function formatEvent(StreamEventImpl $event): string
     {
-        $payload = [
-            'stream_id' => $event->streamId(),
-            'execution_id' => $event->executionId(),
-            'node_name' => $event->nodeName(),
-            'span_id' => $event->spanId(),
-            'parent_span_id' => $event->parentSpanId(),
-            'type' => $event->type(),
-            'seq' => $event->seq(),
-            'node_seq' => $event->nodeSeq(),
-            'occurred_at' => $event->occurredAt()->format('c'),
-            'payload' => $event->payload(),
-        ];
+        $envelope = StreamEventEnvelope::fromStreamEvent($event);
 
-        return $this->formatRaw((string) $event->seq(), $event->type(), $payload);
+        return $envelope->formatSse();
     }
 
     private function formatRaw(?string $id, string $event, mixed $data): string
     {
-        $lines = '';
-        if ($id !== null) {
-            $lines .= 'id: '.$id."\n";
-        }
-        $lines .= 'event: '.$event."\n";
-        $lines .= 'data: '.json_encode($data, JSON_UNESCAPED_SLASHES)."\n\n";
-
-        return $lines;
+        return StreamEventEnvelope::formatSseRaw($id, $event, is_array($data) ? $data : ['payload' => $data]);
     }
 
     private function flushOutput(): void

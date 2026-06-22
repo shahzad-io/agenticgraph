@@ -15,6 +15,7 @@ use Shahzad\AgenticGraph\Streaming\StreamClock;
 use Shahzad\AgenticGraph\Streaming\StreamErrorDecision;
 use Shahzad\AgenticGraph\Streaming\StreamErrorHandler;
 use Shahzad\AgenticGraph\Streaming\StreamErrorPayload;
+use Shahzad\AgenticGraph\Streaming\StreamEventEnvelope;
 use Shahzad\AgenticGraph\Streaming\StreamMetrics;
 use Shahzad\AgenticGraph\Streaming\StreamObserver;
 use Shahzad\AgenticGraph\Streaming\StreamObserverFactory;
@@ -155,7 +156,8 @@ test('wrapped sink emits stream_error on redis store failure', function () {
         false,
         new RetentionPolicyFactory,
         new StreamObserverFactory,
-        new StreamErrorHandler
+        new StreamErrorHandler,
+        null
     );
     $wrapped = $factory->wrap($baseSink, $options, $session);
 
@@ -229,7 +231,8 @@ test('wrapped sink treats store failure as fatal when configured', function () {
         false,
         new RetentionPolicyFactory,
         new StreamObserverFactory,
-        new StreamErrorHandler
+        new StreamErrorHandler,
+        null
     );
     $wrapped = $factory->wrap($baseSink, $options, $session);
 
@@ -300,7 +303,8 @@ test('wrapped sink emits stream_error on database store failure', function () {
         false,
         new RetentionPolicyFactory,
         new StreamObserverFactory,
-        new StreamErrorHandler
+        new StreamErrorHandler,
+        null
     );
     $wrapped = $factory->wrap($baseSink, $options, $session);
 
@@ -370,7 +374,8 @@ test('wrapped sink handles client disconnect mid-stream', function () {
         false,
         new RetentionPolicyFactory,
         new StreamObserverFactory,
-        new StreamErrorHandler
+        new StreamErrorHandler,
+        null
     );
     $wrapped = $factory->wrap($baseSink, $options, $session);
 
@@ -458,7 +463,8 @@ test('wrapped sink enforces retention and emits metrics on close', function () {
         true,
         new RetentionPolicyFactory,
         new StreamObserverFactory,
-        new StreamErrorHandler
+        new StreamErrorHandler,
+        null
     );
     $wrapped = $factory->wrap($baseSink, $options, $session);
 
@@ -554,7 +560,8 @@ test('wrapped sink applies retention metrics and error handling in order', funct
         true,
         new RetentionPolicyFactory,
         new StreamObserverFactory,
-        new StreamErrorHandler
+        new StreamErrorHandler,
+        null
     );
     $wrapped = $factory->wrap($baseSink, $options, $session);
 
@@ -622,7 +629,8 @@ test('wrapped sink applies retention metrics and error handling in order', funct
         false,
         new RetentionPolicyFactory,
         new StreamObserverFactory,
-        new StreamErrorHandler
+        new StreamErrorHandler,
+        null
     );
     $baseSink = new class($order) implements StreamSinkInterface
     {
@@ -688,14 +696,14 @@ test('wrapped sink preserves broadcast sink behavior', function () {
         Mockery::on(function ($payload) {
             return $payload['stream_id'] === 'stream-broadcast'
                 && $payload['execution_id'] === 'exec-broadcast'
-                && $payload['type'] === 'text_delta'
-                && $payload['seq'] === 1;
+                && $payload['seq'] === 1
+                && ! array_key_exists('type', $payload);
         })
     );
     $broadcaster->shouldReceive('broadcast')->once()->with(
         ['agenticgraph.stream.stream-broadcast'],
         'stream_close',
-        ['status' => 'success', 'meta' => null]
+        StreamEventEnvelope::streamCloseWirePayload(StreamStatus::SUCCESS, null)
     );
     $options = new StreamOptions(delivery: 'broadcast', storeEnabled: false);
     $session = new StreamSession(
@@ -713,7 +721,8 @@ test('wrapped sink preserves broadcast sink behavior', function () {
         false,
         new RetentionPolicyFactory,
         new StreamObserverFactory,
-        new StreamErrorHandler
+        new StreamErrorHandler,
+        null
     );
     $baseSink = $factory->create($session, $options);
     $wrapped = $factory->wrap($baseSink, $options, $session);
@@ -752,7 +761,8 @@ test('wrapped sink preserves sse sink behavior', function () {
         false,
         new RetentionPolicyFactory,
         new StreamObserverFactory,
-        new StreamErrorHandler
+        new StreamErrorHandler,
+        null
     );
     $baseSink = $factory->create($session, $options);
     $wrapped = $factory->wrap($baseSink, $options, $session);
@@ -802,7 +812,8 @@ test('wrapped sink preserves memory sink behavior', function () {
         false,
         new RetentionPolicyFactory,
         new StreamObserverFactory,
-        new StreamErrorHandler
+        new StreamErrorHandler,
+        null
     );
     $baseSink = $factory->create($session, $options);
     $wrapped = $factory->wrap($baseSink, $options, $session);
@@ -838,7 +849,8 @@ test('wrapped stream sink emits when no filters set', function () {
         null,
         null,
         $observer,
-        new StreamErrorHandler
+        new StreamErrorHandler,
+        null
     );
 
     $wrapped->emit(new StreamEventImpl(
@@ -868,7 +880,8 @@ test('wrapped stream sink blocks by node filter', function () {
         null,
         null,
         $observer,
-        new StreamErrorHandler
+        new StreamErrorHandler,
+        null
     );
 
     $wrapped->emit(new StreamEventImpl(
@@ -898,7 +911,8 @@ test('wrapped stream sink blocks by event type filter', function () {
         ['other_event'],
         null,
         $observer,
-        new StreamErrorHandler
+        new StreamErrorHandler,
+        null
     );
 
     $wrapped->emit(new StreamEventImpl(
@@ -964,7 +978,8 @@ test('wrapped stream sink handles nonfatal store failure without rethrowing', fu
         null,
         null,
         $observer,
-        $errorHandler
+        $errorHandler,
+        null
     );
 
     $wrapped->emit(new StreamEventImpl(
@@ -1032,7 +1047,8 @@ test('wrapped stream sink handles fatal store failure by rethrowing', function (
         null,
         null,
         $observer,
-        $errorHandler
+        $errorHandler,
+        null
     );
 
     try {
@@ -1098,7 +1114,8 @@ test('wrapped stream sink handles sink failure correctly', function () {
         null,
         null,
         $observer,
-        $errorHandler
+        $errorHandler,
+        null
     );
 
     $wrapped->emit(new StreamEventImpl(
@@ -1129,7 +1146,8 @@ test('wrapped stream sink flushes observer on close', function () {
         null,
         null,
         $observer,
-        new StreamErrorHandler
+        new StreamErrorHandler,
+        null
     );
 
     $wrapped->close(StreamStatus::SUCCESS);

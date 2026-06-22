@@ -16,9 +16,10 @@ use Shahzad\AgenticGraph\Events\NodeInterrupted;
 use Shahzad\AgenticGraph\Events\NodeResumed;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Nodes\PrismNode;
+use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
-use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
 use Shahzad\AgenticGraph\Streaming\StreamContext;
+use Shahzad\AgenticGraph\Streaming\StreamLifecycleEventEmitter;
 use Shahzad\AgenticGraph\Streaming\StreamSession;
 use Shahzad\AgenticGraph\Streaming\StreamStatus;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
@@ -198,6 +199,7 @@ final class InterruptManager implements InterruptServiceInterface
                 $sink->close(StreamStatus::CANCELLED, [
                     'reason' => $reason,
                     'checkpoint_id' => $checkpointId,
+                    'final_state' => State::toStoragePayload($state),
                 ]);
             }
         }
@@ -345,26 +347,14 @@ final class InterruptManager implements InterruptServiceInterface
         string $type,
         mixed $payload
     ): void {
-        $seq = ++$session->seq;
-        $payloadWithStream = is_array($payload) ? $payload : ['payload' => $payload];
-        $payloadWithStream['stream'] = [
-            'seq' => $seq,
-            'node_seq' => null,
-            'event_type' => $type,
-            'bytes' => strlen(json_encode($payload, JSON_UNESCAPED_SLASHES)),
-        ];
-
-        $sink->emit(new StreamEventImpl(
-            $session->streamId,
-            $session->executionId,
+        StreamLifecycleEventEmitter::emit(
+            $sink,
+            $session,
             $nodeName,
             $spanId,
             $parentSpanId,
             $type,
-            $payloadWithStream,
-            $seq,
-            null,
-            new \DateTimeImmutable
-        ));
+            $payload
+        );
     }
 }

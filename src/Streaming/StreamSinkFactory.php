@@ -54,7 +54,8 @@ final class StreamSinkFactory
             $eventTypeFilter,
             $retention,
             $observer,
-            $this->errorHandler
+            $this->errorHandler,
+            $session
         );
     }
 }

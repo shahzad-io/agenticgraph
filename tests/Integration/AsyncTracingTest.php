@@ -217,7 +217,8 @@ it('ExecuteGraphJob emits to broadcast sink', function () {
             }
 
             return is_array($payload)
-                && isset($payload['stream_id'], $payload['execution_id'], $payload['type'], $payload['seq']);
+                && isset($payload['stream_id'], $payload['execution_id'], $payload['seq'])
+                && ! array_key_exists('type', $payload);
         })
     );
     app()->instance(Broadcaster::class, $broadcaster);

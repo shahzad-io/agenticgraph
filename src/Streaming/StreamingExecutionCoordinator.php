@@ -35,7 +35,6 @@ use Shahzad\AgenticGraph\Middleware\ValidationMiddleware;
 use Shahzad\AgenticGraph\Nodes\Contracts\StreamableNodeInterface;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
-use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 
@@ -468,6 +467,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                         $sink->close(StreamStatus::ERROR, [
                             'error_type' => $e::class,
                             'message' => $e->getMessage(),
+                            'final_state' => State::toStoragePayload($state),
                         ]);
 
                         $traceContext->endSpan();
@@ -551,7 +551,9 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                     ['duration_ms' => $duration * 1000]
                 );
 
-                $sink->close(StreamStatus::SUCCESS);
+                $sink->close(StreamStatus::SUCCESS, [
+                    'final_state' => State::toStoragePayload($state),
+                ]);
             }
 
             return new StreamHandle($session, $baseSink, $state);
@@ -575,6 +577,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
             $sink->close(StreamStatus::ERROR, [
                 'error_type' => $e::class,
                 'message' => $e->getMessage(),
+                'final_state' => State::toStoragePayload($state),
             ]);
 
             $this->repo->failed($executionId, $e->getMessage());
@@ -662,27 +665,16 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
         mixed $payload,
         ?int $nodeSeq = null
     ): void {
-        $seq = ++$session->seq;
-        $payloadWithStream = is_array($payload) ? $payload : ['payload' => $payload];
-        $payloadWithStream['stream'] = [
-            'seq' => $seq,
-            'node_seq' => $nodeSeq,
-            'event_type' => $type,
-            'bytes' => strlen(json_encode($payload, JSON_UNESCAPED_SLASHES)),
-        ];
-
-        $sink->emit(new StreamEventImpl(
-            $session->streamId,
-            $session->executionId,
+        StreamLifecycleEventEmitter::emit(
+            $sink,
+            $session,
             $nodeName,
             $spanId,
             $parentSpanId,
             $type,
-            $payloadWithStream,
-            $seq,
-            $nodeSeq,
-            new \DateTimeImmutable
-        ));
+            $payload,
+            $nodeSeq
+        );
     }
 
     private function nextNodeSeq(\stdClass $nodeSeqs, string $nodeName): int
@@ -740,6 +732,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
             $sink->close(StreamStatus::ERROR, [
                 'error_type' => $e::class,
                 'message' => $e->getMessage(),
+                'final_state' => State::toStoragePayload($state),
             ]);
         }
 

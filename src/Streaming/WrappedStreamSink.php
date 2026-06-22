@@ -13,6 +13,8 @@ use Shahzad\AgenticGraph\Streaming\Store\RetentionPolicy;
 
 final class WrappedStreamSink implements StreamSinkInterface
 {
+    private bool $terminalAppended = false;
+
     public function __construct(
         private readonly StreamSinkInterface $sink,
         private readonly ?StreamStoreInterface $store,
@@ -20,7 +22,8 @@ final class WrappedStreamSink implements StreamSinkInterface
         private readonly mixed $eventTypeFilter,
         private readonly ?RetentionPolicy $retention,
         private readonly StreamObserver $observer,
-        private readonly StreamErrorHandler $errorHandler
+        private readonly StreamErrorHandler $errorHandler,
+        private readonly ?StreamSession $session = null,
     ) {}
 
     public function emit(StreamEvent $event): void
@@ -52,8 +55,45 @@ final class WrappedStreamSink implements StreamSinkInterface
 
     public function close(StreamStatus $status, mixed $meta = null): void
     {
+        $this->appendStoreTerminalIfNeeded($status, $meta);
         $this->sink->close($status, $meta);
         $this->observer->flush();
+    }
+
+    private function appendStoreTerminalIfNeeded(StreamStatus $status, mixed $meta): void
+    {
+        if ($this->store === null || $this->session === null || $this->terminalAppended) {
+            return;
+        }
+
+        if (! is_array($meta) || ! array_key_exists('final_state', $meta)) {
+            return;
+        }
+
+        $finalState = $meta['final_state'];
+        $terminalMeta = $meta;
+        unset($terminalMeta['final_state']);
+        if ($terminalMeta === []) {
+            $terminalMeta = null;
+        }
+
+        $envelope = StreamEventEnvelope::executionTerminal(
+            $this->session,
+            StreamTerminalStatus::fromStreamStatus($status),
+            $finalState,
+            $terminalMeta
+        );
+
+        try {
+            $event = $envelope->toStreamEvent();
+            $this->store->append($event);
+            if ($this->retention) {
+                $this->retention->enforce($this->store, $event);
+            }
+            $this->terminalAppended = true;
+        } catch (\Throwable $e) {
+            $this->handleError($e, $envelope->toStreamEvent(), 'store');
+        }
     }
 
     private function shouldEmit(StreamEvent $event): bool
@@ -90,18 +130,19 @@ final class WrappedStreamSink implements StreamSinkInterface
         $decision = $this->errorHandler->decide($error, $event, $stage);
         $this->observer->recordError();
         try {
-            $this->sink->emit(new StreamEventImpl(
-                $event->streamId(),
-                $event->executionId(),
-                $event->nodeName(),
-                $event->spanId(),
-                $event->parentSpanId(),
-                'stream_error',
-                $decision->payload,
-                $event->seq(),
-                $event->nodeSeq(),
-                new \DateTimeImmutable('now')
-            ));
+            $envelope = new StreamEventEnvelope(
+                type: StreamEventEnvelope::TYPE_STREAM_ERROR,
+                streamId: $event->streamId(),
+                executionId: $event->executionId(),
+                nodeName: $event->nodeName(),
+                spanId: $event->spanId(),
+                parentSpanId: $event->parentSpanId(),
+                seq: $event->seq(),
+                nodeSeq: $event->nodeSeq(),
+                occurredAt: new \DateTimeImmutable('now'),
+                payload: $decision->payload,
+            );
+            $this->sink->emit($envelope->toStreamEvent());
         } catch (\Throwable) {
         }
         if ($decision->fatal) {

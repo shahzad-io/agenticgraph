@@ -7,6 +7,7 @@ namespace Shahzad\AgenticGraph\Streaming\Sinks;
 use Illuminate\Contracts\Broadcasting\Broadcaster;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamEvent;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
+use Shahzad\AgenticGraph\Streaming\StreamEventEnvelope;
 use Shahzad\AgenticGraph\Streaming\StreamStatus;
 
 final class BroadcastSink implements StreamSinkInterface
@@ -19,31 +20,20 @@ final class BroadcastSink implements StreamSinkInterface
 
     public function emit(StreamEvent $event): void
     {
-        $payload = [
-            'stream_id' => $event->streamId(),
-            'execution_id' => $event->executionId(),
-            'node_name' => $event->nodeName(),
-            'span_id' => $event->spanId(),
-            'parent_span_id' => $event->parentSpanId(),
-            'type' => $event->type(),
-            'seq' => $event->seq(),
-            'node_seq' => $event->nodeSeq(),
-            'occurred_at' => $event->occurredAt()->format('c'),
-            'payload' => $event->payload(),
-        ];
+        $envelope = StreamEventEnvelope::fromStreamEvent($event);
         $this->broadcaster->broadcast(
             [$this->channelPrefix.$this->streamId],
-            $event->type(),
-            $payload
+            $envelope->type,
+            $envelope->toWireArray()
         );
     }
 
     public function close(StreamStatus $status, mixed $meta = null): void
     {
-        $payload = ['status' => $status->value, 'meta' => $meta];
+        $payload = StreamEventEnvelope::streamCloseWirePayload($status, $meta);
         $this->broadcaster->broadcast(
             [$this->channelPrefix.$this->streamId],
-            'stream_close',
+            StreamEventEnvelope::TYPE_STREAM_CLOSE,
             $payload
         );
     }
