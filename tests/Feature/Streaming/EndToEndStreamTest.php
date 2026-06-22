@@ -494,7 +494,7 @@ it('streams workflow lifecycle events and uses streaming execution', function ()
 
     $handle = AgenticGraph::execute('streaming-workflow', new State, streamingOptions(StreamingMode::ITERATOR));
 
-    $events = iterator_to_array($handle->stream());
+    $events = iterator_to_array($handle->stream()->inline ?? new ArrayIterator([]));
     $types = array_map(fn ($event) => $event->type(), $events);
 
     expect($types)->toBe(['graph_start', 'node_start', 'text_delta', 'node_complete', 'graph_complete'])
@@ -518,7 +518,7 @@ it('handles rapid fire stream events', function () {
 
     $handle = AgenticGraph::execute('rapid-fire', new State, streamingOptions(StreamingMode::ITERATOR));
 
-    $events = iterator_to_array($handle->stream());
+    $events = iterator_to_array($handle->stream()->inline ?? new ArrayIterator([]));
     $rapid = array_values(array_filter($events, fn ($event) => $event->type() === 'text_delta'));
 
     expect($rapid)->toHaveCount(1000)
@@ -536,7 +536,7 @@ it('handles empty streams without data events', function () {
 
     $handle = AgenticGraph::execute('silent-stream', new State, streamingOptions(StreamingMode::ITERATOR));
 
-    $events = iterator_to_array($handle->stream());
+    $events = iterator_to_array($handle->stream()->inline ?? new ArrayIterator([]));
     $types = array_map(fn ($event) => $event->type(), $events);
 
     expect($types)->toBe(['graph_start', 'node_start', 'node_complete', 'graph_complete'])
@@ -580,7 +580,7 @@ it('streams parallel nodes with interleaved events', function () {
 
     $handle = AgenticGraph::execute('parallel-stream', new State, streamingOptions(StreamingMode::ITERATOR));
 
-    iterator_to_array($handle->stream());
+    iterator_to_array($handle->stream()->inline ?? new ArrayIterator([]));
     $finalState = $handle->getFinalState();
 
     expect($finalState->get('a'))->toBeTrue()
@@ -602,7 +602,7 @@ it('handles multiple interrupts in sequence', function () {
     $resumeHandle = $handle->resume(['approved' => true]);
     $resumeCheckpointId = $resumeHandle->getFinalState()->getInterruptCheckpointId();
 
-    $resumeEvents = iterator_to_array($resumeHandle->stream());
+    $resumeEvents = iterator_to_array($resumeHandle->stream()->inline ?? new ArrayIterator([]));
     $resumeTypes = array_map(fn ($event) => $event->type(), $resumeEvents);
 
     expect($resumeTypes)->toContain('node_interrupt');
@@ -632,7 +632,7 @@ it('resumes without stream store enabled', function () {
     $checkpointId = $handle->getFinalState()->getInterruptCheckpointId();
 
     $resumeHandle = $handle->resume(['approved' => true]);
-    $events = iterator_to_array($resumeHandle->stream());
+    $events = iterator_to_array($resumeHandle->stream()->inline ?? new ArrayIterator([]));
     $resumeEvent = null;
     foreach ($events as $event) {
         if ($event->type() === 'stream_resume') {
@@ -790,7 +790,7 @@ it('links parent span ids for node lifecycle events', function () {
 
     $handle = AgenticGraph::execute('span-link-workflow', new State, streamingOptions(StreamingMode::ITERATOR));
 
-    $events = iterator_to_array($handle->stream());
+    $events = iterator_to_array($handle->stream()->inline ?? new ArrayIterator([]));
     $byType = [];
     foreach ($events as $event) {
         $byType[$event->type()][] = $event;
@@ -879,7 +879,7 @@ it('streams multi-node workflow in order and preserves final state', function ()
 
     $handle = AgenticGraph::execute('multi-streaming', new State, streamingOptions(StreamingMode::ITERATOR));
 
-    $types = array_map(fn ($event) => $event->type(), iterator_to_array($handle->stream()));
+    $types = array_map(fn ($event) => $event->type(), iterator_to_array($handle->stream()->inline ?? new ArrayIterator([])));
 
     expect($types)->toBe([
         'graph_start',
@@ -921,7 +921,7 @@ it('emits stream resume event with preserved stream id', function () {
         'comments' => 'ok',
     ]);
 
-    $resumeEvents = iterator_to_array($resumeHandle->stream());
+    $resumeEvents = iterator_to_array($resumeHandle->stream()->inline ?? new ArrayIterator([]));
     $resumeTypes = array_map(fn ($event) => $event->type(), $resumeEvents);
     $resumeEvent = null;
 
@@ -955,7 +955,7 @@ it('interrupt emits node_interrupt and closes stream', function () {
 
     $handle = AgenticGraph::execute('interrupt-stream', new State(['prompt' => 'approve']), streamingOptions(StreamingMode::ITERATOR));
 
-    $events = iterator_to_array($handle->stream());
+    $events = iterator_to_array($handle->stream()->inline ?? new ArrayIterator([]));
     $types = array_map(fn ($event) => $event->type(), $events);
 
     expect($types)->toContain('node_interrupt');
@@ -977,7 +977,7 @@ it('includes gap events when resuming with resumeFromSeq', function () {
 
     $checkpointId = $handle->getFinalState()->getInterruptCheckpointId();
     $resumeHandle = $handle->resume(['approved' => true]);
-    $resumeEvents = iterator_to_array($resumeHandle->stream());
+    $resumeEvents = iterator_to_array($resumeHandle->stream()->inline ?? new ArrayIterator([]));
 
     $resumeEvent = null;
     foreach ($resumeEvents as $event) {
@@ -1017,7 +1017,7 @@ it('applies node and event filters for streaming', function () {
     AgenticGraph::register('filtered-streaming', $graph);
 
     $handle = AgenticGraph::execute('filtered-streaming', new State, streamingOptions(StreamingMode::ITERATOR));
-    $events = iterator_to_array($handle->stream());
+    $events = iterator_to_array($handle->stream()->inline ?? new ArrayIterator([]));
     $types = array_map(fn ($event) => $event->type(), $events);
     expect($types)->toContain('graph_complete')
         ->and($handle->getFinalState()->get('beta'))->toBeTrue();
@@ -1034,7 +1034,7 @@ it('does not return inline sse stream from sync stream handle', function () {
 
     $handle = AgenticGraph::execute('sse-streaming', new State, streamingOptions(StreamingMode::SSE));
 
-    expect($handle->stream())->toBeNull();
+    expect($handle->stream()->hasStream())->toBeFalse();
 });
 
 it('iterates over stream handle directly', function () {
@@ -1049,7 +1049,7 @@ it('iterates over stream handle directly', function () {
     $handle = AgenticGraph::execute('iterable-stream', new State, streamingOptions(StreamingMode::ITERATOR));
 
     $types = [];
-    foreach ($handle->stream() as $event) {
+    foreach ($handle->stream()->inline ?? [] as $event) {
         $types[] = $event->type();
     }
 

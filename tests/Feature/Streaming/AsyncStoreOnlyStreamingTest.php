@@ -244,7 +244,7 @@ it('SYNC+ITERATOR retains in-process iterator streaming', function () {
         new ExecutionOptions(mode: ExecutionMode::SYNC, streaming: StreamingMode::ITERATOR)
     );
 
-    $events = iterator_to_array($handle->stream());
+    $events = iterator_to_array($handle->stream()->inline ?? new ArrayIterator([]));
     $types = array_map(fn ($event) => $event->type(), $events);
 
     expect($types)->toContain('text_delta')
@@ -260,5 +260,5 @@ it('SYNC+SSE handle stream returns null after inline path removal', function () 
         new ExecutionOptions(mode: ExecutionMode::SYNC, streaming: StreamingMode::SSE)
     );
 
-    expect($handle->stream())->toBeNull();
+    expect($handle->stream()->hasStream())->toBeFalse();
 });

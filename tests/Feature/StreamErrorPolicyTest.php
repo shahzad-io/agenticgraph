@@ -181,7 +181,7 @@ it('completes streaming execution when store persistence fails', function () {
     expect($handle->status())->toBe(ExecutionStatus::COMPLETED);
 
     $eventTypes = [];
-    foreach ($handle->stream() as $event) {
+    foreach ($handle->stream()->inline ?? [] as $event) {
         $eventTypes[] = $event->type();
     }
 

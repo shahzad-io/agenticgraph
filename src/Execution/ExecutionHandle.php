@@ -7,7 +7,9 @@ namespace Shahzad\AgenticGraph\Execution;
 use Shahzad\AgenticGraph\AgenticGraph;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\State\State;
+use Illuminate\Support\Facades\Route;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
+use Shahzad\AgenticGraph\Streaming\StreamDescriptor;
 use Shahzad\AgenticGraph\Streaming\StreamHandle;
 use Shahzad\AgenticGraph\Streaming\StreamOptions;
 use Shahzad\AgenticGraph\Streaming\StreamResumption;
@@ -95,17 +97,69 @@ final class ExecutionHandle
         }
     }
 
-    public function stream(): ?\Iterator
+    public function stream(): StreamDescriptor
     {
-        if ($this->streamHandle === null) {
+        $mode = $this->options->streaming;
+
+        if ($mode === StreamingMode::NONE) {
+            return StreamDescriptor::none();
+        }
+
+        if ($this->options->mode === ExecutionMode::SYNC && $mode === StreamingMode::ITERATOR) {
+            return new StreamDescriptor(
+                streamId: $this->streamId(),
+                streamUrl: null,
+                inline: $this->streamHandle?->getIterator(),
+                mode: $mode,
+            );
+        }
+
+        if ($this->options->mode === ExecutionMode::ASYNC) {
+            $streamId = $this->resolveStreamId();
+
+            return new StreamDescriptor(
+                streamId: $streamId,
+                streamUrl: $this->resolveStreamUrl($streamId),
+                inline: null,
+                mode: $mode,
+            );
+        }
+
+        return new StreamDescriptor(
+            streamId: null,
+            streamUrl: null,
+            inline: null,
+            mode: $mode,
+        );
+    }
+
+    private function resolveStreamId(): ?string
+    {
+        $streamId = $this->streamId();
+        if ($streamId !== null && $streamId !== '') {
+            return $streamId;
+        }
+
+        $record = $this->store->get($this->executionId);
+
+        return $record?->streamId;
+    }
+
+    private function resolveStreamUrl(?string $streamId): ?string
+    {
+        if ($streamId === null || $streamId === '') {
             return null;
         }
 
-        if ($this->options->streaming === StreamingMode::ITERATOR) {
-            return $this->streamHandle->getIterator();
+        if (! config('agenticgraph.streaming.routes.enabled', true)) {
+            return null;
         }
 
-        return null;
+        if (! Route::has(StreamDescriptor::ROUTE_NAME)) {
+            return null;
+        }
+
+        return route(StreamDescriptor::ROUTE_NAME, ['streamId' => $streamId]);
     }
 
     public function getFinalState(): StateContract

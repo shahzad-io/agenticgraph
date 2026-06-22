@@ -295,7 +295,8 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
             Route::middleware(config('agenticgraph.streaming.routes.middleware', ['api']))
                 ->prefix(config('agenticgraph.streaming.routes.prefix', 'agentic-graph/streams'))
                 ->group(function (): void {
-                    Route::get('/{streamId}', [StreamController::class, 'stream']);
+                    Route::get('/{streamId}', [StreamController::class, 'stream'])
+                        ->name(\Shahzad\AgenticGraph\Streaming\StreamDescriptor::ROUTE_NAME);
                 });
         }
     }
