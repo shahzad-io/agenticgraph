@@ -33,3 +33,12 @@ it('defaults interrupts to true when missing from stored array', function () {
     expect($restored->interrupts)->toBeTrue()
         ->and($restored->estimatedDurationSeconds)->toBeNull();
 });
+
+it('returns constructor defaults for null or empty stored json', function () {
+    $defaults = new ExecutionOptions;
+
+    expect(ExecutionOptions::fromStored(null))->toEqual($defaults)
+        ->and(ExecutionOptions::fromStored(''))->toEqual($defaults)
+        ->and(ExecutionOptions::fromStored('not-json'))->toEqual($defaults)
+        ->and(ExecutionOptions::fromStored('{}'))->toEqual($defaults);
+});

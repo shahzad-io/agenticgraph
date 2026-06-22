@@ -15,6 +15,7 @@ final class ExecutionRecord
         public ?string $streamId = null,
         public ?ExecutionMode $mode = null,
         public ?StreamingMode $streamingMode = null,
+        public ?ExecutionOptions $executionOptions = null,
         public ?\DateTimeImmutable $interruptedAt = null,
         public ?\DateTimeImmutable $completedAt = null,
         public ?string $error = null

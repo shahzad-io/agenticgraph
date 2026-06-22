@@ -284,6 +284,7 @@ class ExecutionRepository implements ExecutionStore
             initialState: json_decode($row->initial_state ?? '[]', true),
             finalState: $row->final_state ? json_decode($row->final_state, true) : null,
             streamId: $row->stream_id ?? null,
+            executionOptions: ExecutionOptions::fromStored($row->execution_options ?? null),
             interruptedAt: $row->interrupted_at ? new \DateTimeImmutable($row->interrupted_at) : null,
             completedAt: $row->completed_at ? new \DateTimeImmutable($row->completed_at) : null,
             error: $row->error ?? null

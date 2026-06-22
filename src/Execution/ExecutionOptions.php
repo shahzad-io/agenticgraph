@@ -55,4 +55,23 @@ final class ExecutionOptions
             estimatedDurationSeconds: $estimated === null ? null : (int) $estimated,
         );
     }
+
+    public static function fromStored(?string $json): self
+    {
+        if ($json === null || trim($json) === '') {
+            return new self;
+        }
+
+        try {
+            $data = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            return new self;
+        }
+
+        if (! is_array($data) || ! isset($data['mode'], $data['streaming'])) {
+            return new self;
+        }
+
+        return self::fromArray($data);
+    }
 }
