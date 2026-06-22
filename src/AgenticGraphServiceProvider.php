@@ -182,6 +182,8 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
             );
         });
 
+        $this->app->bind(ParallelExecutionCoordinator::class, fn ($app) => $app->make(ParallelExecutorInterface::class));
+
         $this->app->bind(InterruptServiceInterface::class, function ($app) {
             $resumer = new class($app) implements ExecutionResumer
             {

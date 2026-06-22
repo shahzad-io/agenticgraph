@@ -17,6 +17,7 @@ use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
 use Shahzad\AgenticGraph\Events\NodeExecutionFailed;
 use Shahzad\AgenticGraph\Events\NodeExecutionStarted;
 use Shahzad\AgenticGraph\Graph\Graph;
+use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Jobs\ContinueExecutionJob;
 use Shahzad\AgenticGraph\Jobs\ExecuteNodeJob;
 use Shahzad\AgenticGraph\State\State;
@@ -144,35 +145,85 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
         ]);
 
         $sourceNode = $this->resolveSourceNode($graph, $parallelNodes);
+        $loopMetadataArray = $this->captureLoopMetadataArray();
+        $callbacks = $this->buildBatchCallbacks(
+            $graph->name,
+            $executionId,
+            $sourceNode,
+            $parallelNodes,
+            $loopMetadataArray
+        );
+
         $this->bus->batch($jobs)
             ->name("agenticgraph-parallel-{$executionId}")
             ->onConnection(config('agenticgraph.execution.queue_connection'))
             ->onQueue(config('agenticgraph.execution.queue_name'))
             ->allowFailures(false)
-            ->then(function (Batch $batch) use ($graph, $executionId, $sourceNode, $parallelNodes): void {
-                $this->handleBatchCompletion($batch, $graph, $executionId, $sourceNode, $parallelNodes);
-            })
-            ->catch(function (Batch $batch, \Throwable $e) use ($executionId): void {
-                $this->handleBatchFailure($batch, $executionId, $e);
-            })
-            ->finally(function (Batch $batch) use ($executionId, $parallelNodes): void {
-                $this->cleanupBatchResults($executionId, $parallelNodes);
-            })
+            ->then($callbacks['then'])
+            ->catch($callbacks['catch'])
+            ->finally($callbacks['finally'])
             ->dispatch();
 
         return new ParallelResult($state, $sourceNode, true);
     }
 
     /**
-     * @param  array<int, string>  $targets
+     * @param  array<int, string>  $parallelNodes
+     * @return array{then: \Closure, catch: \Closure, finally: \Closure}
      */
-    private function handleBatchCompletion(
-        Batch $batch,
-        Graph $graph,
+    public function buildBatchCallbacks(
+        string $graphName,
         string $executionId,
         string $sourceNode,
-        array $targets
+        array $parallelNodes,
+        ?array $loopMetadataArray = null,
+    ): array {
+        return [
+            'then' => static function (Batch $batch) use ($graphName, $executionId, $sourceNode, $parallelNodes, $loopMetadataArray): void {
+                app(ParallelExecutionCoordinator::class)->handleBatchCompletion(
+                    $batch,
+                    $graphName,
+                    $executionId,
+                    $sourceNode,
+                    $parallelNodes,
+                    $loopMetadataArray
+                );
+            },
+            'catch' => static function (Batch $batch, \Throwable $e) use ($executionId): void {
+                app(ParallelExecutionCoordinator::class)->handleBatchFailure($batch, $executionId, $e);
+            },
+            'finally' => static function (Batch $batch) use ($executionId, $parallelNodes): void {
+                app(ParallelExecutionCoordinator::class)->cleanupBatchResults($executionId, $parallelNodes);
+            },
+        ];
+    }
+
+    private function captureLoopMetadataArray(): ?array
+    {
+        $executionContext = ($this->executionContextProvider)();
+        if ($executionContext instanceof ExecutionContext) {
+            return LoopMetadata::fromExecutionContext($executionContext)->toArray();
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  array<int, string>  $targets
+     */
+    public function handleBatchCompletion(
+        Batch $batch,
+        string $graphName,
+        string $executionId,
+        string $sourceNode,
+        array $targets,
+        ?array $loopMetadataArray = null,
     ): void {
+        $graph = app(GraphRegistry::class)->get($graphName);
+        if ($graph === null) {
+            throw new \RuntimeException("Graph not found: {$graphName}");
+        }
+
         $results = [];
         $missing = [];
 
@@ -227,15 +278,8 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
         $this->checkpoint($graph, $executionId, $sourceNode, $merged, null);
         $next = $this->routingEngine->determinePostParallelNext($graph, $targets, $merged);
 
-        $loopMetadataArray = null;
-        $executionContext = ($this->executionContextProvider)();
-        if ($executionContext instanceof ExecutionContext) {
-            $loopMetadata = LoopMetadata::fromExecutionContext($executionContext);
-            $loopMetadataArray = $loopMetadata->toArray();
-        }
-
         $job = new ContinueExecutionJob(
-            $graph->name,
+            $graphName,
             $executionId,
             $merged->toArray(),
             $next ?? ($graph->exitPoints[0] ?? $sourceNode),
@@ -247,7 +291,7 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
             ->onQueue(config('agenticgraph.execution.queue_name'));
     }
 
-    private function handleBatchFailure(Batch $batch, string $executionId, \Throwable $e): void
+    public function handleBatchFailure(Batch $batch, string $executionId, \Throwable $e): void
     {
         $this->repo->failed(
             $executionId,
@@ -267,7 +311,7 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
     /**
      * @param  array<int, string>  $targets
      */
-    private function cleanupBatchResults(string $executionId, array $targets): void
+    public function cleanupBatchResults(string $executionId, array $targets): void
     {
         foreach ($targets as $nodeName) {
             $key = $this->batchResultCacheKey($executionId, $nodeName);

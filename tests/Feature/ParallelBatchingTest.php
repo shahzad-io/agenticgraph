@@ -121,6 +121,8 @@ it('dispatches continuation job after batch completion', function () {
         ->addExitPoint('end')
         ->build();
 
+    app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->register('parallel-batch-complete', $graph);
+
     $executionId = 'exec-batch-complete';
     Cache::put('agenticgraph:batch:'.$executionId.':branch1', (new State(['branch' => 1]))->toArray());
     Cache::put('agenticgraph:batch:'.$executionId.':branch2', (new State(['branch' => 2]))->toArray());
@@ -144,7 +146,7 @@ it('dispatches continuation job after batch completion', function () {
     $method->setAccessible(true);
     $batch = Mockery::mock(Batch::class);
     $batch->id = 'batch-1';
-    $method->invoke($coordinator, $batch, $graph, $executionId, 'start', ['branch1', 'branch2']);
+    $method->invoke($coordinator, $batch, 'parallel-batch-complete', $executionId, 'start', ['branch1', 'branch2'], null);
 
     Bus::assertDispatched(ContinueExecutionJob::class, function ($job) use ($executionId) {
         return $job->executionId === $executionId

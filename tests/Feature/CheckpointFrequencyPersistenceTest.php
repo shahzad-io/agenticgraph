@@ -153,10 +153,9 @@ function runCadenceGraphAcrossBatchBoundary(string $graphName, string $execution
     );
     $job->handle(app(GraphExecutor::class), app(GraphRegistry::class));
 
-    $graph = app(GraphRegistry::class)->get($graphName);
     $registry = app(GraphRegistry::class);
 
-    Bus::assertBatched(function ($batch) use ($graph, $executionId, $registry): bool {
+    Bus::assertBatched(function ($batch) use ($graphName, $executionId, $registry): bool {
         foreach ($batch->jobs as $nodeJob) {
             expect($nodeJob)->toBeInstanceOf(ExecuteNodeJob::class);
             $nodeJob->handle($registry);
@@ -167,7 +166,7 @@ function runCadenceGraphAcrossBatchBoundary(string $graphName, string $execution
         $method->setAccessible(true);
         $mockBatch = Mockery::mock(Batch::class);
         $mockBatch->id = 'cadence-batch-'.Str::uuid();
-        $method->invoke($coordinator, $mockBatch, $graph, $executionId, 'split', ['p1', 'p2']);
+        $method->invoke($coordinator, $mockBatch, $graphName, $executionId, 'split', ['p1', 'p2'], null);
 
         return $batch->jobs->count() === 2;
     });
