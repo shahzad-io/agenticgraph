@@ -129,9 +129,13 @@ class GraphExecutor implements ExecutionLoopDelegate
         return $this->coordinator->determineNext($graph, $current, $state);
     }
 
-    public function executeAsync(Graph $graph, StateContract $state): string
+    public function executeAsync(
+        Graph $graph,
+        StateContract $state,
+        ExecutionOptions $options = new ExecutionOptions(ExecutionMode::ASYNC, StreamingMode::NONE)
+    ): string
     {
-        return $this->coordinator->executeAsync($graph, $state);
+        return $this->coordinator->executeAsync($graph, $state, $options);
     }
 
     public function resume(string $checkpointId): StateContract

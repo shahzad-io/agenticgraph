@@ -281,7 +281,11 @@ class ExecutionCoordinator
 
             $duration = microtime(true) - $start;
             if (! $interrupted && ! $state->hasInterrupt()) {
-                $this->repo->completed($executionId, State::toStoragePayload($state), $duration);
+                $this->repo->completed(
+                    $executionId,
+                    array_merge($state->toArray(), State::toStoragePayload($state)),
+                    $duration
+                );
                 $completedAt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', microtime(true))) ?: new \DateTimeImmutable;
                 $this->events->dispatch(new GraphExecutionCompleted($executionId, $graph->name, $state, $completedAt, $duration, [], $traceContext->getRootSpanId()));
             }
@@ -348,7 +352,7 @@ class ExecutionCoordinator
         }
 
         if ($options->streaming === StreamingMode::NONE) {
-            $asyncExecutionId = $this->executeAsync($graph, $state);
+            $asyncExecutionId = $this->executeAsync($graph, $state, $options);
             $record = $this->store->get($asyncExecutionId);
 
             return new ExecutionHandle(
@@ -433,12 +437,16 @@ class ExecutionCoordinator
         return StreamingMode::SSE;
     }
 
-    public function executeAsync(Graph $graph, StateContract $state): string
+    public function executeAsync(
+        Graph $graph,
+        StateContract $state,
+        ExecutionOptions $options = new ExecutionOptions(ExecutionMode::ASYNC, StreamingMode::NONE)
+    ): string
     {
         $state->validate();
 
         $executionId = $this->generateExecutionId();
-        $scope = $this->contextManager->enter($executionId, $graph->name, new ExecutionOptions(ExecutionMode::ASYNC, StreamingMode::NONE));
+        $scope = $this->contextManager->enter($executionId, $graph->name, $options);
         $traceContext = $scope->traceContext;
         $rootSpanId = $traceContext->getRootSpanId();
 
@@ -450,11 +458,12 @@ class ExecutionCoordinator
         }
 
         dispatch(new \Shahzad\AgenticGraph\Jobs\ExecuteGraphJob(
-            $graph->name,
-            $executionId,
-            $state->toArray(),
+            graphName: $graph->name,
+            executionId: $executionId,
+            stateData: $state->toArray(),
             checkpointId: null,
-            rootSpanId: $rootSpanId
+            rootSpanId: $rootSpanId,
+            executionOptions: $options,
         ));
 
         return $executionId;
