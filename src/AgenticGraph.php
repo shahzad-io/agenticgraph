@@ -70,7 +70,7 @@ class AgenticGraph
         $resolver = app(ExecutionStatusResolver::class);
         $checkpoints = app(CheckpointManager::class);
         $record = $store->get($executionId);
-        $options = $record?->executionOptions ?? new ExecutionOptions;
+        $options = $record->executionOptions ?? new ExecutionOptions;
 
         return new ExecutionHandle(
             executionId: $executionId,

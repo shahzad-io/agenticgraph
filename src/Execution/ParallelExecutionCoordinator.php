@@ -169,7 +169,12 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
 
     /**
      * @param  array<int, string>  $parallelNodes
-     * @return array{then: \Closure, catch: \Closure, finally: \Closure}
+     * @param  array<string, mixed>|null  $loopMetadataArray
+     * @return array{
+     *     then: \Closure(\Illuminate\Bus\Batch): void,
+     *     catch: \Closure(\Illuminate\Bus\Batch, \Throwable): void,
+     *     finally: \Closure(\Illuminate\Bus\Batch): void
+     * }
      */
     public function buildBatchCallbacks(
         string $graphName,
@@ -198,6 +203,9 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
         ];
     }
 
+    /**
+     * @return array<string, mixed>|null
+     */
     private function captureLoopMetadataArray(): ?array
     {
         $executionContext = ($this->executionContextProvider)();
@@ -210,6 +218,7 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
 
     /**
      * @param  array<int, string>  $targets
+     * @param  array<string, mixed>|null  $loopMetadataArray
      */
     public function handleBatchCompletion(
         Batch $batch,
