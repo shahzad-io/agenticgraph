@@ -167,7 +167,6 @@ class ExecutionCoordinator
                     try {
                         $this->loopGuard->check($executionContext, $cycle);
                     } catch (LoopLimitExceededException $e) {
-                        $this->repo->failed($executionId, $e->getMessage());
                         throw $e;
                     }
 
