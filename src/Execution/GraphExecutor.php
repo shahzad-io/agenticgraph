@@ -70,9 +70,14 @@ class GraphExecutor implements ExecutionLoopDelegate
         return $this->coordinator->executeWithOptions($graph, $state, $options, $executionId);
     }
 
-    public function executeWithStreaming(string $name, StateContract $state, StreamOptions $options, ?string $executionId = null): StreamHandle
-    {
-        return $this->coordinator->executeWithStreaming($name, $state, $options, $executionId);
+    public function executeWithStreaming(
+        string $name,
+        StateContract $state,
+        StreamOptions $options,
+        ?string $executionId = null,
+        ?ExecutionOptions $executionOptions = null
+    ): StreamHandle {
+        return $this->coordinator->executeWithStreaming($name, $state, $options, $executionId, $executionOptions);
     }
 
     public function executeWithStreamingFromNode(

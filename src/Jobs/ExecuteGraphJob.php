@@ -98,7 +98,7 @@ class ExecuteGraphJob implements ShouldBeUnique, ShouldQueue
                 );
                 app()->instance(StreamContext::class, new StreamContext($session));
 
-                $executor->executeWithStreaming($graph->name, $state, $streamOptions, $this->executionId);
+                $executor->executeWithStreaming($graph->name, $state, $streamOptions, $this->executionId, $options);
             } else {
                 $executor->execute($graph, $state, $options, useBatch: true, executionId: $this->executionId);
             }

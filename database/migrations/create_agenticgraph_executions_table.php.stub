@@ -17,6 +17,7 @@ return new class extends Migration {
             $table->json('initial_state')->nullable();
             $table->json('final_state')->nullable();
             $table->unsignedInteger('checkpoint_node_count')->default(0);
+            $table->json('execution_options')->nullable();
 
             $table->float('duration')->nullable();
             $table->text('error')->nullable();

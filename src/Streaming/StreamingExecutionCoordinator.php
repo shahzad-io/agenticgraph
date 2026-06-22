@@ -81,7 +81,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
         return $this->streamContext;
     }
 
-    public function execute(Graph $graph, StateContract $state, StreamOptions $options, string $executionId): StreamHandle
+    public function execute(Graph $graph, StateContract $state, StreamOptions $options, string $executionId, ?ExecutionOptions $executionOptions = null): StreamHandle
     {
         $state->validate();
         if ($this->container->bound(TraceContext::class)) {
@@ -129,9 +129,9 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
             }
 
             if (! $this->repo->get($executionId)) {
-                $this->repo->queued($executionId, $graph->name, State::toStoragePayload($state), $session->streamId);
+                $this->repo->queued($executionId, $graph->name, State::toStoragePayload($state), $session->streamId, $executionOptions);
             }
-            $this->repo->started($executionId, $graph->name, State::toStoragePayload($state), $session->streamId);
+            $this->repo->started($executionId, $graph->name, State::toStoragePayload($state), $session->streamId, $executionOptions);
 
             $rootSpanId = $traceContext->getRootSpanId();
             $executionStartDt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $executionStartTime)) ?: new \DateTimeImmutable;

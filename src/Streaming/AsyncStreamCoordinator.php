@@ -39,7 +39,7 @@ final class AsyncStreamCoordinator
 
         $statePayload = State::toStoragePayload($state);
 
-        $this->repository->queued($executionId, $graph->name, $statePayload, $streamId);
+        $this->repository->queued($executionId, $graph->name, $statePayload, $streamId, $options);
 
         dispatch(new ExecuteGraphJob(
             graphName: $graph->name,

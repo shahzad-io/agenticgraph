@@ -37,24 +37,30 @@ class ExecutionRepository implements ExecutionStore
     /**
      * @param  array<string, mixed>  $initialState
      */
-    public function queued(string $id, string $graphName, array $initialState = [], ?string $streamId = null): void
-    {
-        $this->db->transaction(function () use ($id, $graphName, $initialState, $streamId) {
-            $this->db->table($this->table)->updateOrInsert(
-                ['id' => $id],
-                [
-                    'graph_name' => $graphName,
-                    'status' => 'queued',
-                    'initial_state' => json_encode($initialState),
-                    'started_at' => null,
-                    'completed_at' => null,
-                    'duration' => null,
-                    'error' => null,
-                    'stream_id' => $streamId,
-                    'updated_at' => now(),
-                    'created_at' => now(),
-                ]
-            );
+    public function queued(
+        string $id,
+        string $graphName,
+        array $initialState = [],
+        ?string $streamId = null,
+        ?ExecutionOptions $executionOptions = null
+    ): void {
+        $this->db->transaction(function () use ($id, $graphName, $initialState, $streamId, $executionOptions) {
+            $payload = [
+                'graph_name' => $graphName,
+                'status' => 'queued',
+                'initial_state' => json_encode($initialState),
+                'started_at' => null,
+                'completed_at' => null,
+                'duration' => null,
+                'error' => null,
+                'stream_id' => $streamId,
+                'updated_at' => now(),
+                'created_at' => now(),
+            ];
+            if ($executionOptions !== null) {
+                $payload['execution_options'] = json_encode($executionOptions->toArray(), JSON_UNESCAPED_SLASHES);
+            }
+            $this->db->table($this->table)->updateOrInsert(['id' => $id], $payload);
         });
 
         if ((bool) config('agenticgraph.logging.enabled', true)) {
@@ -68,9 +74,14 @@ class ExecutionRepository implements ExecutionStore
     /**
      * @param  array<string, mixed>  $initialState
      */
-    public function started(string $id, string $graphName, array $initialState = [], ?string $streamId = null): void
-    {
-        $this->db->transaction(function () use ($id, $graphName, $initialState, $streamId) {
+    public function started(
+        string $id,
+        string $graphName,
+        array $initialState = [],
+        ?string $streamId = null,
+        ?ExecutionOptions $executionOptions = null
+    ): void {
+        $this->db->transaction(function () use ($id, $graphName, $initialState, $streamId, $executionOptions) {
             // Verify the record exists and get current status with lock
             $current = $this->db->table($this->table)
                 ->where('id', $id)
@@ -85,7 +96,7 @@ class ExecutionRepository implements ExecutionStore
                         'graph_name' => $graphName,
                     ]);
                 }
-                $this->queued($id, $graphName, $initialState);
+                $this->queued($id, $graphName, $initialState, $streamId, $executionOptions);
                 $current = (object) ['status' => 'queued'];
             } else {
                 // Validate state transition
@@ -101,12 +112,16 @@ class ExecutionRepository implements ExecutionStore
             }
 
             // Update to running status
-            $this->db->table($this->table)->where('id', $id)->update([
+            $update = [
                 'status' => 'running',
                 'started_at' => now(),
                 'stream_id' => $streamId,
                 'updated_at' => now(),
-            ]);
+            ];
+            if ($executionOptions !== null) {
+                $update['execution_options'] = json_encode($executionOptions->toArray(), JSON_UNESCAPED_SLASHES);
+            }
+            $this->db->table($this->table)->where('id', $id)->update($update);
 
             if ((bool) config('agenticgraph.logging.enabled', true)) {
                 $this->logger->debug('Execution started', [

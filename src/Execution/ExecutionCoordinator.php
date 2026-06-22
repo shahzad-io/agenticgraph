@@ -137,9 +137,9 @@ class ExecutionCoordinator
         $executionContext = $scope->context;
 
         if (! $this->repo->get($executionId)) {
-            $this->repo->queued($executionId, $graph->name, State::toStoragePayload($state));
+            $this->repo->queued($executionId, $graph->name, State::toStoragePayload($state), null, $options);
         }
-        $this->repo->started($executionId, $graph->name, State::toStoragePayload($state));
+        $this->repo->started($executionId, $graph->name, State::toStoragePayload($state), null, $options);
         $rootSpanId = $traceContext->getRootSpanId();
         $executionStartTime = microtime(true);
         $executionStartDt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $executionStartTime)) ?: new \DateTimeImmutable;
@@ -326,7 +326,7 @@ class ExecutionCoordinator
                 delivery: $options->streaming->value,
                 interrupts: $options->interrupts
             );
-            $streamHandle = $this->executeWithStreaming($graph->name, $state, $streamOptions, $executionId);
+            $streamHandle = $this->executeWithStreaming($graph->name, $state, $streamOptions, $executionId, $options);
             $finalState = $streamHandle->getFinalState();
             $status = $finalState->hasInterrupt()
                 ? ExecutionStatus::INTERRUPTED
@@ -376,8 +376,13 @@ class ExecutionCoordinator
         );
     }
 
-    public function executeWithStreaming(string $name, StateContract $state, StreamOptions $options, ?string $executionId = null): StreamHandle
-    {
+    public function executeWithStreaming(
+        string $name,
+        StateContract $state,
+        StreamOptions $options,
+        ?string $executionId = null,
+        ?ExecutionOptions $executionOptions = null
+    ): StreamHandle {
         $graph = $this->graphRegistry->getOrBuild($name);
         if ($graph === null) {
             throw new \RuntimeException(
@@ -388,7 +393,7 @@ class ExecutionCoordinator
 
         $executionId = $executionId ?? $this->generateExecutionId();
 
-        return $this->streamingCoordinator->execute($graph, $state, $options, $executionId);
+        return $this->streamingCoordinator->execute($graph, $state, $options, $executionId, $executionOptions);
     }
 
     public function executeWithStreamingFromNode(
@@ -445,7 +450,7 @@ class ExecutionCoordinator
         $traceContext = $scope->traceContext;
         $rootSpanId = $traceContext->getRootSpanId();
 
-        $this->repo->queued($executionId, $graph->name, State::toStoragePayload($state));
+        $this->repo->queued($executionId, $graph->name, State::toStoragePayload($state), null, $options);
 
         $this->contextManager->exit($scope);
         if ($this->httpClientInstrumentation) {
@@ -623,8 +628,8 @@ class ExecutionCoordinator
         $state->validate();
 
         $executionId = $this->generateExecutionId();
-        $this->repo->queued($executionId, $graph->name, State::toStoragePayload($state));
-        $this->repo->started($executionId, $graph->name, State::toStoragePayload($state));
+        $this->repo->queued($executionId, $graph->name, State::toStoragePayload($state), null, new ExecutionOptions);
+        $this->repo->started($executionId, $graph->name, State::toStoragePayload($state), null, new ExecutionOptions);
 
         $scope = $this->enterScope($executionId, $graph, new ExecutionOptions);
         $traceContext = $scope->traceContext;
