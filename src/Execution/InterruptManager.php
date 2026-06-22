@@ -334,7 +334,8 @@ final class InterruptManager implements InterruptServiceInterface
             $checkpoint->currentNode,
             $executionId,
             false,
-            $loopMetadata
+            $loopMetadata,
+            skipInterruptGateForEntry: true
         );
     }
 

@@ -510,15 +510,19 @@ class ExecutionCoordinator
         string $startNode,
         string $executionId,
         bool $useBatch = false,
-        ?LoopMetadata $loopMetadata = null
+        ?LoopMetadata $loopMetadata = null,
+        bool $skipInterruptGateForEntry = false
     ): StateContract {
-        $scope = $this->enterScope($executionId, $graph, new ExecutionOptions, $loopMetadata);
+        $options = new ExecutionOptions;
+        $scope = $this->enterScope($executionId, $graph, $options, $loopMetadata);
         $traceContext = $scope->traceContext;
 
         $current = $startNode;
         $visited = [];
         $maxIterations = config('agenticgraph.execution.max_iterations', 1000);
         $iterations = 0;
+        $skipEntryInterruptGate = $skipInterruptGateForEntry;
+        $interrupted = false;
 
         try {
             do {
@@ -544,6 +548,15 @@ class ExecutionCoordinator
                     if ($currentStatus === 'queued' || $currentStatus === 'interrupted') {
                         $this->repo->started($executionId, $graph->name, State::toStoragePayload($state));
                     }
+
+                    $node = $graph->getNode($current);
+                    if (! $skipEntryInterruptGate && $options->interrupts && $this->shouldInterrupt($node, $state)) {
+                        $state = $this->handleInterrupt($executionId, $graph->name, $current, $state);
+                        $interrupted = true;
+                        $lock->release();
+                        break;
+                    }
+                    $skipEntryInterruptGate = false;
 
                     $nodeResult = $this->executeNode($graph, $executionId, $current, $state);
                     $state = $nodeResult['state'];
@@ -605,11 +618,13 @@ class ExecutionCoordinator
                 }
             } while (true);
 
-            $this->repo->completed($executionId, State::toStoragePayload($state), 0.0);
-            $completedAt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', microtime(true))) ?: new \DateTimeImmutable;
-            $this->events->dispatch(new GraphExecutionCompleted($executionId, $graph->name, $state, $completedAt, 0.0, []));
+            if (! $interrupted && ! $state->hasInterrupt()) {
+                $this->repo->completed($executionId, State::toStoragePayload($state), 0.0);
+                $completedAt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', microtime(true))) ?: new \DateTimeImmutable;
+                $this->events->dispatch(new GraphExecutionCompleted($executionId, $graph->name, $state, $completedAt, 0.0, []));
+            }
 
-            $exitState = $state->hasInterrupt() ? null : $state;
+            $exitState = ($interrupted || $state->hasInterrupt()) ? null : $state;
             $this->contextManager->exit($scope, $exitState);
 
             return $state;

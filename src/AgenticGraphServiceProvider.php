@@ -197,11 +197,20 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
                     string $startNode,
                     string $executionId,
                     bool $useBatch = false,
-                    ?\Shahzad\AgenticGraph\Execution\LoopMetadata $loopMetadata = null
+                    ?\Shahzad\AgenticGraph\Execution\LoopMetadata $loopMetadata = null,
+                    bool $skipInterruptGateForEntry = false
                 ): \Shahzad\AgenticGraph\Contracts\StateContract {
                     return $this->container
                         ->make(\Shahzad\AgenticGraph\Execution\GraphExecutor::class)
-                        ->executeFromNode($graph, $state, $startNode, $executionId, $useBatch, $loopMetadata);
+                        ->executeFromNode(
+                            $graph,
+                            $state,
+                            $startNode,
+                            $executionId,
+                            $useBatch,
+                            $loopMetadata,
+                            $skipInterruptGateForEntry
+                        );
                 }
             };
 

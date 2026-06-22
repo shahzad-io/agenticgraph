@@ -600,23 +600,16 @@ it('handles multiple interrupts in sequence', function () {
     $checkpointId = $handle->getFinalState()->getInterruptCheckpointId();
 
     $resumeHandle = $handle->resume(['approved' => true]);
-    $resumeCheckpointId = $resumeHandle->getFinalState()->getInterruptCheckpointId();
 
     $resumeEvents = iterator_to_array($resumeHandle->stream()->inline ?? new ArrayIterator([]));
     $resumeTypes = array_map(fn ($event) => $event->type(), $resumeEvents);
 
-    expect($resumeTypes)->toContain('node_interrupt');
-
-    $finalHandle = $resumeHandle;
-    for ($i = 0; $i < 3; $i++) {
-        if (! $finalHandle->getFinalState()->hasInterrupt()) {
-            break;
-        }
-        $finalHandle = $finalHandle->resume(['approved' => true]);
-    }
-
-    expect($finalHandle->getFinalState()->hasInterrupt())->toBeFalse()
-        ->and($finalHandle->getFinalState()->get('done'))->toBeTrue();
+    // D17: resume-entry skips the gate once even though interrupt_count (1) still satisfies shouldInterrupt.
+    expect($resumeTypes)->toContain('stream_resume')
+        ->and($resumeTypes)->not->toContain('node_interrupt')
+        ->and($resumeHandle->getFinalState()->hasInterrupt())->toBeFalse()
+        ->and($resumeHandle->getFinalState()->get('done'))->toBeTrue()
+        ->and($resumeHandle->getFinalState()->get('interrupt_count'))->toBe(1);
 });
 
 it('resumes without stream store enabled', function () {

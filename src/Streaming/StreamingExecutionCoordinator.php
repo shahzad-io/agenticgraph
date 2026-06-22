@@ -312,7 +312,8 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                 $session,
                 $baseSink,
                 $sink,
-                $start
+                $start,
+                skipInterruptGateForEntry: $resumePayload !== null
             );
 
             $finalState = $handle->getFinalState();
@@ -339,11 +340,13 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
         StreamSession $session,
         StreamSinkInterface $baseSink,
         StreamSinkInterface $sink,
-        float $start
+        float $start,
+        bool $skipInterruptGateForEntry = false
     ): StreamHandle {
         try {
             $interrupted = false;
             $nodeSeqs = new \stdClass;
+            $skipEntryInterruptGate = $skipInterruptGateForEntry;
             while (true) {
                 $lockTimeout = (int) config('agenticgraph.lock.timeout', 10);
                 $lockBlockTimeout = (int) config('agenticgraph.lock.block_timeout', 5);
@@ -393,12 +396,13 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                     }
 
                     $node = $graph->getNode($current);
-                    if ($options->interrupts && $this->delegate->shouldInterrupt($node, $state)) {
+                    if (! $skipEntryInterruptGate && $options->interrupts && $this->delegate->shouldInterrupt($node, $state)) {
                         $state = $this->delegate->handleInterrupt($executionId, $graph->name, $current, $state, $this->streamContext);
                         $lock->release();
                         $interrupted = true;
                         break;
                     }
+                    $skipEntryInterruptGate = false;
 
                     $spanId = $traceContext->startSpan($current);
                     $parentSpanId = $traceContext->getParentSpanId();

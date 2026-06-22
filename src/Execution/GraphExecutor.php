@@ -163,9 +163,24 @@ class GraphExecutor implements ExecutionLoopDelegate
         return $this->coordinator->resumeWithInput($checkpointId, $humanInput);
     }
 
-    public function executeFromNode(Graph $graph, StateContract $state, string $startNode, string $executionId, bool $useBatch = false, ?LoopMetadata $loopMetadata = null): StateContract
-    {
-        return $this->coordinator->executeFromNode($graph, $state, $startNode, $executionId, $useBatch, $loopMetadata);
+    public function executeFromNode(
+        Graph $graph,
+        StateContract $state,
+        string $startNode,
+        string $executionId,
+        bool $useBatch = false,
+        ?LoopMetadata $loopMetadata = null,
+        bool $skipInterruptGateForEntry = false
+    ): StateContract {
+        return $this->coordinator->executeFromNode(
+            $graph,
+            $state,
+            $startNode,
+            $executionId,
+            $useBatch,
+            $loopMetadata,
+            $skipInterruptGateForEntry
+        );
     }
 
     /**

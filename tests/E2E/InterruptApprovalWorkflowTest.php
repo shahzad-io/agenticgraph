@@ -64,6 +64,32 @@ class PublishNode extends PrismNode
     }
 }
 
+/**
+ * D17: onResume deliberately does not satisfy shouldInterrupt — entry gate is skipped on resume.
+ */
+class ApprovalInterruptNodeWithoutGateSatisfaction extends PrismNode
+{
+    public function execute(StateContract $state): StateContract
+    {
+        return $state->set('content_reviewed', true);
+    }
+
+    public function shouldInterrupt(StateContract $state): bool
+    {
+        return ! $state->has('approved');
+    }
+
+    public function getInterruptReason(StateContract $state): string
+    {
+        return 'Content requires human approval before publishing';
+    }
+
+    public function onResume(StateContract $state, mixed $humanInput): StateContract
+    {
+        return $state->set('approval_comments', $humanInput['comments'] ?? null);
+    }
+}
+
 it('executes full interrupt workflow with approval', function () {
     $graph = GraphBuilder::create('approval-workflow')
         ->addNode('generate', GenerateContentNode::class)
@@ -223,6 +249,35 @@ it('dispatches interrupt and resume events during execution', function () {
         return $event->nodeName === 'approve'
             && $event->checkpointId === $checkpointId;
     });
+});
+
+it('resumes past entry without re-gating when onResume does not satisfy shouldInterrupt (D17)', function () {
+    $graph = GraphBuilder::create('approval-workflow-d17-mechanism')
+        ->addNode('generate', GenerateContentNode::class)
+        ->addNode('approve', ApprovalInterruptNodeWithoutGateSatisfaction::class)
+        ->addNode('publish', PublishNode::class)
+        ->addEdge('generate', 'approve')
+        ->addEdge('approve', 'publish')
+        ->setEntryPoint('generate')
+        ->addExitPoint('publish')
+        ->build();
+
+    AgenticGraph::register('approval-workflow-d17-mechanism', $graph);
+
+    $handle = AgenticGraph::execute('approval-workflow-d17-mechanism', new State(['topic' => 'D17']));
+    $checkpointId = $handle->getFinalState()->getInterruptCheckpointId();
+
+    expect($handle->getFinalState()->has('approved'))->toBeFalse();
+
+    $final = AgenticGraph::resumeInterrupt($checkpointId, [
+        'comments' => 'Proceed without setting approved',
+    ]);
+
+    expect($final->get('content_reviewed'))->toBeTrue()
+        ->and($final->get('published'))->toBeTrue()
+        ->and($final->get('approval_comments'))->toBe('Proceed without setting approved')
+        ->and($final->has('approved'))->toBeFalse()
+        ->and($final->hasInterrupt())->toBeFalse();
 });
 
 it('resumes interrupt via facade using checkpoint id', function () {

@@ -15,6 +15,7 @@ interface ExecutionResumer
         string $startNode,
         string $executionId,
         bool $useBatch = false,
-        ?LoopMetadata $loopMetadata = null
+        ?LoopMetadata $loopMetadata = null,
+        bool $skipInterruptGateForEntry = false
     ): StateContract;
 }
