@@ -99,49 +99,68 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
         $executionContext = $scope->context;
 
         $session = null;
-        if ($this->container->bound(StreamContext::class)) {
-            $session = $this->container->make(StreamContext::class)->session();
-        }
-        if (! $session) {
-            $session = new StreamSession(
-                streamId: uniqid('stream_', true),
-                executionId: $executionId,
-                options: $options,
-                startedAtUnix: time()
-            );
-        }
-
-        $baseSink = $this->createStreamSink($session, $options);
-        $sink = $this->wrapStreamSink($baseSink, $options, $session);
-        if ($this->container->bound(StreamContext::class)) {
-            $context = $this->container->make(StreamContext::class);
-            $context->setSink($sink);
-            $this->streamContext = $context;
-        } else {
-            $context = new StreamContext($session, $sink);
-            $this->container->instance(StreamContext::class, $context);
-            $this->streamContext = $context;
-        }
-
-        if (! $this->repo->get($executionId)) {
-            $this->repo->queued($executionId, $graph->name, State::toStoragePayload($state), $session->streamId);
-        }
-        $this->repo->started($executionId, $graph->name, State::toStoragePayload($state), $session->streamId);
-
-        $rootSpanId = $traceContext->getRootSpanId();
+        $baseSink = null;
+        $sink = null;
         $executionStartTime = microtime(true);
-        $executionStartDt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $executionStartTime)) ?: new \DateTimeImmutable;
-        $this->events->dispatch(new GraphExecutionStarted($executionId, $graph->name, $state, $executionStartDt, $rootSpanId));
 
-        $this->emitLifecycleEvent(
-            $sink,
-            $session,
-            null,
-            $traceContext->getSpanId(),
-            $traceContext->getParentSpanId(),
-            'graph_start',
-            ['graph_name' => $graph->name]
-        );
+        try {
+            if ($this->container->bound(StreamContext::class)) {
+                $session = $this->container->make(StreamContext::class)->session();
+            }
+            if (! $session) {
+                $session = new StreamSession(
+                    streamId: uniqid('stream_', true),
+                    executionId: $executionId,
+                    options: $options,
+                    startedAtUnix: time()
+                );
+            }
+
+            $baseSink = $this->createStreamSink($session, $options);
+            $sink = $this->wrapStreamSink($baseSink, $options, $session);
+            if ($this->container->bound(StreamContext::class)) {
+                $context = $this->container->make(StreamContext::class);
+                $context->setSink($sink);
+                $this->streamContext = $context;
+            } else {
+                $context = new StreamContext($session, $sink);
+                $this->container->instance(StreamContext::class, $context);
+                $this->streamContext = $context;
+            }
+
+            if (! $this->repo->get($executionId)) {
+                $this->repo->queued($executionId, $graph->name, State::toStoragePayload($state), $session->streamId);
+            }
+            $this->repo->started($executionId, $graph->name, State::toStoragePayload($state), $session->streamId);
+
+            $rootSpanId = $traceContext->getRootSpanId();
+            $executionStartDt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $executionStartTime)) ?: new \DateTimeImmutable;
+            $this->events->dispatch(new GraphExecutionStarted($executionId, $graph->name, $state, $executionStartDt, $rootSpanId));
+
+            $this->emitLifecycleEvent(
+                $sink,
+                $session,
+                null,
+                $traceContext->getSpanId(),
+                $traceContext->getParentSpanId(),
+                'graph_start',
+                ['graph_name' => $graph->name]
+            );
+        } catch (\Throwable $e) {
+            $this->handleStreamingSetupFailure(
+                $graph,
+                $state,
+                $executionId,
+                $e,
+                $sink ?? $baseSink,
+                $session,
+                $traceContext,
+                $executionStartTime
+            );
+            $this->contextManager->exitWithException($scope, $e);
+            $this->cleanupStreamContext();
+            throw $e;
+        }
 
         try {
             $handle = $this->performStreamingExecution(
@@ -669,6 +688,42 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
     protected function determineNext(Graph $graph, string $current, StateContract $state): mixed
     {
         return $this->routerResolver->determineNext($graph, $current, $state);
+    }
+
+    private function handleStreamingSetupFailure(
+        Graph $graph,
+        StateContract $state,
+        string $executionId,
+        \Throwable $e,
+        ?StreamSinkInterface $sink,
+        ?StreamSession $session,
+        TraceContext $traceContext,
+        float $start
+    ): void {
+        $duration = microtime(true) - $start;
+        $this->events->dispatch(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000));
+
+        if ($sink !== null && $session !== null) {
+            $this->emitLifecycleEvent(
+                $sink,
+                $session,
+                null,
+                $traceContext->getSpanId(),
+                $traceContext->getParentSpanId(),
+                'graph_failed',
+                [
+                    'error_type' => $e::class,
+                    'message' => $e->getMessage(),
+                ]
+            );
+
+            $sink->close(StreamStatus::ERROR, [
+                'error_type' => $e::class,
+                'message' => $e->getMessage(),
+            ]);
+        }
+
+        $this->repo->failed($executionId, $e->getMessage());
     }
 
     private function cleanupStreamContext(): void
