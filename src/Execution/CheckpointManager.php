@@ -24,7 +24,7 @@ class CheckpointManager
     private int $maxStateSize;
 
     /**
-     * Node execution counters per execution ID.
+     * In-process cache of persisted checkpoint attempt counters per execution.
      *
      * @var array<string, int>
      */
@@ -35,7 +35,8 @@ class CheckpointManager
         ?DatabaseManager $db = null,
         ?Dispatcher $events = null,
         int $checkpointFrequency = 1,
-        int $maxStateSize = 10485760 // 10MB default
+        int $maxStateSize = 10485760, // 10MB default
+        private readonly ?ExecutionRepository $executions = null,
     ) {
         $this->storage = $storage;
         $this->db = $db;
@@ -66,16 +67,25 @@ class CheckpointManager
 
     private function saveWithOptions(string $executionId, Checkpoint $checkpoint, bool $force): ?string
     {
-        if (! isset($this->nodeCounters[$executionId])) {
-            $this->nodeCounters[$executionId] = 0;
+        if ($force) {
+            return $this->persistCheckpoint($executionId, $checkpoint);
         }
-        $this->nodeCounters[$executionId]++;
-        $nodeCount = $this->nodeCounters[$executionId];
 
-        if (! $force && $this->checkpointFrequency > 1 && $nodeCount % $this->checkpointFrequency !== 0) {
+        $nodeCount = $this->loadCounter($executionId) + 1;
+        $this->storeCounter($executionId, $nodeCount);
+
+        if ($this->checkpointFrequency > 1 && $nodeCount % $this->checkpointFrequency !== 0) {
             return null;
         }
 
+        return $this->persistCheckpoint($executionId, $checkpoint);
+    }
+
+    /**
+     * Perform atomic checkpoint save with transaction and event.
+     */
+    private function persistCheckpoint(string $executionId, Checkpoint $checkpoint): string
+    {
         $checkpoint->executionId = $executionId;
         if (! isset($checkpoint->id) || $checkpoint->id === '') {
             $checkpoint->id = Str::uuid()->toString();
@@ -157,6 +167,10 @@ class CheckpointManager
     public function resetCounter(string $executionId): void
     {
         unset($this->nodeCounters[$executionId]);
+
+        if ($this->executions !== null) {
+            $this->executions->resetCheckpointNodeCount($executionId);
+        }
     }
 
     /**
@@ -164,7 +178,31 @@ class CheckpointManager
      */
     public function getNodeCount(string $executionId): int
     {
-        return $this->nodeCounters[$executionId] ?? 0;
+        return $this->loadCounter($executionId);
+    }
+
+    private function loadCounter(string $executionId): int
+    {
+        if (array_key_exists($executionId, $this->nodeCounters)) {
+            return $this->nodeCounters[$executionId];
+        }
+
+        if ($this->executions !== null) {
+            $this->nodeCounters[$executionId] = $this->executions->getCheckpointNodeCount($executionId);
+        } else {
+            $this->nodeCounters[$executionId] = 0;
+        }
+
+        return $this->nodeCounters[$executionId];
+    }
+
+    private function storeCounter(string $executionId, int $count): void
+    {
+        $this->nodeCounters[$executionId] = $count;
+
+        if ($this->executions !== null) {
+            $this->executions->setCheckpointNodeCount($executionId, $count);
+        }
     }
 
     /**

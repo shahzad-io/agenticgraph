@@ -231,6 +231,30 @@ class ExecutionRepository implements ExecutionStore
         return $this->db->table($this->table)->where('id', $id)->value('status');
     }
 
+    public function getCheckpointNodeCount(string $executionId): int
+    {
+        $count = $this->db->table($this->table)
+            ->where('id', $executionId)
+            ->value('checkpoint_node_count');
+
+        return (int) ($count ?? 0);
+    }
+
+    public function setCheckpointNodeCount(string $executionId, int $count): void
+    {
+        $this->db->table($this->table)
+            ->where('id', $executionId)
+            ->update([
+                'checkpoint_node_count' => $count,
+                'updated_at' => now(),
+            ]);
+    }
+
+    public function resetCheckpointNodeCount(string $executionId): void
+    {
+        $this->setCheckpointNodeCount($executionId, 0);
+    }
+
     public function get(string $executionId): ?ExecutionRecord
     {
         $row = $this->db->table($this->table)->where('id', $executionId)->first();

@@ -127,7 +127,8 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
                 $app->make(DatabaseManager::class),
                 $app->make(Dispatcher::class),
                 (int) config('agenticgraph.checkpoint.frequency', 1),
-                (int) config('agenticgraph.checkpoint.max_state_size', 10485760)
+                (int) config('agenticgraph.checkpoint.max_state_size', 10485760),
+                $app->make(ExecutionRepository::class),
             );
         });
 
