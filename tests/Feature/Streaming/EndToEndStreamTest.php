@@ -28,7 +28,7 @@ use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
 use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
 use Shahzad\AgenticGraph\Streaming\Sinks\BroadcastSink;
 use Shahzad\AgenticGraph\Streaming\Sinks\MemorySink;
-use Shahzad\AgenticGraph\Streaming\Sinks\SSESink;
+use Shahzad\AgenticGraph\Streaming\StreamEventEnvelope;
 use Shahzad\AgenticGraph\Streaming\Store\DatabaseStreamStore;
 use Shahzad\AgenticGraph\Streaming\Store\RedisStreamStore;
 use Shahzad\AgenticGraph\Streaming\StreamContext;
@@ -108,7 +108,7 @@ it('replays from cursor', function () {
     expect($seqs)->toBe([2, 3]);
 });
 
-it('replays to sse sink on reconnection', function () {
+it('replays store events as sse wire format on reconnection', function () {
     config()->set('agenticgraph.streaming.store.driver', 'database');
     $store = app(StreamStoreInterface::class);
     $streamId = (string) Str::uuid();
@@ -128,12 +128,10 @@ it('replays to sse sink on reconnection', function () {
         ));
     }
 
-    $sink = new SSESink;
+    $content = '';
     foreach ($store->readFrom($streamId, 2, 10) as $event) {
-        $sink->emit($event);
+        $content .= StreamEventEnvelope::fromStreamEvent($event)->formatSse();
     }
-
-    $content = $sink->content();
 
     expect($content)->toContain('id: 2')
         ->and($content)->toContain('id: 3')
@@ -1025,7 +1023,7 @@ it('applies node and event filters for streaming', function () {
         ->and($handle->getFinalState()->get('beta'))->toBeTrue();
 });
 
-it('returns sse response from stream handle', function () {
+it('does not return inline sse stream from sync stream handle', function () {
     $graph = GraphBuilder::create('sse-streaming')
         ->addNode('alpha', StreamableTestNode::class)
         ->setEntryPoint('alpha')
@@ -1036,9 +1034,7 @@ it('returns sse response from stream handle', function () {
 
     $handle = AgenticGraph::execute('sse-streaming', new State, streamingOptions(StreamingMode::SSE));
 
-    $response = $handle->stream();
-
-    expect($response->headers->get('Content-Type'))->toBe('text/event-stream');
+    expect($handle->stream())->toBeNull();
 });
 
 it('iterates over stream handle directly', function () {

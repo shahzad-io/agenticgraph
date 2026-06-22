@@ -11,7 +11,6 @@ use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
 use Shahzad\AgenticGraph\Streaming\StreamHandle;
 use Shahzad\AgenticGraph\Streaming\StreamOptions;
 use Shahzad\AgenticGraph\Streaming\StreamResumption;
-use Symfony\Component\HttpFoundation\Response;
 
 final class ExecutionHandle
 {
@@ -96,17 +95,17 @@ final class ExecutionHandle
         }
     }
 
-    public function stream(): \Iterator|Response|null
+    public function stream(): ?\Iterator
     {
         if ($this->streamHandle === null) {
             return null;
         }
 
-        return match ($this->options->streaming) {
-            StreamingMode::SSE => $this->streamHandle->response(),
-            StreamingMode::ITERATOR => $this->streamHandle->getIterator(),
-            default => null,
-        };
+        if ($this->options->streaming === StreamingMode::ITERATOR) {
+            return $this->streamHandle->getIterator();
+        }
+
+        return null;
     }
 
     public function getFinalState(): StateContract

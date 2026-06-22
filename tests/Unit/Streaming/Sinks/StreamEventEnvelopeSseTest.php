@@ -1,12 +1,10 @@
 <?php
 
 use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
-use Shahzad\AgenticGraph\Streaming\Sinks\SSESink;
 use Shahzad\AgenticGraph\Streaming\StreamEventEnvelope;
 use Shahzad\AgenticGraph\Streaming\StreamStatus;
 
-test('sse sink formats events from unified envelope', function () {
-    $sink = new SSESink;
+test('stream event envelope formats sse wire output', function () {
     $event = new StreamEventImpl(
         streamId: 'stream-1',
         executionId: 'exec-1',
@@ -20,19 +18,21 @@ test('sse sink formats events from unified envelope', function () {
         occurredAt: new DateTimeImmutable('2024-01-01T00:00:00Z')
     );
 
-    $sink->emit($event);
-    $sink->close(StreamStatus::SUCCESS, ['finish' => 'ok']);
-
-    $content = $sink->content();
+    $envelope = StreamEventEnvelope::fromStreamEvent($event);
+    $content = $envelope->formatSse();
+    $close = StreamEventEnvelope::formatSseRaw(
+        '2',
+        StreamEventEnvelope::TYPE_STREAM_CLOSE,
+        StreamEventEnvelope::streamCloseWirePayload(StreamStatus::SUCCESS, ['finish' => 'ok'])
+    );
 
     expect($content)->toContain('id: 1')
         ->and($content)->toContain('event: text_delta')
-        ->and($content)->toContain('event: stream_close')
-        ->and($content)->toContain('"status":"success"');
+        ->and($close)->toContain('event: stream_close')
+        ->and($close)->toContain('"status":"success"');
 });
 
-test('sse sink wire body omits duplicate type field', function () {
-    $sink = new SSESink;
+test('stream event envelope wire body omits duplicate type field', function () {
     $event = new StreamEventImpl(
         streamId: 'stream-1',
         executionId: 'exec-1',
@@ -46,9 +46,7 @@ test('sse sink wire body omits duplicate type field', function () {
         occurredAt: new DateTimeImmutable('2024-01-01T00:00:00Z')
     );
 
-    $sink->emit($event);
-
-    $content = $sink->content();
+    $content = StreamEventEnvelope::fromStreamEvent($event)->formatSse();
     $lines = array_values(array_filter(explode("\n", $content)));
     $dataLine = '';
     foreach ($lines as $line) {

@@ -6,8 +6,6 @@ namespace Shahzad\AgenticGraph\Streaming;
 
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
-use Shahzad\AgenticGraph\Streaming\Sinks\SSESink;
-use Symfony\Component\HttpFoundation\Response;
 
 /**
  * @implements \Iterator<int, mixed>
@@ -59,27 +57,6 @@ final class StreamHandle implements \Iterator
         return $this->finalState;
     }
 
-    public function response(): Response
-    {
-        if (! $this->sink instanceof SSESink) {
-            return response('', 204);
-        }
-
-        $content = $this->sink->content();
-
-        return response()->stream(
-            static function () use ($content): void {
-                echo $content;
-            },
-            200,
-            [
-                'Content-Type' => 'text/event-stream',
-                'Cache-Control' => 'no-cache',
-                'Connection' => 'keep-alive',
-            ]
-        );
-    }
-
     public function streamId(): string
     {
         return $this->session->streamId;
@@ -99,16 +76,6 @@ final class StreamHandle implements \Iterator
             }
             if ($events instanceof \Traversable) {
                 return new \IteratorIterator($events);
-            }
-        }
-
-        if (method_exists($this->sink, 'lines')) {
-            $lines = $this->sink->lines();
-            if ($lines instanceof \Iterator) {
-                return $lines;
-            }
-            if ($lines instanceof \Traversable) {
-                return new \IteratorIterator($lines);
             }
         }
 

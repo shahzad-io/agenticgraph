@@ -9,8 +9,8 @@ use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
 use Shahzad\AgenticGraph\Streaming\Sinks\BroadcastSink;
 use Shahzad\AgenticGraph\Streaming\Sinks\MemorySink;
+use Shahzad\AgenticGraph\Streaming\Sinks\NullTransportSink;
 use Shahzad\AgenticGraph\Streaming\Sinks\RateLimitedSink;
-use Shahzad\AgenticGraph\Streaming\Sinks\SSESink;
 
 final class StreamSinkFactory
 {
@@ -29,7 +29,8 @@ final class StreamSinkFactory
     {
         return match ($options->delivery) {
             'broadcast' => new BroadcastSink($this->broadcaster, $session->streamId),
-            'sse' => new SSESink,
+            'iterator' => new MemorySink,
+            'sse' => new NullTransportSink,
             default => new MemorySink,
         };
     }

@@ -6,7 +6,7 @@ use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
 use Shahzad\AgenticGraph\Streaming\RetentionPolicyFactory;
 use Shahzad\AgenticGraph\Streaming\Sinks\BroadcastSink;
 use Shahzad\AgenticGraph\Streaming\Sinks\MemorySink;
-use Shahzad\AgenticGraph\Streaming\Sinks\SSESink;
+use Shahzad\AgenticGraph\Streaming\Sinks\NullTransportSink;
 use Shahzad\AgenticGraph\Streaming\StreamErrorHandler;
 use Shahzad\AgenticGraph\Streaming\StreamObserverFactory;
 use Shahzad\AgenticGraph\Streaming\StreamOptions;
@@ -40,9 +40,11 @@ test('stream sink factory creates sink types by delivery', function () {
 
     $broadcastSink = $factory->create($session, new StreamOptions(delivery: 'broadcast'));
     $sseSink = $factory->create($session, new StreamOptions(delivery: 'sse'));
+    $iteratorSink = $factory->create($session, new StreamOptions(delivery: 'iterator'));
     $memorySink = $factory->create($session, new StreamOptions(delivery: 'memory'));
 
     expect($broadcastSink)->toBeInstanceOf(BroadcastSink::class)
-        ->and($sseSink)->toBeInstanceOf(SSESink::class)
+        ->and($sseSink)->toBeInstanceOf(NullTransportSink::class)
+        ->and($iteratorSink)->toBeInstanceOf(MemorySink::class)
         ->and($memorySink)->toBeInstanceOf(MemorySink::class);
 });

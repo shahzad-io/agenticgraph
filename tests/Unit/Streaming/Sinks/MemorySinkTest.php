@@ -744,7 +744,7 @@ test('wrapped sink preserves broadcast sink behavior', function () {
     $wrapped->close(StreamStatus::SUCCESS);
 });
 
-test('wrapped sink preserves sse sink behavior', function () {
+test('wrapped sink with sse delivery uses null transport sink', function () {
     $options = new StreamOptions(delivery: 'sse', storeEnabled: false);
     $session = new StreamSession(
         streamId: 'stream-sse',
@@ -761,10 +761,11 @@ test('wrapped sink preserves sse sink behavior', function () {
         false,
         new RetentionPolicyFactory,
         new StreamObserverFactory,
-        new StreamErrorHandler,
-        null
+        new StreamErrorHandler
     );
     $baseSink = $factory->create($session, $options);
+    expect($baseSink)->toBeInstanceOf(\Shahzad\AgenticGraph\Streaming\Sinks\NullTransportSink::class);
+
     $wrapped = $factory->wrap($baseSink, $options, $session);
 
     $event = new StreamEventImpl(
@@ -782,17 +783,6 @@ test('wrapped sink preserves sse sink behavior', function () {
 
     $wrapped->emit($event);
     $wrapped->close(StreamStatus::SUCCESS);
-
-    $lines = $baseSink->lines();
-    $count = 0;
-    foreach ($lines as $line) {
-        $count++;
-        if ($count === 1) {
-            expect($line)->toContain('event: text_delta');
-        }
-    }
-
-    expect($count)->toBe(2);
 });
 
 test('wrapped sink preserves memory sink behavior', function () {

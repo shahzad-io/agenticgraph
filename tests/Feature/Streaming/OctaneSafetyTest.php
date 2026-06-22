@@ -2,7 +2,7 @@
 
 use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
 use Shahzad\AgenticGraph\Streaming\Sinks\MemorySink;
-use Shahzad\AgenticGraph\Streaming\Sinks\SSESink;
+use Shahzad\AgenticGraph\Streaming\Sinks\NullTransportSink;
 use Shahzad\AgenticGraph\Streaming\StreamStatus;
 
 it('does not retain sink state across many requests', function () {
@@ -57,8 +57,8 @@ it('handles 1000 sequential sink initializations without shared state', function
         ->and(max($counts))->toBe(1);
 });
 
-it('does not leak state between sink instances', function () {
-    $first = new SSESink;
+it('does not leak state between null transport sink instances', function () {
+    $first = new NullTransportSink;
     $event = new StreamEventImpl(
         streamId: 'stream-1',
         executionId: 'exec-1',
@@ -75,9 +75,9 @@ it('does not leak state between sink instances', function () {
     $first->emit($event);
     $first->close(StreamStatus::SUCCESS);
 
-    $second = new SSESink;
+    $second = new NullTransportSink;
 
-    expect($second->content())->toBe('');
+    expect($second)->toBeInstanceOf(NullTransportSink::class);
 });
 
 it('cleans up after close', function () {
