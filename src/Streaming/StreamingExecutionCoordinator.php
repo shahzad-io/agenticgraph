@@ -228,55 +228,75 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
         $executionContext = $scope->context;
 
         $session = null;
-        if ($this->container->bound(StreamContext::class)) {
-            $session = $this->container->make(StreamContext::class)->session();
-        }
-        if (! $session) {
-            $session = new StreamSession(
-                streamId: uniqid('stream_', true),
-                executionId: $executionId,
-                options: $options,
-                startedAtUnix: time()
-            );
-        }
+        $baseSink = null;
+        $sink = null;
+        $setupStartTime = microtime(true);
 
-        $baseSink = $this->createStreamSink($session, $options);
-        $sink = $this->wrapStreamSink($baseSink, $options, $session);
-        if ($this->container->bound(StreamContext::class)) {
-            $context = $this->container->make(StreamContext::class);
-            $context->setSink($sink);
-            $this->streamContext = $context;
-        } else {
-            $context = new StreamContext($session, $sink);
-            $this->container->instance(StreamContext::class, $context);
-            $this->streamContext = $context;
-        }
+        try {
+            if ($this->container->bound(StreamContext::class)) {
+                $session = $this->container->make(StreamContext::class)->session();
+            }
+            if (! $session) {
+                $session = new StreamSession(
+                    streamId: uniqid('stream_', true),
+                    executionId: $executionId,
+                    options: $options,
+                    startedAtUnix: time()
+                );
+            }
 
-        $currentStatus = $this->repo->getStatus($executionId);
-        if ($currentStatus === 'queued' || $currentStatus === 'interrupted') {
-            $this->repo->started($executionId, $graph->name, State::toStoragePayload($state), $session->streamId);
-        }
+            $baseSink = $this->createStreamSink($session, $options);
+            $sink = $this->wrapStreamSink($baseSink, $options, $session);
+            if ($this->container->bound(StreamContext::class)) {
+                $context = $this->container->make(StreamContext::class);
+                $context->setSink($sink);
+                $this->streamContext = $context;
+            } else {
+                $context = new StreamContext($session, $sink);
+                $this->container->instance(StreamContext::class, $context);
+                $this->streamContext = $context;
+            }
 
-        if ($this->pulseExporter && $this->pulseExporter->isEnabled() && $this->pulseExporter->getTraceStartTime($executionId) === null) {
-            $executionStartDt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', microtime(true))) ?: new \DateTimeImmutable;
-            $this->events->dispatch(new GraphExecutionStarted($executionId, $graph->name, $state, $executionStartDt, $traceContext->getRootSpanId()));
-        }
+            $currentStatus = $this->repo->getStatus($executionId);
+            if ($currentStatus === 'queued' || $currentStatus === 'interrupted') {
+                $this->repo->started($executionId, $graph->name, State::toStoragePayload($state), $session->streamId);
+            }
 
-        if ($resumePayload !== null) {
-            $this->emitLifecycleEvent(
-                $sink,
+            if ($this->pulseExporter && $this->pulseExporter->isEnabled() && $this->pulseExporter->getTraceStartTime($executionId) === null) {
+                $executionStartDt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', microtime(true))) ?: new \DateTimeImmutable;
+                $this->events->dispatch(new GraphExecutionStarted($executionId, $graph->name, $state, $executionStartDt, $traceContext->getRootSpanId()));
+            }
+
+            if ($resumePayload !== null) {
+                $this->emitLifecycleEvent(
+                    $sink,
+                    $session,
+                    $startNode,
+                    $traceContext->getSpanId(),
+                    $traceContext->getParentSpanId(),
+                    'stream_resume',
+                    [
+                        'from_seq' => $resumePayload->fromSeq,
+                        'resumed_at_seq' => $resumePayload->resumedAtSeq,
+                        'gap_events' => $resumePayload->gapEvents,
+                        'checkpoint_id' => $resumePayload->checkpointId,
+                    ]
+                );
+            }
+        } catch (\Throwable $e) {
+            $this->handleStreamingSetupFailure(
+                $graph,
+                $state,
+                $executionId,
+                $e,
+                $sink ?? $baseSink,
                 $session,
-                $startNode,
-                $traceContext->getSpanId(),
-                $traceContext->getParentSpanId(),
-                'stream_resume',
-                [
-                    'from_seq' => $resumePayload->fromSeq,
-                    'resumed_at_seq' => $resumePayload->resumedAtSeq,
-                    'gap_events' => $resumePayload->gapEvents,
-                    'checkpoint_id' => $resumePayload->checkpointId,
-                ]
+                $traceContext,
+                $setupStartTime
             );
+            $this->contextManager->exitWithException($scope, $e);
+            $this->cleanupStreamContext();
+            throw $e;
         }
 
         $start = microtime(true);
