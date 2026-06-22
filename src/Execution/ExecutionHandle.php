@@ -286,6 +286,8 @@ final class ExecutionHandle
             interrupts: $this->options->interrupts
         );
         $handle = app(StreamResumption::class)->resumeStream($checkpoint->id, $input, $streamOptions);
+        $state = $handle->getFinalState();
+        $status = $state->hasInterrupt() ? ExecutionStatus::INTERRUPTED : ExecutionStatus::COMPLETED;
 
         return new self(
             executionId: $handle->executionId(),
@@ -295,8 +297,8 @@ final class ExecutionHandle
             resolver: $this->resolver,
             checkpoints: $this->checkpoints,
             streamHandle: $handle,
-            status: ExecutionStatus::COMPLETED,
-            finalState: $handle->getFinalState(),
+            status: $status,
+            finalState: $status === ExecutionStatus::COMPLETED ? $state : null,
             streamId: $handle->streamId()
         );
     }
