@@ -48,9 +48,9 @@ final class McpRequest
             $this->dispatchToolCalls($response);
         }
 
-        if ($this->trackTokens && isset($response->usage)) {
-            $promptTokens = $response->usage->promptTokens ?? 0;
-            $completionTokens = $response->usage->completionTokens ?? 0;
+        if ($this->trackTokens) {
+            $promptTokens = $response->usage->promptTokens;
+            $completionTokens = $response->usage->completionTokens;
             $durationMs = (microtime(true) - $startTime) * 1000;
             $this->events->dispatch(TokensUsed::fromLlmCall(
                 node: $this->nodeName,

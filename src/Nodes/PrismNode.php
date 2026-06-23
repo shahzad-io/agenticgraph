@@ -74,64 +74,21 @@ abstract class PrismNode extends AbstractNode
 
     protected bool $trackTokens = true;
 
-    private bool $suppressAutoTracking = false;
-
     private bool $wrappedMcpTools = false;
 
     protected function prism(): PendingTextRequest
     {
         $config = $this->model ?? (string) config('agenticgraph.prism.model');
         [$provider, $model] = $this->parseModel($config);
-        $startTime = microtime(true);
         $timeout = (int) config('agenticgraph.api.timeout', 30);
         $connectTimeout = (int) config('agenticgraph.api.connect_timeout', 10);
-        $request = $this->prismClient()->text()
+
+        return $this->prismClient()->text()
             ->using($provider, $model)
             ->withClientOptions([
                 'timeout' => $timeout,
                 'connect_timeout' => $connectTimeout,
             ]);
-        $request->onComplete(function ($pending, $messages, $response) use ($startTime, $provider, $model) {
-            if ($this->suppressAutoTracking) {
-                return;
-            }
-            if (! $this->trackTokens) {
-                return;
-            }
-            $usage = $this->resolveUsage($response);
-            if ($usage === null) {
-                return;
-            }
-            $durationMs = (microtime(true) - $startTime) * 1000;
-            $callType = 'text';
-            $toolCalls = [];
-            // @phpstan-ignore-next-line - Defensive coding for different response types
-            if (is_object($response) && property_exists($response, 'toolCalls')) {
-                $toolCalls = $response->toolCalls ?? [];
-                // @phpstan-ignore-next-line - Defensive coding for different response types
-            } elseif (is_array($response) && array_key_exists('toolCalls', $response)) {
-                // @phpstan-ignore-next-line - Defensive coding for different response types
-                $toolCalls = $response['toolCalls'] ?? [];
-            }
-            // @phpstan-ignore-next-line - Defensive coding for different response types
-            if (is_array($toolCalls) && $toolCalls !== []) {
-                $callType = 'tools';
-                $this->dispatchToolCalls($toolCalls, 'prism');
-            }
-            $this->events()->dispatch(TokensUsed::fromLlmCall(
-                node: $this->getName(),
-                callStartMicrotime: $startTime,
-                callDurationMs: $durationMs,
-                promptTokens: $usage['promptTokens'],
-                completionTokens: $usage['completionTokens'],
-                callType: $callType,
-                model: "{$provider}:{$model}",
-                prompt: $this->extractPromptFromMessages($messages),
-                response: $this->extractResponseText($response)
-            ));
-        });
-
-        return $request;
     }
 
     protected function buildStreamingRequest(StateContract $state): PendingTextRequest
@@ -230,9 +187,7 @@ abstract class PrismNode extends AbstractNode
         }
         $config = $this->model ?? (string) config('agenticgraph.prism.model');
         [$provider, $model] = $this->parseModel($config);
-        $this->suppressAutoTracking = true;
         $response = $this->prism()->withPrompt($promptText, $additionalContent)->asText();
-        $this->suppressAutoTracking = false;
         $responseText = $response->text;
         if ($useCache) {
             $this->cache()->put($cacheKey, $responseText, ($this->cacheTtl ?? (int) config('agenticgraph.prism.cache_ttl')) * 60);
@@ -273,11 +228,9 @@ abstract class PrismNode extends AbstractNode
             return $this->streamTextRequest($request);
         }
 
-        $this->suppressAutoTracking = true;
         $response = $this->prism()
             ->withMessages($messages)
             ->asText();
-        $this->suppressAutoTracking = false;
 
         $responseText = $response->text;
 
@@ -361,14 +314,14 @@ abstract class PrismNode extends AbstractNode
 
         $response = $request->generate();
 
-        if ($this->trackTokens && isset($response->usage)) {
+        if ($this->trackTokens) {
             $durationMs = (microtime(true) - $startTime) * 1000;
             $this->events()->dispatch(TokensUsed::fromLlmCall(
                 node: $this->getName(),
                 callStartMicrotime: $startTime,
                 callDurationMs: $durationMs,
-                promptTokens: $response->usage->promptTokens ?? 0,
-                completionTokens: $response->usage->completionTokens ?? 0,
+                promptTokens: $response->usage->promptTokens,
+                completionTokens: $response->usage->completionTokens,
                 callType: 'image',
                 model: "{$provider}:{$model}",
                 prompt: $prompt,
@@ -395,18 +348,18 @@ abstract class PrismNode extends AbstractNode
 
         $response = $request->asText();
 
-        if ($this->trackTokens && isset($response->usage)) {
+        if ($this->trackTokens) {
             $durationMs = (microtime(true) - $startTime) * 1000;
             $this->events()->dispatch(TokensUsed::fromLlmCall(
                 node: $this->getName(),
                 callStartMicrotime: $startTime,
                 callDurationMs: $durationMs,
-                promptTokens: $response->usage->promptTokens ?? 0,
-                completionTokens: $response->usage->completionTokens ?? 0,
+                promptTokens: $response->usage->promptTokens,
+                completionTokens: $response->usage->completionTokens,
                 callType: 'audio',
                 model: "{$provider}:{$model}",
                 prompt: null,  // Audio input, no text prompt
-                response: $response->text ?? null
+                response: $response->text
             ));
         }
 
@@ -517,9 +470,9 @@ abstract class PrismNode extends AbstractNode
             $sink = $context->sink();
             if ($sink === null) {
                 $response = $request->asText();
-                $this->dispatchToolCalls($response->toolCalls ?? [], 'prism');
+                $this->dispatchToolCalls($response->toolCalls, 'prism');
 
-                return $response->toolCalls ?? [];
+                return $response->toolCalls;
             }
             $traceContext = $this->resolveTraceContext();
             $adapter = new PrismStreamAdapter(
@@ -529,34 +482,27 @@ abstract class PrismNode extends AbstractNode
                 parentSpanId: $traceContext?->getParentSpanId()
             );
             $toolCalls = [];
-            $this->suppressAutoTracking = true;
-            try {
-                foreach ($request->asStream() as $event) {
-                    $streamEvent = $adapter->adapt($event);
-                    if ($streamEvent === null) {
-                        continue;
-                    }
-                    $sink->emit($streamEvent);
-                    if ($event instanceof ToolCallEvent) {
-                        $toolCalls[] = $event->toolCall;
-                    }
+            foreach ($request->asStream() as $event) {
+                $streamEvent = $adapter->adapt($event);
+                if ($streamEvent === null) {
+                    continue;
                 }
-            } finally {
-                $this->suppressAutoTracking = false;
+                $sink->emit($streamEvent);
+                if ($event instanceof ToolCallEvent) {
+                    $toolCalls[] = $event->toolCall;
+                }
             }
             $this->dispatchToolCalls($toolCalls, 'prism');
 
             return $toolCalls;
         }
 
-        $this->suppressAutoTracking = true;
         $response = $this->prism()
             ->withTools($tools)
             ->withPrompt($prompt)
             ->asText();
-        $this->suppressAutoTracking = false;
 
-        $this->dispatchToolCalls($response->toolCalls ?? [], 'prism');
+        $this->dispatchToolCalls($response->toolCalls, 'prism');
 
         if ($this->trackTokens) {
             $usage = $this->resolveUsage($response);
@@ -904,23 +850,18 @@ abstract class PrismNode extends AbstractNode
         );
         $text = '';
 
-        $this->suppressAutoTracking = true;
-        try {
-            foreach ($request->asStream() as $event) {
-                $streamEvent = $adapter->adapt($event);
-                if ($streamEvent === null) {
-                    continue;
-                }
-                $sink->emit($streamEvent);
-                if ($streamEvent->type() === 'text_delta') {
-                    $delta = $streamEvent->payload()['delta'] ?? '';
-                    if (is_string($delta) && $delta !== '') {
-                        $text .= $delta;
-                    }
+        foreach ($request->asStream() as $event) {
+            $streamEvent = $adapter->adapt($event);
+            if ($streamEvent === null) {
+                continue;
+            }
+            $sink->emit($streamEvent);
+            if ($streamEvent->type() === 'text_delta') {
+                $delta = $streamEvent->payload()['delta'] ?? '';
+                if (is_string($delta) && $delta !== '') {
+                    $text .= $delta;
                 }
             }
-        } finally {
-            $this->suppressAutoTracking = false;
         }
 
         return $text;
@@ -1179,9 +1120,7 @@ abstract class PrismNode extends AbstractNode
         $config = $this->model ?? (string) config('agenticgraph.prism.model');
         [$provider, $model] = $this->parseModel($config);
 
-        $this->suppressAutoTracking = true;
         $response = $this->prism()->withPrompt($promptText, $additionalContent)->asText();
-        $this->suppressAutoTracking = false;
 
         $responseText = $response->text;
 
@@ -1189,14 +1128,14 @@ abstract class PrismNode extends AbstractNode
             $this->cache()->put($cacheKey, $responseText, ($this->cacheTtl ?? (int) config('agenticgraph.prism.cache_ttl')) * 60);
         }
 
-        if ($this->trackTokens && isset($response->usage)) {
+        if ($this->trackTokens) {
             $durationMs = (microtime(true) - $startTime) * 1000;
             $this->events()->dispatch(TokensUsed::fromLlmCall(
                 node: $this->getName(),
                 callStartMicrotime: $startTime,
                 callDurationMs: $durationMs,
-                promptTokens: $response->usage->promptTokens ?? 0,
-                completionTokens: $response->usage->completionTokens ?? 0,
+                promptTokens: $response->usage->promptTokens,
+                completionTokens: $response->usage->completionTokens,
                 callType: 'text',
                 model: "{$provider}:{$model}",
                 prompt: $promptText,
@@ -1239,14 +1178,14 @@ abstract class PrismNode extends AbstractNode
             $this->cache()->put($cacheKey, $responseText, ($this->cacheTtl ?? (int) config('agenticgraph.prism.cache_ttl')) * 60);
         }
 
-        if ($this->trackTokens && isset($response->usage)) {
+        if ($this->trackTokens) {
             $durationMs = (microtime(true) - $startTime) * 1000;
             $this->events()->dispatch(TokensUsed::fromLlmCall(
                 node: $this->getName(),
                 callStartMicrotime: $startTime,
                 callDurationMs: $durationMs,
-                promptTokens: $response->usage->promptTokens ?? 0,
-                completionTokens: $response->usage->completionTokens ?? 0,
+                promptTokens: $response->usage->promptTokens,
+                completionTokens: $response->usage->completionTokens,
                 callType: 'text',
                 model: "{$provider}:{$model}",
                 prompt: $promptText,

@@ -110,18 +110,18 @@ class PrismRouter extends AbstractRouter implements RouterInterface
             ->asText();
 
         // Dispatch token tracking event
-        if ($this->trackTokens && isset($response->usage)) {
+        if ($this->trackTokens) {
             $durationMs = (microtime(true) - $startTime) * 1000;
             $this->events->dispatch(TokensUsed::fromLlmCall(
                 node: 'PrismRouter',
                 callStartMicrotime: $startTime,
                 callDurationMs: $durationMs,
-                promptTokens: $response->usage->promptTokens ?? 0,
-                completionTokens: $response->usage->completionTokens ?? 0,
+                promptTokens: $response->usage->promptTokens,
+                completionTokens: $response->usage->completionTokens,
                 callType: 'router',
                 model: "{$provider}:{$model}",
                 prompt: $prompt,
-                response: $response->text ?? null
+                response: $response->text
             ));
         }
 
