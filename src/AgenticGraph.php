@@ -220,7 +220,7 @@ class AgenticGraph
         return $streamId;
     }
 
-    public function interruptStatus(string $executionId): InterruptStatus
+    public function interruptDetails(string $executionId): InterruptStatus
     {
         $handle = $this->getExecution($executionId)->refresh();
         $interrupt = $handle->pendingInterrupt();

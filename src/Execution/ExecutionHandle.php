@@ -224,6 +224,47 @@ final class ExecutionHandle
             ->first();
     }
 
+    public function interruptReason(): ?string
+    {
+        if (! $this->isInterrupted()) {
+            return null;
+        }
+
+        $pending = $this->pendingInterrupt();
+        if ($pending !== null) {
+            return $pending->reason();
+        }
+
+        $checkpoint = $this->interruptAnchorCheckpoint();
+
+        return is_string($checkpoint?->metadata['interrupt_reason'] ?? null)
+            ? $checkpoint->metadata['interrupt_reason']
+            : null;
+    }
+
+    public function checkpointId(): ?string
+    {
+        if (! $this->isInterrupted()) {
+            return null;
+        }
+
+        return $this->resumeAnchorCheckpointId();
+    }
+
+    public function interruptedAtNode(): ?string
+    {
+        if (! $this->isInterrupted()) {
+            return null;
+        }
+
+        $pending = $this->pendingInterrupt();
+        if ($pending !== null) {
+            return $pending->nodeName();
+        }
+
+        return $this->interruptAnchorCheckpoint()?->currentNode;
+    }
+
     public function resume(mixed $input): ExecutionHandle
     {
         if ($this->isAsync()) {
@@ -255,12 +296,7 @@ final class ExecutionHandle
             );
         }
 
-        $pending = $this->pendingInterrupt();
-        $checkpointId = $pending?->checkpointId();
-
-        if ($checkpointId === null && $this->finalState !== null && $this->finalState->hasInterrupt()) {
-            $checkpointId = $this->finalState->getInterruptCheckpointId();
-        }
+        $checkpointId = $this->resumeAnchorCheckpointId();
 
         $checkpoint = $checkpointId !== null
             ? $this->checkpoints->load($checkpointId)
@@ -307,6 +343,35 @@ final class ExecutionHandle
             finalState: $status === ExecutionStatus::COMPLETED ? $state : null,
             streamId: $handle->streamId()
         );
+    }
+
+    private function resumeAnchorCheckpointId(): ?string
+    {
+        $pending = $this->pendingInterrupt();
+        if ($pending?->checkpointId() !== null) {
+            return $pending->checkpointId();
+        }
+
+        if ($this->finalState !== null && $this->finalState->hasInterrupt()) {
+            return $this->finalState->getInterruptCheckpointId();
+        }
+
+        $state = $this->latestState();
+        if ($state?->hasInterrupt()) {
+            return $state->getInterruptCheckpointId();
+        }
+
+        return null;
+    }
+
+    private function interruptAnchorCheckpoint(): ?Checkpoint
+    {
+        $checkpointId = $this->resumeAnchorCheckpointId();
+        if ($checkpointId === null) {
+            return null;
+        }
+
+        return $this->checkpoints->load($checkpointId);
     }
 
     private function resolvePendingInterruptForCheckpoint(string $checkpointId, mixed $input): void

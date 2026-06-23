@@ -258,7 +258,7 @@ it('returns interrupt status with latest state', function () {
     $handle = AgenticGraph::execute('interrupt-status-graph', $state);
     $handle->refresh();
 
-    $status = AgenticGraph::interruptStatus($handle->id());
+    $status = AgenticGraph::interruptDetails($handle->id());
 
     expect($status->status)->toBe(ExecutionStatus::INTERRUPTED);
     expect($status->interrupt)->not->toBeNull()
