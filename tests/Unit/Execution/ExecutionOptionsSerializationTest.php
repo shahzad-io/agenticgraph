@@ -20,8 +20,34 @@ it('round-trips execution options through canonical array form', function () {
         'streaming' => 'broadcast',
         'interrupts' => false,
         'estimated_duration_seconds' => 42,
+        'node_filter' => null,
+        'event_type_filter' => null,
     ])
         ->and($restored)->toEqual($original);
+});
+
+it('round-trips node and event type filters through canonical array form', function () {
+    $original = new ExecutionOptions(
+        mode: ExecutionMode::ASYNC,
+        streaming: StreamingMode::SSE,
+        nodeFilter: ['alpha', 'gamma'],
+        eventTypeFilter: ['text_delta', 'node_completed'],
+    );
+
+    $array = $original->toArray();
+    $restored = ExecutionOptions::fromArray($array);
+    $stored = ExecutionOptions::fromStored(json_encode($array, JSON_THROW_ON_ERROR));
+
+    expect($array)->toBe([
+        'mode' => 'async',
+        'streaming' => 'sse',
+        'interrupts' => true,
+        'estimated_duration_seconds' => null,
+        'node_filter' => ['alpha', 'gamma'],
+        'event_type_filter' => ['text_delta', 'node_completed'],
+    ])
+        ->and($restored)->toEqual($original)
+        ->and($stored)->toEqual($original);
 });
 
 it('defaults interrupts to true when missing from stored array', function () {
@@ -31,7 +57,25 @@ it('defaults interrupts to true when missing from stored array', function () {
     ]);
 
     expect($restored->interrupts)->toBeTrue()
-        ->and($restored->estimatedDurationSeconds)->toBeNull();
+        ->and($restored->estimatedDurationSeconds)->toBeNull()
+        ->and($restored->nodeFilter)->toBeNull()
+        ->and($restored->eventTypeFilter)->toBeNull();
+});
+
+it('deserializes legacy stored rows without filter keys to null filters', function () {
+    $legacyJson = json_encode([
+        'mode' => 'async',
+        'streaming' => 'sse',
+        'interrupts' => true,
+        'estimated_duration_seconds' => null,
+    ], JSON_THROW_ON_ERROR);
+
+    $restored = ExecutionOptions::fromStored($legacyJson);
+
+    expect($restored->nodeFilter)->toBeNull()
+        ->and($restored->eventTypeFilter)->toBeNull()
+        ->and($restored->mode)->toBe(ExecutionMode::ASYNC)
+        ->and($restored->streaming)->toBe(StreamingMode::SSE);
 });
 
 it('returns constructor defaults for null or empty stored json', function () {

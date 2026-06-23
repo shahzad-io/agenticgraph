@@ -78,7 +78,9 @@ it('withStreaming returns a clone with streaming replaced and other fields prese
         mode: ExecutionMode::SYNC,
         streaming: StreamingMode::AUTO,
         interrupts: false,
-        estimatedDurationSeconds: 42
+        estimatedDurationSeconds: 42,
+        nodeFilter: ['alpha'],
+        eventTypeFilter: ['text_delta'],
     );
 
     $resolved = $original->withStreaming(StreamingMode::SSE);
@@ -88,7 +90,27 @@ it('withStreaming returns a clone with streaming replaced and other fields prese
         ->and($original->streaming)->toBe(StreamingMode::AUTO)
         ->and($resolved->mode)->toBe(ExecutionMode::SYNC)
         ->and($resolved->interrupts)->toBeFalse()
-        ->and($resolved->estimatedDurationSeconds)->toBe(42);
+        ->and($resolved->estimatedDurationSeconds)->toBe(42)
+        ->and($resolved->nodeFilter)->toBe(['alpha'])
+        ->and($resolved->eventTypeFilter)->toBe(['text_delta']);
+});
+
+it('withNodeFilter and withEventTypeFilter return clones without mutating the original', function () {
+    $original = new ExecutionOptions(
+        mode: ExecutionMode::ASYNC,
+        streaming: StreamingMode::SSE,
+        nodeFilter: ['keep'],
+    );
+
+    $withNodes = $original->withNodeFilter(['alpha', 'beta']);
+    $withEvents = $original->withEventTypeFilter(['node_completed']);
+
+    expect($withNodes)->not->toBe($original)
+        ->and($withNodes->nodeFilter)->toBe(['alpha', 'beta'])
+        ->and($withNodes->eventTypeFilter)->toBeNull()
+        ->and($withEvents->eventTypeFilter)->toBe(['node_completed'])
+        ->and($original->nodeFilter)->toBe(['keep'])
+        ->and($original->eventTypeFilter)->toBeNull();
 });
 
 it('resolveStreamingMode returns non-AUTO modes unchanged', function () {

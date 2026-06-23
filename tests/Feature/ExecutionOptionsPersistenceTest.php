@@ -95,6 +95,29 @@ it('persists resolved ASYNC+NONE options after dispatch and job run', function (
     expect($persisted)->toEqual($expected);
 });
 
+it('persists node and event type filters through async dispatch and job run', function () {
+    Bus::fake();
+    registerPersistenceGraph('p3t1-async-filter');
+
+    $expected = new ExecutionOptions(
+        mode: ExecutionMode::ASYNC,
+        streaming: StreamingMode::SSE,
+        nodeFilter: ['alpha', 'gamma'],
+        eventTypeFilter: ['text_delta'],
+    );
+    $handle = AgenticGraph::execute('p3t1-async-filter', new State, $expected);
+
+    $queued = persistedExecutionOptions($handle->id());
+    expect($queued)->toEqual($expected);
+
+    $job = runCapturedPersistenceJob();
+    $persisted = persistedExecutionOptions($job->executionId);
+
+    expect($persisted)->toEqual($expected)
+        ->and($job->executionOptions?->nodeFilter)->toBe(['alpha', 'gamma'])
+        ->and($job->executionOptions?->eventTypeFilter)->toBe(['text_delta']);
+});
+
 it('persists resolved ASYNC+BROADCAST options after dispatch and job run', function () {
     Bus::fake();
     registerPersistenceGraph('p2t1-async-broadcast');
