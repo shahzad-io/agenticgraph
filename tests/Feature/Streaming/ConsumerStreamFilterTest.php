@@ -12,34 +12,32 @@ use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Jobs\ExecuteGraphJob;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
-use Shahzad\AgenticGraph\Nodes\Contracts\StreamableNodeInterface;
 use Shahzad\AgenticGraph\Nodes\PrismNode;
 use Shahzad\AgenticGraph\State\State;
-use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
 use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
 use Shahzad\AgenticGraph\Streaming\StreamContext;
 
-class FilterStreamNodeA extends AbstractNode implements StreamableNodeInterface
+class FilterStreamNodeA extends AbstractNode
 {
     public function execute(StateContract $state): StateContract
     {
+        $this->emitDelta('a');
+
         return $state->set('a_ran', true);
     }
 
-    public function executeStreaming(StateContract $state, StreamSinkInterface $sink): StateContract
+    protected function emitDelta(string $nodeName): void
     {
-        $this->emitDelta($sink, 'a');
+        if (! $this->isStreaming()) {
+            return;
+        }
 
-        return $this->execute($state);
-    }
-
-    protected function emitDelta(StreamSinkInterface $sink, string $nodeName): void
-    {
-        $session = app(StreamContext::class)->session();
+        $context = app(StreamContext::class);
+        $session = $context->session();
         $session->seq++;
 
-        $sink->emit(new StreamEventImpl(
+        $context->sink()?->emit(new StreamEventImpl(
             streamId: $session->streamId,
             executionId: $session->executionId,
             nodeName: $nodeName,
@@ -58,14 +56,9 @@ class FilterStreamNodeB extends FilterStreamNodeA
 {
     public function execute(StateContract $state): StateContract
     {
+        $this->emitDelta('b');
+
         return $state->set('b_ran', true);
-    }
-
-    public function executeStreaming(StateContract $state, StreamSinkInterface $sink): StateContract
-    {
-        $this->emitDelta($sink, 'b');
-
-        return $this->execute($state);
     }
 }
 
@@ -73,43 +66,36 @@ class FilterStreamNodeC extends FilterStreamNodeA
 {
     public function execute(StateContract $state): StateContract
     {
+        $this->emitDelta('c');
+
         return $state->set('c_ran', true);
-    }
-
-    public function executeStreaming(StateContract $state, StreamSinkInterface $sink): StateContract
-    {
-        $this->emitDelta($sink, 'c');
-
-        return $this->execute($state);
     }
 }
 
-class FilterInterruptStreamNodeB extends PrismNode implements StreamableNodeInterface
+class FilterInterruptStreamNodeB extends PrismNode
 {
     public function execute(StateContract $state): StateContract
     {
+        if ($this->isStreaming()) {
+            $context = app(StreamContext::class);
+            $session = $context->session();
+            $session->seq++;
+
+            $context->sink()?->emit(new StreamEventImpl(
+                streamId: $session->streamId,
+                executionId: $session->executionId,
+                nodeName: 'b',
+                spanId: null,
+                parentSpanId: null,
+                type: 'text_delta',
+                payload: ['delta' => 'b'],
+                seq: $session->seq,
+                nodeSeq: $session->seq,
+                occurredAt: new DateTimeImmutable
+            ));
+        }
+
         return $state->set('b_ran', true);
-    }
-
-    public function executeStreaming(StateContract $state, StreamSinkInterface $sink): StateContract
-    {
-        $session = app(StreamContext::class)->session();
-        $session->seq++;
-
-        $sink->emit(new StreamEventImpl(
-            streamId: $session->streamId,
-            executionId: $session->executionId,
-            nodeName: 'b',
-            spanId: null,
-            parentSpanId: null,
-            type: 'text_delta',
-            payload: ['delta' => 'b'],
-            seq: $session->seq,
-            nodeSeq: $session->seq,
-            occurredAt: new DateTimeImmutable
-        ));
-
-        return $this->execute($state);
     }
 
     public function shouldInterrupt(StateContract $state): bool

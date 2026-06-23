@@ -12,20 +12,14 @@ use Shahzad\AgenticGraph\Http\Controllers\StreamController;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
 use Shahzad\AgenticGraph\Nodes\PrismNode;
 use Shahzad\AgenticGraph\State\State;
-use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamEvent;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
 use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
 use Shahzad\AgenticGraph\Streaming\StreamEventEnvelope;
 
-class StoreTerminalCompleteNode extends AbstractNode implements \Shahzad\AgenticGraph\Nodes\Contracts\StreamableNodeInterface
+class StoreTerminalCompleteNode extends AbstractNode
 {
     public function execute(StateContract $state): StateContract
-    {
-        return $state->set('done', true);
-    }
-
-    public function executeStreaming(StateContract $state, StreamSinkInterface $sink): StateContract
     {
         return $state->set('done', true);
     }
@@ -47,21 +41,11 @@ class StoreTerminalInterruptNode extends PrismNode
     {
         return 'Needs approval';
     }
-
-    public function executeStreaming(StateContract $state, StreamSinkInterface $sink): StateContract
-    {
-        return $state->set('visited', true);
-    }
 }
 
-class StoreTerminalFailingNode extends AbstractNode implements \Shahzad\AgenticGraph\Nodes\Contracts\StreamableNodeInterface
+class StoreTerminalFailingNode extends AbstractNode
 {
     public function execute(StateContract $state): StateContract
-    {
-        throw new RuntimeException('store terminal failure');
-    }
-
-    public function executeStreaming(StateContract $state, StreamSinkInterface $sink): StateContract
     {
         throw new RuntimeException('store terminal failure');
     }

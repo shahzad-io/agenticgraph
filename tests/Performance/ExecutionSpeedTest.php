@@ -8,66 +8,60 @@ it('executes 100-node graph under 5 seconds', function () {
     expect($duration)->toBeLessThan(5.0);
 });
 
-class PerfStreamNode extends \Shahzad\AgenticGraph\Nodes\AbstractNode implements \Shahzad\AgenticGraph\Nodes\Contracts\StreamableNodeInterface
+class PerfStreamNode extends \Shahzad\AgenticGraph\Nodes\AbstractNode
 {
     public function execute(\Shahzad\AgenticGraph\Contracts\StateContract $state): \Shahzad\AgenticGraph\Contracts\StateContract
     {
-        return $state->set('count', 1000);
-    }
+        if ($this->isStreaming()) {
+            $context = app(\Shahzad\AgenticGraph\Streaming\StreamContext::class);
+            $session = $context->session();
+            $sink = $context->sink();
 
-    public function executeStreaming(
-        \Shahzad\AgenticGraph\Contracts\StateContract $state,
-        \Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface $sink
-    ): \Shahzad\AgenticGraph\Contracts\StateContract {
-        $session = app(\Shahzad\AgenticGraph\Streaming\StreamContext::class)->session();
-
-        for ($i = 0; $i < 1000; $i++) {
-            $session->seq++;
-            $sink->emit(new \Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl(
-                streamId: $session->streamId,
-                executionId: $session->executionId,
-                nodeName: 'perf',
-                spanId: null,
-                parentSpanId: null,
-                type: 'text_delta',
-                payload: ['delta' => (string) $i],
-                seq: $session->seq,
-                nodeSeq: $i + 1,
-                occurredAt: new DateTimeImmutable('now')
-            ));
+            for ($i = 0; $i < 1000; $i++) {
+                $session->seq++;
+                $sink?->emit(new \Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl(
+                    streamId: $session->streamId,
+                    executionId: $session->executionId,
+                    nodeName: 'perf',
+                    spanId: null,
+                    parentSpanId: null,
+                    type: 'text_delta',
+                    payload: ['delta' => (string) $i],
+                    seq: $session->seq,
+                    nodeSeq: $i + 1,
+                    occurredAt: new DateTimeImmutable('now')
+                ));
+            }
         }
 
         return $state->set('count', 1000);
     }
 }
 
-class LoadStreamNode extends \Shahzad\AgenticGraph\Nodes\AbstractNode implements \Shahzad\AgenticGraph\Nodes\Contracts\StreamableNodeInterface
+class LoadStreamNode extends \Shahzad\AgenticGraph\Nodes\AbstractNode
 {
     public function execute(\Shahzad\AgenticGraph\Contracts\StateContract $state): \Shahzad\AgenticGraph\Contracts\StateContract
     {
-        return $state->set('count', 10000);
-    }
+        if ($this->isStreaming()) {
+            $context = app(\Shahzad\AgenticGraph\Streaming\StreamContext::class);
+            $session = $context->session();
+            $sink = $context->sink();
 
-    public function executeStreaming(
-        \Shahzad\AgenticGraph\Contracts\StateContract $state,
-        \Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface $sink
-    ): \Shahzad\AgenticGraph\Contracts\StateContract {
-        $session = app(\Shahzad\AgenticGraph\Streaming\StreamContext::class)->session();
-
-        for ($i = 0; $i < 10000; $i++) {
-            $session->seq++;
-            $sink->emit(new \Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl(
-                streamId: $session->streamId,
-                executionId: $session->executionId,
-                nodeName: 'load',
-                spanId: null,
-                parentSpanId: null,
-                type: 'text_delta',
-                payload: ['delta' => (string) $i],
-                seq: $session->seq,
-                nodeSeq: $i + 1,
-                occurredAt: new DateTimeImmutable('now')
-            ));
+            for ($i = 0; $i < 10000; $i++) {
+                $session->seq++;
+                $sink?->emit(new \Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl(
+                    streamId: $session->streamId,
+                    executionId: $session->executionId,
+                    nodeName: 'load',
+                    spanId: null,
+                    parentSpanId: null,
+                    type: 'text_delta',
+                    payload: ['delta' => (string) $i],
+                    seq: $session->seq,
+                    nodeSeq: $i + 1,
+                    occurredAt: new DateTimeImmutable('now')
+                ));
+            }
         }
 
         return $state->set('count', 10000);

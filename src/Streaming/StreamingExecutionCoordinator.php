@@ -32,7 +32,6 @@ use Shahzad\AgenticGraph\Graph\Graph;
 use Shahzad\AgenticGraph\Middleware\LoggingMiddleware;
 use Shahzad\AgenticGraph\Middleware\TimingMiddleware;
 use Shahzad\AgenticGraph\Middleware\ValidationMiddleware;
-use Shahzad\AgenticGraph\Nodes\Contracts\StreamableNodeInterface;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
@@ -431,13 +430,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                     );
 
                     try {
-                        if ($node instanceof StreamableNodeInterface && $this->shouldExecuteStreaming($node)) {
-                            $node->onBefore($state);
-                            $state = $node->executeStreaming($state, $sink);
-                            $node->onAfter($inputState, $state);
-                        } else {
-                            $state = $this->runNodeWithMiddleware($state, $node, $executionId, $current, $spanId);
-                        }
+                        $state = $this->runNodeWithMiddleware($state, $node, $executionId, $current, $spanId);
                     } catch (\Throwable $e) {
                         $nodeDuration = microtime(true) - $nodeStartTime;
                         $this->events->dispatch(new NodeExecutionFailed(
@@ -613,6 +606,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                 $delay = $node->getRetryDelay();
                 while (true) {
                     $attemptStart = microtime(true);
+                    $this->streamContext?->resetNodeAttemptEmission();
                     try {
                         $node->onBefore($state);
                         $result = $node->execute($state);
@@ -623,6 +617,9 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                         $attempts++;
                         $durationMs = (microtime(true) - $attemptStart) * 1000;
                         $willRetry = $attempts <= $max && $node->shouldRetry($e);
+                        if ($this->streamContext?->isStreamingActive() && $this->streamContext->nodeAttemptHasContentEmission()) {
+                            $willRetry = false;
+                        }
                         $startedAt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $attemptStart)) ?: new \DateTimeImmutable;
                         $this->events->dispatch(new NodeExecutionFailed(
                             $executionId,
@@ -688,17 +685,6 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
         $nodeSeqs->{$nodeName} = $next;
 
         return $next;
-    }
-
-    private function shouldExecuteStreaming(StreamableNodeInterface $node): bool
-    {
-        if ($node instanceof \Shahzad\AgenticGraph\Nodes\PrismNode) {
-            $method = new \ReflectionMethod($node, 'executeStreaming');
-
-            return $method->getDeclaringClass()->getName() !== \Shahzad\AgenticGraph\Nodes\PrismNode::class;
-        }
-
-        return true;
     }
 
     protected function determineNext(Graph $graph, string $current, StateContract $state): mixed

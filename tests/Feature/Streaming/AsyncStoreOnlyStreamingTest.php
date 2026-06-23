@@ -12,10 +12,8 @@ use Shahzad\AgenticGraph\Facades\AgenticGraph;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Jobs\ExecuteGraphJob;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
-use Shahzad\AgenticGraph\Nodes\Contracts\StreamableNodeInterface;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamEvent;
-use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
 use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
 use Shahzad\AgenticGraph\Streaming\Sinks\NullTransportSink;
@@ -25,61 +23,61 @@ use Shahzad\AgenticGraph\Streaming\StreamOptions;
 use Shahzad\AgenticGraph\Streaming\StreamSession;
 use Shahzad\AgenticGraph\Streaming\StreamSinkFactory;
 
-class AsyncStoreOnlyStreamNode extends AbstractNode implements StreamableNodeInterface
+class AsyncStoreOnlyStreamNode extends AbstractNode
 {
     public function execute(StateContract $state): StateContract
     {
+        if ($this->isStreaming()) {
+            $context = app(StreamContext::class);
+            $session = $context->session();
+            $session->seq++;
+
+            $context->sink()?->emit(new StreamEventImpl(
+                streamId: $session->streamId,
+                executionId: $session->executionId,
+                nodeName: 'async-stream',
+                spanId: null,
+                parentSpanId: null,
+                type: 'text_delta',
+                payload: ['delta' => 'async'],
+                seq: $session->seq,
+                nodeSeq: 1,
+                occurredAt: new DateTimeImmutable
+            ));
+
+            return $state->set('streamed', true);
+        }
+
         return $state;
-    }
-
-    public function executeStreaming(StateContract $state, StreamSinkInterface $sink): StateContract
-    {
-        $session = app(StreamContext::class)->session();
-        $session->seq++;
-
-        $sink->emit(new StreamEventImpl(
-            streamId: $session->streamId,
-            executionId: $session->executionId,
-            nodeName: 'async-stream',
-            spanId: null,
-            parentSpanId: null,
-            type: 'text_delta',
-            payload: ['delta' => 'async'],
-            seq: $session->seq,
-            nodeSeq: 1,
-            occurredAt: new DateTimeImmutable
-        ));
-
-        return $state->set('streamed', true);
     }
 }
 
-class AsyncStoreOnlyIteratorNode extends AbstractNode implements StreamableNodeInterface
+class AsyncStoreOnlyIteratorNode extends AbstractNode
 {
     public function execute(StateContract $state): StateContract
     {
+        if ($this->isStreaming()) {
+            $context = app(StreamContext::class);
+            $session = $context->session();
+            $session->seq++;
+
+            $context->sink()?->emit(new StreamEventImpl(
+                streamId: $session->streamId,
+                executionId: $session->executionId,
+                nodeName: 'sync-iterator',
+                spanId: null,
+                parentSpanId: null,
+                type: 'text_delta',
+                payload: ['delta' => 'iterator'],
+                seq: $session->seq,
+                nodeSeq: 1,
+                occurredAt: new DateTimeImmutable
+            ));
+
+            return $state->set('path', 'streaming');
+        }
+
         return $state->set('path', 'sync');
-    }
-
-    public function executeStreaming(StateContract $state, StreamSinkInterface $sink): StateContract
-    {
-        $session = app(StreamContext::class)->session();
-        $session->seq++;
-
-        $sink->emit(new StreamEventImpl(
-            streamId: $session->streamId,
-            executionId: $session->executionId,
-            nodeName: 'sync-iterator',
-            spanId: null,
-            parentSpanId: null,
-            type: 'text_delta',
-            payload: ['delta' => 'iterator'],
-            seq: $session->seq,
-            nodeSeq: 1,
-            occurredAt: new DateTimeImmutable
-        ));
-
-        return $state->set('path', 'streaming');
     }
 }
 

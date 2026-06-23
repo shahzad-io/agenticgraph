@@ -10,7 +10,6 @@ use Shahzad\AgenticGraph\Facades\AgenticGraph;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Nodes\PrismNode;
 use Shahzad\AgenticGraph\State\State;
-use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
 
 class InterruptOptionsNode extends PrismNode
 {
@@ -45,11 +44,6 @@ class InterruptOptionsStreamNode extends PrismNode
     public function getInterruptReason(StateContract $state): string
     {
         return 'Always interrupt for interrupt-options streaming tests';
-    }
-
-    public function executeStreaming(StateContract $state, StreamSinkInterface $sink): StateContract
-    {
-        return $state->set('executed', true);
     }
 }
 

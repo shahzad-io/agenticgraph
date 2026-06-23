@@ -19,19 +19,22 @@ use Shahzad\AgenticGraph\Facades\AgenticGraph;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Http\Controllers\StreamController;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
-use Shahzad\AgenticGraph\Nodes\Contracts\StreamableNodeInterface;
 use Shahzad\AgenticGraph\Nodes\PrismNode;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamEvent;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
 use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
+use Shahzad\AgenticGraph\Streaming\NodeStreamAccumulator;
+use Shahzad\AgenticGraph\Streaming\PrismStreamAdapter;
 use Shahzad\AgenticGraph\Streaming\Sinks\BroadcastSink;
 use Shahzad\AgenticGraph\Streaming\Sinks\MemorySink;
 use Shahzad\AgenticGraph\Streaming\StreamEventEnvelope;
 use Shahzad\AgenticGraph\Streaming\Store\DatabaseStreamStore;
 use Shahzad\AgenticGraph\Streaming\Store\RedisStreamStore;
 use Shahzad\AgenticGraph\Streaming\StreamContext;
+use Shahzad\AgenticGraph\Streaming\StreamOptions;
+use Shahzad\AgenticGraph\Streaming\StreamSession;
 use Shahzad\AgenticGraph\Streaming\StreamStatus;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 
@@ -191,6 +194,35 @@ class IntegrationStreamingNode extends PrismNode
 
     public function execute(StateContract $state): StateContract
     {
+        if ($this->isStreaming()) {
+            $context = app(StreamContext::class);
+            $sink = $context->sink();
+            $traceContext = null;
+            try {
+                $traceContext = app(TraceContext::class);
+            } catch (\Illuminate\Contracts\Container\BindingResolutionException) {
+            }
+
+            $adapter = new PrismStreamAdapter(
+                session: $context->session(),
+                nodeName: $this->getName(),
+                spanId: $traceContext?->getSpanId(),
+                parentSpanId: $traceContext?->getParentSpanId()
+            );
+            $accumulator = new NodeStreamAccumulator($state);
+
+            foreach ($this->buildStreamingRequest($state)->asStream() as $event) {
+                $streamEvent = $adapter->adapt($event);
+                if ($streamEvent === null) {
+                    continue;
+                }
+                $sink?->emit($streamEvent);
+                $accumulator->apply($streamEvent);
+            }
+
+            return $accumulator->finalize();
+        }
+
         return $state->set('text', 'Hello world')->set('tool_calls', [
             [
                 'tool_id' => 'tool-1',
@@ -211,6 +243,18 @@ class IntegrationStreamingNode extends PrismNode
     {
         return new IntegrationFakeStreamingRequest($this->events);
     }
+}
+
+function bindEndToEndStreamContextWithSink(StreamSinkInterface $sink, string $executionId = 'exec-1'): void
+{
+    app()->forgetInstance(StreamContext::class);
+    $session = new StreamSession(
+        streamId: uniqid('stream_', true),
+        executionId: $executionId,
+        options: new StreamOptions,
+        startedAtUnix: time()
+    );
+    app()->instance(StreamContext::class, new StreamContext($session, $sink));
 }
 
 it('streams prism node events into the stream store', function () {
@@ -240,7 +284,9 @@ it('streams prism node events into the stream store', function () {
     $sink = new StoreWritingSink($store);
     $state = new State(['prompt' => 'Hello']);
 
-    $streamed = $node->executeStreaming($state, $sink);
+    bindEndToEndStreamContextWithSink($sink);
+    $streamed = $node->execute($state);
+    app()->forgetInstance(StreamContext::class);
     $nonStreamed = $node->execute($state);
 
     expect($streamed->get('text'))->toBe($nonStreamed->get('text'))
@@ -252,33 +298,33 @@ it('streams prism node events into the stream store', function () {
     expect($stored)->toHaveCount(6);
 });
 
-class StreamableTestNode extends AbstractNode implements StreamableNodeInterface
+class StreamableTestNode extends AbstractNode
 {
     public function execute(StateContract $state): StateContract
     {
+        if ($this->isStreaming()) {
+            $context = app(StreamContext::class);
+            $session = $context->session();
+            $trace = app(TraceContext::class);
+            $session->seq++;
+
+            $context->sink()?->emit(new StreamEventImpl(
+                streamId: $session->streamId,
+                executionId: $session->executionId,
+                nodeName: 'alpha',
+                spanId: $trace->getSpanId(),
+                parentSpanId: $trace->getParentSpanId(),
+                type: 'text_delta',
+                payload: ['delta' => 'hi'],
+                seq: $session->seq,
+                nodeSeq: 1,
+                occurredAt: new DateTimeImmutable
+            ));
+
+            return $state->set('path', 'streaming');
+        }
+
         return $state->set('path', 'sync');
-    }
-
-    public function executeStreaming(StateContract $state, StreamSinkInterface $sink): StateContract
-    {
-        $session = app(StreamContext::class)->session();
-        $trace = app(TraceContext::class);
-        $session->seq++;
-
-        $sink->emit(new StreamEventImpl(
-            streamId: $session->streamId,
-            executionId: $session->executionId,
-            nodeName: 'alpha',
-            spanId: $trace->getSpanId(),
-            parentSpanId: $trace->getParentSpanId(),
-            type: 'text_delta',
-            payload: ['delta' => 'hi'],
-            seq: $session->seq,
-            nodeSeq: 1,
-            occurredAt: new DateTimeImmutable
-        ));
-
-        return $state->set('path', 'streaming');
     }
 }
 
@@ -290,130 +336,118 @@ class NonStreamableTestNode extends AbstractNode
     }
 }
 
-class StreamContextCapturingNode extends AbstractNode implements StreamableNodeInterface
+class StreamContextCapturingNode extends AbstractNode
 {
     public function execute(StateContract $state): StateContract
     {
+        if ($this->isStreaming()) {
+            $session = app(StreamContext::class)->session();
+
+            return $state->set('stream_id', $session->streamId);
+        }
+
         return $state;
-    }
-
-    public function executeStreaming(StateContract $state, StreamSinkInterface $sink): StateContract
-    {
-        $session = app(StreamContext::class)->session();
-
-        return $state->set('stream_id', $session->streamId);
     }
 }
 
-class ThrowingStreamableNode extends AbstractNode implements StreamableNodeInterface
+class ThrowingStreamableNode extends AbstractNode
 {
     public function execute(StateContract $state): StateContract
     {
-        return $state;
-    }
+        if ($this->isStreaming()) {
+            throw new RuntimeException('streaming node failed');
+        }
 
-    public function executeStreaming(StateContract $state, StreamSinkInterface $sink): StateContract
-    {
-        throw new RuntimeException('streaming node failed');
+        return $state;
     }
 }
 
-class SilentStreamNode extends AbstractNode implements StreamableNodeInterface
+class SilentStreamNode extends AbstractNode
 {
     public function execute(StateContract $state): StateContract
     {
         return $state->set('silent', true);
     }
-
-    public function executeStreaming(StateContract $state, StreamSinkInterface $sink): StateContract
-    {
-        return $state->set('silent', true);
-    }
 }
 
-class RapidFireStreamNode extends AbstractNode implements StreamableNodeInterface
+class RapidFireStreamNode extends AbstractNode
 {
     public function execute(StateContract $state): StateContract
     {
-        return $state->set('rapid', true);
-    }
+        if ($this->isStreaming()) {
+            $context = app(StreamContext::class);
+            $session = $context->session();
+            $trace = app(TraceContext::class);
+            $sink = $context->sink();
 
-    public function executeStreaming(StateContract $state, StreamSinkInterface $sink): StateContract
-    {
-        $session = app(StreamContext::class)->session();
-        $trace = app(TraceContext::class);
-
-        for ($i = 0; $i < 1000; $i++) {
-            $session->seq++;
-            $sink->emit(new StreamEventImpl(
-                streamId: $session->streamId,
-                executionId: $session->executionId,
-                nodeName: 'rapid',
-                spanId: $trace->getSpanId(),
-                parentSpanId: $trace->getParentSpanId(),
-                type: 'text_delta',
-                payload: ['delta' => (string) $i],
-                seq: $session->seq,
-                nodeSeq: $i + 1,
-                occurredAt: new DateTimeImmutable
-            ));
+            for ($i = 0; $i < 1000; $i++) {
+                $session->seq++;
+                $sink?->emit(new StreamEventImpl(
+                    streamId: $session->streamId,
+                    executionId: $session->executionId,
+                    nodeName: 'rapid',
+                    spanId: $trace->getSpanId(),
+                    parentSpanId: $trace->getParentSpanId(),
+                    type: 'text_delta',
+                    payload: ['delta' => (string) $i],
+                    seq: $session->seq,
+                    nodeSeq: $i + 1,
+                    occurredAt: new DateTimeImmutable
+                ));
+            }
         }
 
         return $state->set('rapid', true);
     }
 }
 
-class ParallelStreamNodeA extends AbstractNode implements StreamableNodeInterface
+class ParallelStreamNodeA extends AbstractNode
 {
     public function execute(StateContract $state): StateContract
     {
-        return $state->set('a', true);
-    }
-
-    public function executeStreaming(StateContract $state, StreamSinkInterface $sink): StateContract
-    {
-        $session = app(StreamContext::class)->session();
-        $session->seq++;
-        $sink->emit(new StreamEventImpl(
-            streamId: $session->streamId,
-            executionId: $session->executionId,
-            nodeName: 'a',
-            spanId: null,
-            parentSpanId: null,
-            type: 'text_delta',
-            payload: ['delta' => 'a'],
-            seq: $session->seq,
-            nodeSeq: 1,
-            occurredAt: new DateTimeImmutable
-        ));
+        if ($this->isStreaming()) {
+            $context = app(StreamContext::class);
+            $session = $context->session();
+            $session->seq++;
+            $context->sink()?->emit(new StreamEventImpl(
+                streamId: $session->streamId,
+                executionId: $session->executionId,
+                nodeName: 'a',
+                spanId: null,
+                parentSpanId: null,
+                type: 'text_delta',
+                payload: ['delta' => 'a'],
+                seq: $session->seq,
+                nodeSeq: 1,
+                occurredAt: new DateTimeImmutable
+            ));
+        }
 
         return $state->set('a', true);
     }
 }
 
-class ParallelStreamNodeB extends AbstractNode implements StreamableNodeInterface
+class ParallelStreamNodeB extends AbstractNode
 {
     public function execute(StateContract $state): StateContract
     {
-        return $state->set('b', true);
-    }
-
-    public function executeStreaming(StateContract $state, StreamSinkInterface $sink): StateContract
-    {
-        $session = app(StreamContext::class)->session();
-        $session->seq++;
-        $sink->emit(new StreamEventImpl(
-            streamId: $session->streamId,
-            executionId: $session->executionId,
-            nodeName: 'b',
-            spanId: null,
-            parentSpanId: null,
-            type: 'text_delta',
-            payload: ['delta' => 'b'],
-            seq: $session->seq,
-            nodeSeq: 1,
-            occurredAt: new DateTimeImmutable
-        ));
+        if ($this->isStreaming()) {
+            $context = app(StreamContext::class);
+            $session = $context->session();
+            $session->seq++;
+            $context->sink()?->emit(new StreamEventImpl(
+                streamId: $session->streamId,
+                executionId: $session->executionId,
+                nodeName: 'b',
+                spanId: null,
+                parentSpanId: null,
+                type: 'text_delta',
+                payload: ['delta' => 'b'],
+                seq: $session->seq,
+                nodeSeq: 1,
+                occurredAt: new DateTimeImmutable
+            ));
+        }
 
         return $state->set('b', true);
     }
@@ -442,11 +476,6 @@ class MultiInterruptNode extends PrismNode
 
         return $state->set('interrupt_count', $count + 1);
     }
-
-    public function executeStreaming(StateContract $state, StreamSinkInterface $sink): StateContract
-    {
-        return $state->set('done', true);
-    }
 }
 
 class StreamingApprovalNode extends PrismNode
@@ -473,11 +502,6 @@ class StreamingApprovalNode extends PrismNode
             $humanInput['approved'] ?? false,
             $humanInput['comments'] ?? null
         );
-    }
-
-    public function executeStreaming(StateContract $state, StreamSinkInterface $sink): StateContract
-    {
-        return $state->set('processed', true);
     }
 }
 

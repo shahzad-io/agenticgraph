@@ -399,6 +399,9 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
                 $delay = $node->getRetryDelay();
                 while (true) {
                     $attemptStart = microtime(true);
+                    if (app()->bound(StreamContext::class)) {
+                        app(StreamContext::class)->resetNodeAttemptEmission();
+                    }
                     try {
                         $node->onBefore($state);
                         $result = $node->execute($state);
@@ -409,6 +412,12 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
                         $attempts++;
                         $durationMs = (microtime(true) - $attemptStart) * 1000;
                         $willRetry = $attempts <= $max && $node->shouldRetry($e);
+                        if (app()->bound(StreamContext::class)) {
+                            $streamContext = app(StreamContext::class);
+                            if ($streamContext->isStreamingActive() && $streamContext->nodeAttemptHasContentEmission()) {
+                                $willRetry = false;
+                            }
+                        }
                         $startedAt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $attemptStart)) ?: new \DateTimeImmutable;
                         $traceContext = ($this->traceContextProvider)();
                         $parentSpanId = $traceContext instanceof TraceContext ? $traceContext->getParentSpanId() : null;

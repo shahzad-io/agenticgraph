@@ -12,9 +12,7 @@ use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Jobs\ContinueExecutionJob;
 use Shahzad\AgenticGraph\Jobs\ExecuteGraphJob;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
-use Shahzad\AgenticGraph\Nodes\Contracts\StreamableNodeInterface;
 use Shahzad\AgenticGraph\State\State;
-use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
 use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
 use Shahzad\AgenticGraph\Streaming\StreamContext;
 
@@ -26,32 +24,32 @@ class ImmutabilitySimpleNode extends AbstractNode
     }
 }
 
-class ImmutabilityStreamNode extends AbstractNode implements StreamableNodeInterface
+class ImmutabilityStreamNode extends AbstractNode
 {
     public function execute(StateContract $state): StateContract
     {
+        if ($this->isStreaming()) {
+            $context = app(StreamContext::class);
+            $session = $context->session();
+            $session->seq++;
+
+            $context->sink()?->emit(new StreamEventImpl(
+                streamId: $session->streamId,
+                executionId: $session->executionId,
+                nodeName: 'immutability-stream',
+                spanId: null,
+                parentSpanId: null,
+                type: 'text_delta',
+                payload: ['delta' => 'auto-resolved'],
+                seq: $session->seq,
+                nodeSeq: 1,
+                occurredAt: new DateTimeImmutable
+            ));
+
+            return $state->set('streamed', true);
+        }
+
         return $state;
-    }
-
-    public function executeStreaming(StateContract $state, StreamSinkInterface $sink): StateContract
-    {
-        $session = app(StreamContext::class)->session();
-        $session->seq++;
-
-        $sink->emit(new StreamEventImpl(
-            streamId: $session->streamId,
-            executionId: $session->executionId,
-            nodeName: 'immutability-stream',
-            spanId: null,
-            parentSpanId: null,
-            type: 'text_delta',
-            payload: ['delta' => 'auto-resolved'],
-            seq: $session->seq,
-            nodeSeq: 1,
-            occurredAt: new DateTimeImmutable
-        ));
-
-        return $state->set('streamed', true);
     }
 }
 

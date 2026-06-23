@@ -26,16 +26,11 @@ use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\TokensUsed;
 use Shahzad\AgenticGraph\Events\ToolCallCaptured;
 use Shahzad\AgenticGraph\Mcp\McpRequest;
-use Shahzad\AgenticGraph\Nodes\Contracts\StreamableNodeInterface;
 use Shahzad\AgenticGraph\Prompts\ChatPromptTemplate;
 use Shahzad\AgenticGraph\Prompts\PromptTemplate;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
-use Shahzad\AgenticGraph\Streaming\NodeStreamAccumulator;
 use Shahzad\AgenticGraph\Streaming\PrismStreamAdapter;
 use Shahzad\AgenticGraph\Streaming\StreamContext;
-use Shahzad\AgenticGraph\Streaming\StreamOptions;
-use Shahzad\AgenticGraph\Streaming\StreamSession;
-use Shahzad\AgenticGraph\Streaming\StreamStatus;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 
 /**
@@ -65,7 +60,7 @@ use Shahzad\AgenticGraph\Tracing\TraceContext;
  * @method StateContract onResume(StateContract $state, mixed $humanInput) Process human input when resuming
  * @method StateContract handleApproval(StateContract $state, bool $approved, ?string $comments = null) Handle approval workflows
  */
-abstract class PrismNode extends AbstractNode implements StreamableNodeInterface
+abstract class PrismNode extends AbstractNode
 {
     private ?CacheRepository $cache = null;
 
@@ -137,50 +132,6 @@ abstract class PrismNode extends AbstractNode implements StreamableNodeInterface
         });
 
         return $request;
-    }
-
-    public function executeStreaming(StateContract $state, StreamSinkInterface $sink): StateContract
-    {
-        $traceContext = $this->resolveTraceContext();
-        $streamContext = null;
-        if (app()->bound(StreamContext::class)) {
-            $streamContext = app(StreamContext::class);
-        }
-        $session = $streamContext?->session() ?? new StreamSession(
-            streamId: uniqid('stream_', true),
-            executionId: $traceContext?->getExecutionId() ?? uniqid('exec_', true),
-            options: new StreamOptions,
-            startedAtUnix: time()
-        );
-
-        $adapter = new PrismStreamAdapter(
-            session: $session,
-            nodeName: $this->getName(),
-            spanId: $traceContext?->getSpanId(),
-            parentSpanId: $traceContext?->getParentSpanId()
-        );
-        $accumulator = new NodeStreamAccumulator($state);
-
-        try {
-            $request = $this->buildStreamingRequest($state);
-            foreach ($request->asStream() as $event) {
-                $streamEvent = $adapter->adapt($event);
-                if ($streamEvent === null) {
-                    continue;
-                }
-                $sink->emit($streamEvent);
-                $accumulator->apply($streamEvent);
-            }
-            $sink->close(StreamStatus::SUCCESS);
-
-            return $accumulator->finalize();
-        } catch (\Throwable $e) {
-            $sink->close(StreamStatus::ERROR, [
-                'error_type' => $e::class,
-                'message' => $e->getMessage(),
-            ]);
-            throw $e;
-        }
     }
 
     protected function buildStreamingRequest(StateContract $state): PendingTextRequest

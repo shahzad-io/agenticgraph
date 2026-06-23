@@ -13,11 +13,9 @@ use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Http\Controllers\StreamController;
 use Shahzad\AgenticGraph\Jobs\ExecuteGraphJob;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
-use Shahzad\AgenticGraph\Nodes\Contracts\StreamableNodeInterface;
 use Shahzad\AgenticGraph\Nodes\PrismNode;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamEvent;
-use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
 use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
 use Shahzad\AgenticGraph\Streaming\Sinks\NullTransportSink;
@@ -28,34 +26,35 @@ use Shahzad\AgenticGraph\Streaming\StreamOptions;
 use Shahzad\AgenticGraph\Streaming\StreamSession;
 use Shahzad\AgenticGraph\Streaming\StreamSinkFactory;
 
-class ConsumerPathStreamNode extends AbstractNode implements StreamableNodeInterface
+class ConsumerPathStreamNode extends AbstractNode
 {
     public function execute(StateContract $state): StateContract
     {
-        return $state;
-    }
+        if ($this->isStreaming()) {
+            $context = app(StreamContext::class);
+            $session = $context->session();
+            $sink = $context->sink();
 
-    public function executeStreaming(StateContract $state, StreamSinkInterface $sink): StateContract
-    {
-        $session = app(StreamContext::class)->session();
+            foreach (['first', 'second'] as $index => $delta) {
+                $session->seq++;
+                $sink?->emit(new StreamEventImpl(
+                    streamId: $session->streamId,
+                    executionId: $session->executionId,
+                    nodeName: 'stream',
+                    spanId: null,
+                    parentSpanId: null,
+                    type: 'text_delta',
+                    payload: ['delta' => $delta],
+                    seq: $session->seq,
+                    nodeSeq: $index + 1,
+                    occurredAt: new DateTimeImmutable
+                ));
+            }
 
-        foreach (['first', 'second'] as $index => $delta) {
-            $session->seq++;
-            $sink->emit(new StreamEventImpl(
-                streamId: $session->streamId,
-                executionId: $session->executionId,
-                nodeName: 'stream',
-                spanId: null,
-                parentSpanId: null,
-                type: 'text_delta',
-                payload: ['delta' => $delta],
-                seq: $session->seq,
-                nodeSeq: $index + 1,
-                occurredAt: new DateTimeImmutable
-            ));
+            return $state->set('streamed', true);
         }
 
-        return $state->set('streamed', true);
+        return $state;
     }
 }
 
@@ -74,11 +73,6 @@ class ConsumerPathInterruptNode extends PrismNode
     public function getInterruptReason(StateContract $state): string
     {
         return 'Consumer path interrupt';
-    }
-
-    public function executeStreaming(StateContract $state, StreamSinkInterface $sink): StateContract
-    {
-        return $state->set('visited', true);
     }
 }
 

@@ -18,9 +18,7 @@ use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Jobs\ContinueExecutionJob;
 use Shahzad\AgenticGraph\Jobs\ExecuteGraphJob;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
-use Shahzad\AgenticGraph\Nodes\Contracts\StreamableNodeInterface;
 use Shahzad\AgenticGraph\State\State;
-use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
 use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
 use Shahzad\AgenticGraph\Streaming\StreamContext;
@@ -34,45 +32,44 @@ class SimpleTraceNode extends AbstractNode
     }
 }
 
-class StreamingTraceNode extends AbstractNode implements StreamableNodeInterface
+class StreamingTraceNode extends AbstractNode
 {
     public function execute(StateContract $state): StateContract
     {
+        if ($this->isStreaming()) {
+            $context = app(StreamContext::class);
+            $session = $context->session();
+            $session->seq++;
+
+            $context->sink()?->emit(new StreamEventImpl(
+                streamId: $session->streamId,
+                executionId: $session->executionId,
+                nodeName: 'stream-node',
+                spanId: null,
+                parentSpanId: null,
+                type: 'text_delta',
+                payload: ['delta' => 'job'],
+                seq: $session->seq,
+                nodeSeq: 1,
+                occurredAt: new DateTimeImmutable
+            ));
+
+            return $state->set('streamed', true);
+        }
+
         return $state;
-    }
-
-    public function executeStreaming(StateContract $state, StreamSinkInterface $sink): StateContract
-    {
-        $session = app(StreamContext::class)->session();
-        $session->seq++;
-
-        $sink->emit(new StreamEventImpl(
-            streamId: $session->streamId,
-            executionId: $session->executionId,
-            nodeName: 'stream-node',
-            spanId: null,
-            parentSpanId: null,
-            type: 'text_delta',
-            payload: ['delta' => 'job'],
-            seq: $session->seq,
-            nodeSeq: 1,
-            occurredAt: new DateTimeImmutable
-        ));
-
-        return $state->set('streamed', true);
     }
 }
 
-class ThrowingStreamingTraceNode extends AbstractNode implements StreamableNodeInterface
+class ThrowingStreamingTraceNode extends AbstractNode
 {
     public function execute(StateContract $state): StateContract
     {
-        return $state;
-    }
+        if ($this->isStreaming()) {
+            throw new RuntimeException('job streaming failed');
+        }
 
-    public function executeStreaming(StateContract $state, StreamSinkInterface $sink): StateContract
-    {
-        throw new RuntimeException('job streaming failed');
+        return $state;
     }
 }
 

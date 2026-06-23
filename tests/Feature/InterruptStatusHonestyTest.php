@@ -13,7 +13,6 @@ use Shahzad\AgenticGraph\Facades\AgenticGraph;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Nodes\PrismNode;
 use Shahzad\AgenticGraph\State\State;
-use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
 
 class HonestInterruptNode extends PrismNode
 {
@@ -48,11 +47,6 @@ class HonestInterruptStreamNode extends PrismNode
     public function getInterruptReason(StateContract $state): string
     {
         return 'Needs approval';
-    }
-
-    public function executeStreaming(StateContract $state, StreamSinkInterface $sink): StateContract
-    {
-        return $state->set('visited', true);
     }
 }
 

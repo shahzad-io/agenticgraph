@@ -11,24 +11,21 @@ use Shahzad\AgenticGraph\Execution\ExecutionStore;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
-use Shahzad\AgenticGraph\Nodes\Contracts\StreamableNodeInterface;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamEvent;
-use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
 use Shahzad\AgenticGraph\Streaming\StreamOptions;
 use Shahzad\AgenticGraph\Streaming\StreamResumePayload;
 
-class ResumeSetupFailureStreamNode extends AbstractNode implements StreamableNodeInterface
+class ResumeSetupFailureStreamNode extends AbstractNode
 {
     public function execute(StateContract $state): StateContract
     {
-        return $state;
-    }
+        if ($this->isStreaming()) {
+            return $state->set('streamed', true);
+        }
 
-    public function executeStreaming(StateContract $state, StreamSinkInterface $sink): StateContract
-    {
-        return $state->set('streamed', true);
+        return $state;
     }
 }
 

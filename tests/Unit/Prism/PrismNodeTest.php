@@ -18,7 +18,15 @@ use Prism\Prism\ValueObjects\Usage;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Nodes\PrismNode;
 use Shahzad\AgenticGraph\State\State;
+use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
+use Shahzad\AgenticGraph\Streaming\NodeStreamAccumulator;
+use Shahzad\AgenticGraph\Streaming\PrismStreamAdapter;
 use Shahzad\AgenticGraph\Streaming\Sinks\MemorySink;
+use Shahzad\AgenticGraph\Streaming\StreamContext;
+use Shahzad\AgenticGraph\Streaming\StreamOptions;
+use Shahzad\AgenticGraph\Streaming\StreamSession;
+use Shahzad\AgenticGraph\Streaming\StreamStatus;
+use Shahzad\AgenticGraph\Tracing\TraceContext;
 
 class TestPrismNode extends PrismNode
 {
@@ -108,14 +116,79 @@ class ThrowingStreamingRequest extends PendingTextRequest
     }
 }
 
-class StreamingPrismNode extends PrismNode
+function bindStreamContextWithSink(StreamSinkInterface $sink, ?string $streamId = null, ?string $executionId = null): StreamContext
 {
-    public function __construct(private array $events) {}
+    app()->forgetInstance(StreamContext::class);
+    $session = new StreamSession(
+        streamId: $streamId ?? uniqid('stream_', true),
+        executionId: $executionId ?? uniqid('exec_', true),
+        options: new StreamOptions,
+        startedAtUnix: time()
+    );
+    $context = new StreamContext($session, $sink);
+    app()->instance(StreamContext::class, $context);
 
+    return $context;
+}
+
+abstract class TestStreamingPrismNodeBase extends PrismNode
+{
     public function execute(StateContract $state): StateContract
+    {
+        if (! $this->isStreaming()) {
+            return $this->executeNonStreaming($state);
+        }
+
+        $context = app(StreamContext::class);
+        $sink = $context->sink();
+        if ($sink === null) {
+            return $this->executeNonStreaming($state);
+        }
+
+        $traceContext = null;
+        try {
+            $traceContext = app(TraceContext::class);
+        } catch (\Illuminate\Contracts\Container\BindingResolutionException) {
+        }
+
+        $adapter = new PrismStreamAdapter(
+            session: $context->session(),
+            nodeName: $this->getName(),
+            spanId: $traceContext?->getSpanId(),
+            parentSpanId: $traceContext?->getParentSpanId()
+        );
+        $accumulator = new NodeStreamAccumulator($state);
+
+        try {
+            foreach ($this->buildStreamingRequest($state)->asStream() as $event) {
+                $streamEvent = $adapter->adapt($event);
+                if ($streamEvent === null) {
+                    continue;
+                }
+                $sink->emit($streamEvent);
+                $accumulator->apply($streamEvent);
+            }
+            $sink->close(StreamStatus::SUCCESS);
+
+            return $accumulator->finalize();
+        } catch (\Throwable $e) {
+            $sink->close(StreamStatus::ERROR, [
+                'error_type' => $e::class,
+                'message' => $e->getMessage(),
+            ]);
+            throw $e;
+        }
+    }
+
+    protected function executeNonStreaming(StateContract $state): StateContract
     {
         return $state;
     }
+}
+
+class StreamingPrismNode extends TestStreamingPrismNodeBase
+{
+    public function __construct(private array $events) {}
 
     protected function buildStreamingRequest(StateContract $state): PendingTextRequest
     {
@@ -123,22 +196,17 @@ class StreamingPrismNode extends PrismNode
     }
 }
 
-class ThrowingStreamingPrismNode extends PrismNode
+class ThrowingStreamingPrismNode extends TestStreamingPrismNodeBase
 {
-    public function execute(StateContract $state): StateContract
-    {
-        return $state;
-    }
-
     protected function buildStreamingRequest(StateContract $state): PendingTextRequest
     {
         return new ThrowingStreamingRequest;
     }
 }
 
-class CompareStreamingPrismNode extends PrismNode
+class CompareStreamingPrismNode extends TestStreamingPrismNodeBase
 {
-    public function execute(StateContract $state): StateContract
+    protected function executeNonStreaming(StateContract $state): StateContract
     {
         return $state->set('text', 'Hello world');
     }
@@ -258,7 +326,9 @@ it('streams Prism events and rebuilds final state', function () {
     $node = new StreamingPrismNode($events);
     $sink = new MemorySink;
     $state = new State(['prompt' => 'Hello']);
-    $result = $node->executeStreaming($state, $sink);
+    bindStreamContextWithSink($sink);
+    $result = $node->execute($state);
+    app()->forgetInstance(StreamContext::class);
 
     expect($result->get('text'))->toBe('Hello world')
         ->and($sink->status()?->value)->toBe('success')
@@ -271,8 +341,11 @@ it('closes sink on streaming error', function () {
     $state = new State(['prompt' => 'Hello']);
 
     try {
-        $node->executeStreaming($state, $sink);
+        bindStreamContextWithSink($sink);
+        $node->execute($state);
     } catch (Throwable) {
+    } finally {
+        app()->forgetInstance(StreamContext::class);
     }
 
     expect($sink->status()?->value)->toBe('error');
@@ -283,7 +356,9 @@ it('streams output matches non-streaming output', function () {
     $state = new State(['prompt' => 'Hello']);
     $sink = new MemorySink;
 
-    $streamed = $node->executeStreaming($state, $sink);
+    bindStreamContextWithSink($sink);
+    $streamed = $node->execute($state);
+    app()->forgetInstance(StreamContext::class);
     $nonStreamed = $node->execute($state);
 
     expect($streamed->get('text'))->toBe($nonStreamed->get('text'));

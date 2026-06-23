@@ -51,6 +51,23 @@ final class WrappedStreamSink implements StreamSinkInterface
         } catch (\Throwable $e) {
             $this->handleError($e, $event, 'observer');
         }
+
+        $this->recordContentEmissionForRetryGate($event);
+    }
+
+    private function recordContentEmissionForRetryGate(StreamEvent $event): void
+    {
+        if (StreamLifecycleEventTypes::isLifecycleOrFrameworkType($event->type())) {
+            return;
+        }
+
+        try {
+            if (! app()->bound(StreamContext::class)) {
+                return;
+            }
+            app(StreamContext::class)->markNodeAttemptContentEmission();
+        } catch (\Throwable) {
+        }
     }
 
     public function close(StreamStatus $status, mixed $meta = null): void

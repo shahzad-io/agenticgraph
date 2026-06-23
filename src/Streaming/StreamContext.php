@@ -10,6 +10,8 @@ final class StreamContext
 {
     private ?StreamSinkInterface $sink = null;
 
+    private bool $nodeAttemptHasContentEmission = false;
+
     public function __construct(
         private readonly StreamSession $session,
         ?StreamSinkInterface $sink = null
@@ -30,5 +32,25 @@ final class StreamContext
     public function setSink(?StreamSinkInterface $sink): void
     {
         $this->sink = $sink;
+    }
+
+    public function isStreamingActive(): bool
+    {
+        return $this->sink !== null;
+    }
+
+    public function resetNodeAttemptEmission(): void
+    {
+        $this->nodeAttemptHasContentEmission = false;
+    }
+
+    public function markNodeAttemptContentEmission(): void
+    {
+        $this->nodeAttemptHasContentEmission = true;
+    }
+
+    public function nodeAttemptHasContentEmission(): bool
+    {
+        return $this->nodeAttemptHasContentEmission;
     }
 }

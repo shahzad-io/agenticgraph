@@ -16,10 +16,8 @@ use Shahzad\AgenticGraph\Execution\StreamingMode;
 use Shahzad\AgenticGraph\Facades\AgenticGraph;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
-use Shahzad\AgenticGraph\Nodes\Contracts\StreamableNodeInterface;
 use Shahzad\AgenticGraph\Nodes\PrismNode;
 use Shahzad\AgenticGraph\State\State;
-use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
 
 class FailureThrowingNode extends AbstractNode
 {
@@ -29,16 +27,15 @@ class FailureThrowingNode extends AbstractNode
     }
 }
 
-class FailureThrowingStreamNode extends AbstractNode implements StreamableNodeInterface
+class FailureThrowingStreamNode extends AbstractNode
 {
     public function execute(StateContract $state): StateContract
     {
-        return $state;
-    }
+        if ($this->isStreaming()) {
+            throw new RuntimeException('streaming node failed');
+        }
 
-    public function executeStreaming(StateContract $state, StreamSinkInterface $sink): StateContract
-    {
-        throw new RuntimeException('streaming node failed');
+        return $state;
     }
 }
 
