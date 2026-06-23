@@ -24,6 +24,7 @@ use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\State\StateManager;
 use Shahzad\AgenticGraph\Streaming\StreamContext;
 use Shahzad\AgenticGraph\Streaming\StreamLifecycleEventEmitter;
+use Shahzad\AgenticGraph\Streaming\StreamLifecycleEventTypes;
 use Shahzad\AgenticGraph\Streaming\StreamNodeCompletePayloadBuilder;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 
@@ -96,7 +97,7 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
                 $nodeName,
                 $spanId,
                 $parentSpanId,
-                'node_start',
+                StreamLifecycleEventTypes::NODE_START,
                 ['node_name' => $nodeName],
                 $nodeSeqs
             );
@@ -122,7 +123,7 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
                 $nodeName,
                 $spanId,
                 $parentSpanId,
-                'node_complete',
+                StreamLifecycleEventTypes::NODE_COMPLETE,
                 $nodeCompletePayloadBuilder->build($nodeName, $nodeDuration * 1000, $inputState, $resultState),
                 $nodeSeqs
             );

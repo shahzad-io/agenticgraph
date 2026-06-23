@@ -15,6 +15,7 @@ use Shahzad\AgenticGraph\Nodes\AbstractNode;
 use Shahzad\AgenticGraph\Nodes\PrismNode;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
+use Shahzad\AgenticGraph\Streaming\StreamLifecycleEventTypes;
 
 class FilterStreamNodeA extends AbstractNode
 {
@@ -221,6 +222,27 @@ it('applies node filter on async streaming from persisted execution options', fu
         ->and($finalState->get('a_ran'))->toBeTrue()
         ->and($finalState->get('b_ran'))->toBeTrue()
         ->and($finalState->get('c_ran'))->toBeTrue();
+});
+
+it('delivers node_complete lifecycle events when event type filter is set', function () {
+    registerFilterStreamGraph('filter-node-complete-lifecycle');
+
+    $handle = AgenticGraph::stream(
+        'filter-node-complete-lifecycle',
+        new State,
+        events: [StreamLifecycleEventTypes::NODE_COMPLETE],
+        inline: true,
+    );
+
+    $events = iterator_to_array($handle->stream()->inline ?? new ArrayIterator([]));
+    $types = array_map(static fn ($event) => $event->type(), $events);
+
+    expect($types)->not->toBeEmpty()
+        ->and($types)->toContain(StreamLifecycleEventTypes::NODE_COMPLETE)
+        ->and(array_unique($types))->toBe([StreamLifecycleEventTypes::NODE_COMPLETE])
+        ->and($handle->getFinalState()->get('a_ran'))->toBeTrue()
+        ->and($handle->getFinalState()->get('b_ran'))->toBeTrue()
+        ->and($handle->getFinalState()->get('c_ran'))->toBeTrue();
 });
 
 it('delivers only text_delta events when event type filter is set', function () {

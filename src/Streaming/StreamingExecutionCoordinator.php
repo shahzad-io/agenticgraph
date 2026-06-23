@@ -142,7 +142,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                 null,
                 $traceContext->getSpanId(),
                 $traceContext->getParentSpanId(),
-                'graph_start',
+                StreamLifecycleEventTypes::GRAPH_START,
                 ['graph_name' => $graph->name]
             );
         } catch (\Throwable $e) {
@@ -273,7 +273,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                     $startNode,
                     $traceContext->getSpanId(),
                     $traceContext->getParentSpanId(),
-                    'stream_resume',
+                    StreamLifecycleEventTypes::STREAM_RESUME,
                     [
                         'from_seq' => $resumePayload->fromSeq,
                         'resumed_at_seq' => $resumePayload->resumedAtSeq,
@@ -425,7 +425,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                         $current,
                         $spanId,
                         $parentSpanId,
-                        'node_start',
+                        StreamLifecycleEventTypes::NODE_START,
                         ['node_name' => $current],
                         $this->nextNodeSeq($nodeSeqs, $current)
                     );
@@ -453,7 +453,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                             $current,
                             $spanId,
                             $parentSpanId,
-                            'node_error',
+                            StreamLifecycleEventTypes::NODE_ERROR,
                             [
                                 'node_name' => $current,
                                 'error_type' => $e::class,
@@ -498,7 +498,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                         $current,
                         $spanId,
                         $parentSpanId,
-                        'node_complete',
+                        StreamLifecycleEventTypes::NODE_COMPLETE,
                         $nodeCompletePayload,
                         $this->nextNodeSeq($nodeSeqs, $current)
                     );
@@ -546,7 +546,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                     null,
                     $traceContext->getSpanId(),
                     $traceContext->getParentSpanId(),
-                    'graph_complete',
+                    StreamLifecycleEventTypes::GRAPH_COMPLETE,
                     ['duration_ms' => $duration * 1000]
                 );
 
@@ -566,7 +566,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                 null,
                 $traceContext->getSpanId(),
                 $traceContext->getParentSpanId(),
-                'graph_failed',
+                StreamLifecycleEventTypes::GRAPH_FAILED,
                 [
                     'error_type' => $e::class,
                     'message' => $e->getMessage(),
@@ -714,7 +714,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                 null,
                 $traceContext->getSpanId(),
                 $traceContext->getParentSpanId(),
-                'graph_failed',
+                StreamLifecycleEventTypes::GRAPH_FAILED,
                 [
                     'error_type' => $e::class,
                     'message' => $e->getMessage(),

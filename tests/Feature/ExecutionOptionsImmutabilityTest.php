@@ -7,6 +7,7 @@ use Shahzad\AgenticGraph\Execution\ExecutionMode;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
+use Shahzad\AgenticGraph\Streaming\StreamLifecycleEventTypes;
 use Shahzad\AgenticGraph\Facades\AgenticGraph;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Jobs\ContinueExecutionJob;
@@ -86,12 +87,12 @@ it('withNodeFilter and withEventTypeFilter return clones without mutating the or
     );
 
     $withNodes = $original->withNodeFilter(['alpha', 'beta']);
-    $withEvents = $original->withEventTypeFilter(['node_completed']);
+    $withEvents = $original->withEventTypeFilter([StreamLifecycleEventTypes::NODE_COMPLETE]);
 
     expect($withNodes)->not->toBe($original)
         ->and($withNodes->nodeFilter)->toBe(['alpha', 'beta'])
         ->and($withNodes->eventTypeFilter)->toBeNull()
-        ->and($withEvents->eventTypeFilter)->toBe(['node_completed'])
+        ->and($withEvents->eventTypeFilter)->toBe([StreamLifecycleEventTypes::NODE_COMPLETE])
         ->and($original->nodeFilter)->toBe(['keep'])
         ->and($original->eventTypeFilter)->toBeNull();
 });

@@ -3,6 +3,7 @@
 use Shahzad\AgenticGraph\Execution\ExecutionMode;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
+use Shahzad\AgenticGraph\Streaming\StreamLifecycleEventTypes;
 
 it('round-trips execution options through canonical array form', function () {
     $original = new ExecutionOptions(
@@ -31,7 +32,7 @@ it('round-trips node and event type filters through canonical array form', funct
         mode: ExecutionMode::ASYNC,
         streaming: StreamingMode::SSE,
         nodeFilter: ['alpha', 'gamma'],
-        eventTypeFilter: ['text_delta', 'node_completed'],
+        eventTypeFilter: ['text_delta', StreamLifecycleEventTypes::NODE_COMPLETE],
     );
 
     $array = $original->toArray();
@@ -44,7 +45,7 @@ it('round-trips node and event type filters through canonical array form', funct
         'interrupts' => true,
         'estimated_duration_seconds' => null,
         'node_filter' => ['alpha', 'gamma'],
-        'event_type_filter' => ['text_delta', 'node_completed'],
+        'event_type_filter' => ['text_delta', StreamLifecycleEventTypes::NODE_COMPLETE],
     ])
         ->and($restored)->toEqual($original)
         ->and($stored)->toEqual($original);

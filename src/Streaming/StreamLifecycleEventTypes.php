@@ -9,17 +9,31 @@ namespace Shahzad\AgenticGraph\Streaming;
  */
 final class StreamLifecycleEventTypes
 {
+    public const GRAPH_START = 'graph_start';
+
+    public const GRAPH_COMPLETE = 'graph_complete';
+
+    public const GRAPH_FAILED = 'graph_failed';
+
+    public const NODE_START = 'node_start';
+
+    public const NODE_COMPLETE = 'node_complete';
+
+    public const NODE_ERROR = 'node_error';
+
+    public const STREAM_RESUME = 'stream_resume';
+
     /**
      * @var list<string>
      */
     private const LIFECYCLE_TYPES = [
-        'graph_start',
-        'graph_complete',
-        'graph_failed',
-        'node_start',
-        'node_complete',
-        'node_error',
-        'stream_resume',
+        self::GRAPH_START,
+        self::GRAPH_COMPLETE,
+        self::GRAPH_FAILED,
+        self::NODE_START,
+        self::NODE_COMPLETE,
+        self::NODE_ERROR,
+        self::STREAM_RESUME,
     ];
 
     public static function isLifecycleOrFrameworkType(string $type): bool

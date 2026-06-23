@@ -15,6 +15,7 @@ use Shahzad\AgenticGraph\Nodes\AbstractNode;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
 use Shahzad\AgenticGraph\Streaming\StreamDescriptor;
+use Shahzad\AgenticGraph\Streaming\StreamLifecycleEventTypes;
 
 class VerbsSimpleNode extends AbstractNode
 {
@@ -280,14 +281,14 @@ it('broadcast threads nodes and events filters onto persisted execution options'
         'verbs-broadcast-filters',
         new State,
         nodes: ['alpha'],
-        events: ['node_completed'],
+        events: [StreamLifecycleEventTypes::NODE_COMPLETE],
     );
 
     expect(persistedVerbExecutionOptions($handle->id()))->toEqual(new ExecutionOptions(
         mode: ExecutionMode::ASYNC,
         streaming: StreamingMode::BROADCAST,
         nodeFilter: ['alpha'],
-        eventTypeFilter: ['node_completed'],
+        eventTypeFilter: [StreamLifecycleEventTypes::NODE_COMPLETE],
     ));
 });
 
