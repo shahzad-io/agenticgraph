@@ -300,26 +300,12 @@ it('streams prism node events into the stream store', function () {
 
 class StreamableTestNode extends AbstractNode
 {
+    protected ?string $name = 'alpha';
+
     public function execute(StateContract $state): StateContract
     {
         if ($this->isStreaming()) {
-            $context = app(StreamContext::class);
-            $session = $context->session();
-            $trace = app(TraceContext::class);
-            $session->seq++;
-
-            $context->sink()?->emit(new StreamEventImpl(
-                streamId: $session->streamId,
-                executionId: $session->executionId,
-                nodeName: 'alpha',
-                spanId: $trace->getSpanId(),
-                parentSpanId: $trace->getParentSpanId(),
-                type: 'text_delta',
-                payload: ['delta' => 'hi'],
-                seq: $session->seq,
-                nodeSeq: 1,
-                occurredAt: new DateTimeImmutable
-            ));
+            $this->streamEvent('text_delta', ['delta' => 'hi']);
 
             return $state->set('path', 'streaming');
         }
@@ -372,29 +358,12 @@ class SilentStreamNode extends AbstractNode
 
 class RapidFireStreamNode extends AbstractNode
 {
+    protected ?string $name = 'rapid';
+
     public function execute(StateContract $state): StateContract
     {
-        if ($this->isStreaming()) {
-            $context = app(StreamContext::class);
-            $session = $context->session();
-            $trace = app(TraceContext::class);
-            $sink = $context->sink();
-
-            for ($i = 0; $i < 1000; $i++) {
-                $session->seq++;
-                $sink?->emit(new StreamEventImpl(
-                    streamId: $session->streamId,
-                    executionId: $session->executionId,
-                    nodeName: 'rapid',
-                    spanId: $trace->getSpanId(),
-                    parentSpanId: $trace->getParentSpanId(),
-                    type: 'text_delta',
-                    payload: ['delta' => (string) $i],
-                    seq: $session->seq,
-                    nodeSeq: $i + 1,
-                    occurredAt: new DateTimeImmutable
-                ));
-            }
+        for ($i = 0; $i < 1000; $i++) {
+            $this->streamEvent('text_delta', ['delta' => (string) $i]);
         }
 
         return $state->set('rapid', true);
@@ -403,25 +372,11 @@ class RapidFireStreamNode extends AbstractNode
 
 class ParallelStreamNodeA extends AbstractNode
 {
+    protected ?string $name = 'a';
+
     public function execute(StateContract $state): StateContract
     {
-        if ($this->isStreaming()) {
-            $context = app(StreamContext::class);
-            $session = $context->session();
-            $session->seq++;
-            $context->sink()?->emit(new StreamEventImpl(
-                streamId: $session->streamId,
-                executionId: $session->executionId,
-                nodeName: 'a',
-                spanId: null,
-                parentSpanId: null,
-                type: 'text_delta',
-                payload: ['delta' => 'a'],
-                seq: $session->seq,
-                nodeSeq: 1,
-                occurredAt: new DateTimeImmutable
-            ));
-        }
+        $this->streamEvent('text_delta', ['delta' => 'a']);
 
         return $state->set('a', true);
     }
@@ -429,25 +384,11 @@ class ParallelStreamNodeA extends AbstractNode
 
 class ParallelStreamNodeB extends AbstractNode
 {
+    protected ?string $name = 'b';
+
     public function execute(StateContract $state): StateContract
     {
-        if ($this->isStreaming()) {
-            $context = app(StreamContext::class);
-            $session = $context->session();
-            $session->seq++;
-            $context->sink()?->emit(new StreamEventImpl(
-                streamId: $session->streamId,
-                executionId: $session->executionId,
-                nodeName: 'b',
-                spanId: null,
-                parentSpanId: null,
-                type: 'text_delta',
-                payload: ['delta' => 'b'],
-                seq: $session->seq,
-                nodeSeq: 1,
-                occurredAt: new DateTimeImmutable
-            ));
-        }
+        $this->streamEvent('text_delta', ['delta' => 'b']);
 
         return $state->set('b', true);
     }

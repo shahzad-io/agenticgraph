@@ -11,8 +11,6 @@ use Shahzad\AgenticGraph\Nodes\AbstractNode;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Storage\DatabaseStorage;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
-use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
-use Shahzad\AgenticGraph\Streaming\StreamContext;
 use Shahzad\AgenticGraph\Streaming\StreamResumePayload;
 
 class CENodeA extends AbstractNode
@@ -33,25 +31,12 @@ class CENodeEnd extends AbstractNode
 
 class CEStreamingNode extends AbstractNode
 {
+    protected ?string $name = 'ce-stream';
+
     public function execute(StateContract $state): StateContract
     {
         if ($this->isStreaming()) {
-            $context = app(StreamContext::class);
-            $session = $context->session();
-            $session->seq++;
-
-            $context->sink()?->emit(new StreamEventImpl(
-                streamId: $session->streamId,
-                executionId: $session->executionId,
-                nodeName: 'ce-stream',
-                spanId: null,
-                parentSpanId: null,
-                type: 'text_delta',
-                payload: ['delta' => 'continue'],
-                seq: $session->seq,
-                nodeSeq: 1,
-                occurredAt: new DateTimeImmutable
-            ));
+            $this->streamEvent('text_delta', ['delta' => 'continue']);
 
             return $state->set('streamed', true);
         }

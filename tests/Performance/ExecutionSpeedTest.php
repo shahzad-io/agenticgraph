@@ -10,28 +10,12 @@ it('executes 100-node graph under 5 seconds', function () {
 
 class PerfStreamNode extends \Shahzad\AgenticGraph\Nodes\AbstractNode
 {
+    protected ?string $name = 'perf';
+
     public function execute(\Shahzad\AgenticGraph\Contracts\StateContract $state): \Shahzad\AgenticGraph\Contracts\StateContract
     {
-        if ($this->isStreaming()) {
-            $context = app(\Shahzad\AgenticGraph\Streaming\StreamContext::class);
-            $session = $context->session();
-            $sink = $context->sink();
-
-            for ($i = 0; $i < 1000; $i++) {
-                $session->seq++;
-                $sink?->emit(new \Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl(
-                    streamId: $session->streamId,
-                    executionId: $session->executionId,
-                    nodeName: 'perf',
-                    spanId: null,
-                    parentSpanId: null,
-                    type: 'text_delta',
-                    payload: ['delta' => (string) $i],
-                    seq: $session->seq,
-                    nodeSeq: $i + 1,
-                    occurredAt: new DateTimeImmutable('now')
-                ));
-            }
+        for ($i = 0; $i < 1000; $i++) {
+            $this->streamEvent('text_delta', ['delta' => (string) $i]);
         }
 
         return $state->set('count', 1000);
@@ -40,28 +24,12 @@ class PerfStreamNode extends \Shahzad\AgenticGraph\Nodes\AbstractNode
 
 class LoadStreamNode extends \Shahzad\AgenticGraph\Nodes\AbstractNode
 {
+    protected ?string $name = 'load';
+
     public function execute(\Shahzad\AgenticGraph\Contracts\StateContract $state): \Shahzad\AgenticGraph\Contracts\StateContract
     {
-        if ($this->isStreaming()) {
-            $context = app(\Shahzad\AgenticGraph\Streaming\StreamContext::class);
-            $session = $context->session();
-            $sink = $context->sink();
-
-            for ($i = 0; $i < 10000; $i++) {
-                $session->seq++;
-                $sink?->emit(new \Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl(
-                    streamId: $session->streamId,
-                    executionId: $session->executionId,
-                    nodeName: 'load',
-                    spanId: null,
-                    parentSpanId: null,
-                    type: 'text_delta',
-                    payload: ['delta' => (string) $i],
-                    seq: $session->seq,
-                    nodeSeq: $i + 1,
-                    occurredAt: new DateTimeImmutable('now')
-                ));
-            }
+        for ($i = 0; $i < 10000; $i++) {
+            $this->streamEvent('text_delta', ['delta' => (string) $i]);
         }
 
         return $state->set('count', 10000);

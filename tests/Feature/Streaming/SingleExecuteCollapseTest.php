@@ -12,30 +12,12 @@ use Shahzad\AgenticGraph\Facades\AgenticGraph;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
 use Shahzad\AgenticGraph\State\State;
-use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
-use Shahzad\AgenticGraph\Streaming\StreamContext;
 
 class CollapseMiddlewareStreamNode extends AbstractNode
 {
     public function execute(StateContract $state): StateContract
     {
-        if ($this->isStreaming()) {
-            $context = app(StreamContext::class);
-            $session = $context->session();
-            $session->seq++;
-            $context->sink()?->emit(new StreamEventImpl(
-                streamId: $session->streamId,
-                executionId: $session->executionId,
-                nodeName: 'middleware-stream',
-                spanId: null,
-                parentSpanId: null,
-                type: 'text_delta',
-                payload: ['delta' => 'ok'],
-                seq: $session->seq,
-                nodeSeq: 1,
-                occurredAt: new DateTimeImmutable
-            ));
-        }
+        $this->streamEvent('text_delta', ['delta' => 'ok']);
 
         return $state->set('marker', 'done');
     }
@@ -64,25 +46,8 @@ class CollapseEmitThenThrowNode extends AbstractNode
     {
         self::$executeCount++;
 
-        if ($this->isStreaming()) {
-            $context = app(StreamContext::class);
-            $session = $context->session();
-            $sink = $context->sink();
-            for ($i = 0; $i < $this->emitCount; $i++) {
-                $session->seq++;
-                $sink?->emit(new StreamEventImpl(
-                    streamId: $session->streamId,
-                    executionId: $session->executionId,
-                    nodeName: 'emit-throw',
-                    spanId: null,
-                    parentSpanId: null,
-                    type: 'text_delta',
-                    payload: ['delta' => (string) $i],
-                    seq: $session->seq,
-                    nodeSeq: $i + 1,
-                    occurredAt: new DateTimeImmutable
-                ));
-            }
+        for ($i = 0; $i < $this->emitCount; $i++) {
+            $this->streamEvent('text_delta', ['delta' => (string) $i]);
         }
 
         throw new RuntimeException('retriable after emit');
@@ -91,6 +56,8 @@ class CollapseEmitThenThrowNode extends AbstractNode
 
 class CollapsePreEmitThrowNode extends AbstractNode
 {
+    protected ?string $name = 'pre-emit-throw';
+
     public static int $executeCount = 0;
 
     public function getRetryAttempts(): int
@@ -106,23 +73,7 @@ class CollapsePreEmitThrowNode extends AbstractNode
             throw new RuntimeException('retriable before emit');
         }
 
-        if ($this->isStreaming()) {
-            $context = app(StreamContext::class);
-            $session = $context->session();
-            $session->seq++;
-            $context->sink()?->emit(new StreamEventImpl(
-                streamId: $session->streamId,
-                executionId: $session->executionId,
-                nodeName: 'pre-emit-throw',
-                spanId: null,
-                parentSpanId: null,
-                type: 'text_delta',
-                payload: ['delta' => 'finally'],
-                seq: $session->seq,
-                nodeSeq: 1,
-                occurredAt: new DateTimeImmutable
-            ));
-        }
+        $this->streamEvent('text_delta', ['delta' => 'finally']);
 
         return $state->set('recovered', true);
     }

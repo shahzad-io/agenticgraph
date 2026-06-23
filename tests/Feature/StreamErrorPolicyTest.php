@@ -18,30 +18,16 @@ use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamEvent;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
 use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
-use Shahzad\AgenticGraph\Streaming\StreamContext;
 use Shahzad\AgenticGraph\Streaming\StreamErrorHandler;
 
 class PolicyStreamNode extends AbstractNode
 {
+    protected ?string $name = 'policy-stream';
+
     public function execute(StateContract $state): StateContract
     {
         if ($this->isStreaming()) {
-            $context = app(StreamContext::class);
-            $session = $context->session();
-            $session->seq++;
-
-            $context->sink()?->emit(new StreamEventImpl(
-                streamId: $session->streamId,
-                executionId: $session->executionId,
-                nodeName: 'policy-stream',
-                spanId: null,
-                parentSpanId: null,
-                type: 'text_delta',
-                payload: ['delta' => 'policy-test'],
-                seq: $session->seq,
-                nodeSeq: 1,
-                occurredAt: new DateTimeImmutable
-            ));
+            $this->streamEvent('text_delta', ['delta' => 'policy-test']);
 
             return $state->set('streamed', true);
         }

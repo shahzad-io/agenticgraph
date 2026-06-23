@@ -15,48 +15,26 @@ use Shahzad\AgenticGraph\Nodes\AbstractNode;
 use Shahzad\AgenticGraph\Nodes\PrismNode;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
-use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
-use Shahzad\AgenticGraph\Streaming\StreamContext;
 
 class FilterStreamNodeA extends AbstractNode
 {
+    protected ?string $name = 'a';
+
     public function execute(StateContract $state): StateContract
     {
-        $this->emitDelta('a');
+        $this->streamEvent('text_delta', ['delta' => 'a']);
 
         return $state->set('a_ran', true);
-    }
-
-    protected function emitDelta(string $nodeName): void
-    {
-        if (! $this->isStreaming()) {
-            return;
-        }
-
-        $context = app(StreamContext::class);
-        $session = $context->session();
-        $session->seq++;
-
-        $context->sink()?->emit(new StreamEventImpl(
-            streamId: $session->streamId,
-            executionId: $session->executionId,
-            nodeName: $nodeName,
-            spanId: null,
-            parentSpanId: null,
-            type: 'text_delta',
-            payload: ['delta' => $nodeName],
-            seq: $session->seq,
-            nodeSeq: $session->seq,
-            occurredAt: new DateTimeImmutable
-        ));
     }
 }
 
 class FilterStreamNodeB extends FilterStreamNodeA
 {
+    protected ?string $name = 'b';
+
     public function execute(StateContract $state): StateContract
     {
-        $this->emitDelta('b');
+        $this->streamEvent('text_delta', ['delta' => 'b']);
 
         return $state->set('b_ran', true);
     }
@@ -64,9 +42,11 @@ class FilterStreamNodeB extends FilterStreamNodeA
 
 class FilterStreamNodeC extends FilterStreamNodeA
 {
+    protected ?string $name = 'c';
+
     public function execute(StateContract $state): StateContract
     {
-        $this->emitDelta('c');
+        $this->streamEvent('text_delta', ['delta' => 'c']);
 
         return $state->set('c_ran', true);
     }
@@ -74,26 +54,11 @@ class FilterStreamNodeC extends FilterStreamNodeA
 
 class FilterInterruptStreamNodeB extends PrismNode
 {
+    protected ?string $name = 'b';
+
     public function execute(StateContract $state): StateContract
     {
-        if ($this->isStreaming()) {
-            $context = app(StreamContext::class);
-            $session = $context->session();
-            $session->seq++;
-
-            $context->sink()?->emit(new StreamEventImpl(
-                streamId: $session->streamId,
-                executionId: $session->executionId,
-                nodeName: 'b',
-                spanId: null,
-                parentSpanId: null,
-                type: 'text_delta',
-                payload: ['delta' => 'b'],
-                seq: $session->seq,
-                nodeSeq: $session->seq,
-                occurredAt: new DateTimeImmutable
-            ));
-        }
+        $this->streamEvent('text_delta', ['delta' => 'b']);
 
         return $state->set('b_ran', true);
     }

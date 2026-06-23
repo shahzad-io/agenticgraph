@@ -14,8 +14,6 @@ use Shahzad\AgenticGraph\Jobs\ExecuteGraphJob;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
-use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
-use Shahzad\AgenticGraph\Streaming\StreamContext;
 use Shahzad\AgenticGraph\Streaming\StreamDescriptor;
 
 class VerbsSimpleNode extends AbstractNode
@@ -28,25 +26,12 @@ class VerbsSimpleNode extends AbstractNode
 
 class VerbsAsyncStreamNode extends AbstractNode
 {
+    protected ?string $name = 'async';
+
     public function execute(StateContract $state): StateContract
     {
         if ($this->isStreaming()) {
-            $context = app(StreamContext::class);
-            $session = $context->session();
-            $session->seq++;
-
-            $context->sink()?->emit(new StreamEventImpl(
-                streamId: $session->streamId,
-                executionId: $session->executionId,
-                nodeName: 'async',
-                spanId: null,
-                parentSpanId: null,
-                type: 'text_delta',
-                payload: ['delta' => 'async'],
-                seq: $session->seq,
-                nodeSeq: 1,
-                occurredAt: new DateTimeImmutable
-            ));
+            $this->streamEvent('text_delta', ['delta' => 'async']);
 
             return $state->set('streamed', true);
         }
@@ -57,25 +42,12 @@ class VerbsAsyncStreamNode extends AbstractNode
 
 class VerbsSyncIteratorNode extends AbstractNode
 {
+    protected ?string $name = 'sync';
+
     public function execute(StateContract $state): StateContract
     {
         if ($this->isStreaming()) {
-            $context = app(StreamContext::class);
-            $session = $context->session();
-            $session->seq++;
-
-            $context->sink()?->emit(new StreamEventImpl(
-                streamId: $session->streamId,
-                executionId: $session->executionId,
-                nodeName: 'sync',
-                spanId: null,
-                parentSpanId: null,
-                type: 'text_delta',
-                payload: ['delta' => 'iterator'],
-                seq: $session->seq,
-                nodeSeq: 1,
-                occurredAt: new DateTimeImmutable
-            ));
+            $this->streamEvent('text_delta', ['delta' => 'iterator']);
 
             return $state->set('path', 'streaming');
         }

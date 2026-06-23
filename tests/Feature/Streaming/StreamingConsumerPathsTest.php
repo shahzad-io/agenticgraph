@@ -17,9 +17,7 @@ use Shahzad\AgenticGraph\Nodes\PrismNode;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamEvent;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
-use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
 use Shahzad\AgenticGraph\Streaming\Sinks\NullTransportSink;
-use Shahzad\AgenticGraph\Streaming\StreamContext;
 use Shahzad\AgenticGraph\Streaming\StreamDescriptor;
 use Shahzad\AgenticGraph\Streaming\StreamEventEnvelope;
 use Shahzad\AgenticGraph\Streaming\StreamOptions;
@@ -28,27 +26,13 @@ use Shahzad\AgenticGraph\Streaming\StreamSinkFactory;
 
 class ConsumerPathStreamNode extends AbstractNode
 {
+    protected ?string $name = 'stream';
+
     public function execute(StateContract $state): StateContract
     {
         if ($this->isStreaming()) {
-            $context = app(StreamContext::class);
-            $session = $context->session();
-            $sink = $context->sink();
-
-            foreach (['first', 'second'] as $index => $delta) {
-                $session->seq++;
-                $sink?->emit(new StreamEventImpl(
-                    streamId: $session->streamId,
-                    executionId: $session->executionId,
-                    nodeName: 'stream',
-                    spanId: null,
-                    parentSpanId: null,
-                    type: 'text_delta',
-                    payload: ['delta' => $delta],
-                    seq: $session->seq,
-                    nodeSeq: $index + 1,
-                    occurredAt: new DateTimeImmutable
-                ));
+            foreach (['first', 'second'] as $delta) {
+                $this->streamEvent('text_delta', ['delta' => $delta]);
             }
 
             return $state->set('streamed', true);
