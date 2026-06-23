@@ -154,11 +154,11 @@ it('logs a warning when an interrupt fires with persistence disabled', function 
         });
 });
 
-it('still resumes via resumeInterrupt when persistence is disabled', function () {
+it('still resumes via sync handle when persistence is disabled', function () {
     disableInterruptPersistence();
     config()->set('agenticgraph.checkpoint.enabled', true);
 
-    $graphName = 'resume-interrupt-persistence-disabled-'.Str::uuid();
+    $graphName = 'resume-handle-persistence-disabled-'.Str::uuid();
     registerPersistenceDisabledGraph($graphName);
 
     $handle = AgenticGraph::execute(
@@ -171,17 +171,16 @@ it('still resumes via resumeInterrupt when persistence is disabled', function ()
         )
     );
 
-    $checkpointId = $handle->getFinalState()->getInterruptCheckpointId();
-    expect($checkpointId)->not->toBeNull();
+    expect($handle->getFinalState()->getInterruptCheckpointId())->not->toBeNull();
 
-    $final = AgenticGraph::resumeInterrupt($checkpointId, [
+    $resumed = $handle->resume([
         'approved' => true,
-        'comments' => 'checkpoint path',
+        'comments' => 'handle path',
     ]);
 
-    expect($final->get('published'))->toBeTrue()
-        ->and($final->get('approved'))->toBeTrue()
-        ->and($final->hasInterrupt())->toBeFalse();
+    expect($resumed->getFinalState()->get('published'))->toBeTrue()
+        ->and($resumed->getFinalState()->get('approved'))->toBeTrue()
+        ->and($resumed->getFinalState()->hasInterrupt())->toBeFalse();
 });
 
 it('returns a benign ResumeResult when persistence is enabled but no pending interrupt exists', function () {
@@ -214,8 +213,7 @@ it('returns already resolved ResumeResult when persistence is enabled and interr
         )
     );
 
-    $checkpointId = $handle->getFinalState()->getInterruptCheckpointId();
-    AgenticGraph::resumeInterrupt($checkpointId, ['approved' => true, 'comments' => 'done']);
+    $handle->resume(['approved' => true, 'comments' => 'done']);
 
     Bus::fake();
 

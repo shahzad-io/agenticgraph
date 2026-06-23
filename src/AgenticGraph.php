@@ -21,7 +21,6 @@ use Shahzad\AgenticGraph\Execution\StreamingMode;
 use Shahzad\AgenticGraph\Graph\Graph;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
-use Shahzad\AgenticGraph\Jobs\ResumeExecutionJob;
 
 class AgenticGraph
 {
@@ -151,49 +150,18 @@ class AgenticGraph
         );
     }
 
-    public function resumeInterrupt(string $checkpointId, mixed $humanInput): StateContract
-    {
-        $state = $this->executor()->resumeWithInput($checkpointId, $humanInput);
-
-        $interrupt = InterruptRecord::query()
-            ->where('checkpoint_id', $checkpointId)
-            ->whereIn('status', ['pending', 'resolving'])
-            ->latest('id')
-            ->first();
-
-        if ($interrupt) {
-            $metadata = $interrupt->metadata();
-            $resolution = ['input' => $humanInput];
-            $interrupt->resolve($resolution, $metadata['user_id'] ?? null);
-        }
-
-        return $state;
-    }
-
     public function resume(string $executionId, mixed $humanInput): ResumeResult
     {
         if (! (bool) config('agenticgraph.interrupts.persistence_enabled', true)) {
             throw new InterruptPersistenceDisabledException;
         }
 
-        $interrupt = InterruptRecord::query()
-            ->forExecution($executionId)
-            ->pending()
-            ->latest('id')
-            ->first();
+        $handle = $this->getExecution($executionId)->refresh();
+        $streamId = $this->resolveResumeStreamId($executionId);
 
-        $handle = $this->getExecution($executionId);
-        $record = app(ExecutionStore::class)->get($executionId);
-        $streamId = $record?->streamId;
-        if ($interrupt) {
-            $metadata = $interrupt->metadata();
-            $candidate = $metadata['stream_id'] ?? null;
-            if (is_string($candidate) && $candidate !== '') {
-                $streamId = $candidate;
-            }
-        }
+        $pending = $handle->pendingInterrupt();
 
-        if (! $interrupt) {
+        if ($pending === null) {
             $resolved = InterruptRecord::query()
                 ->forExecution($executionId)
                 ->resolved()
@@ -215,19 +183,41 @@ class AgenticGraph
             );
         }
 
-        $interrupt->markResolving();
-        $interruptId = $interrupt->interruptId();
-        if ($interruptId === null) {
-            throw new \RuntimeException('Interrupt id is missing.');
-        }
-        dispatch(new ResumeExecutionJob($interruptId, $humanInput));
+        $resumed = $handle->resume($humanInput);
+
+        $interrupt = InterruptRecord::query()
+            ->forExecution($executionId)
+            ->whereIn('status', ['pending', 'resolving'])
+            ->latest('id')
+            ->first();
 
         return new ResumeResult(
-            handle: $handle,
-            interrupt: $interrupt,
+            handle: $resumed,
+            interrupt: $interrupt ?? $pending,
             alreadyResolved: false,
-            streamId: $streamId
+            streamId: $streamId ?? $resumed->streamId()
         );
+    }
+
+    private function resolveResumeStreamId(string $executionId): ?string
+    {
+        $record = app(ExecutionStore::class)->get($executionId);
+        $streamId = $record?->streamId;
+        $interrupt = InterruptRecord::query()
+            ->forExecution($executionId)
+            ->pending()
+            ->latest('id')
+            ->first();
+
+        if ($interrupt) {
+            $metadata = $interrupt->metadata();
+            $candidate = $metadata['stream_id'] ?? null;
+            if (is_string($candidate) && $candidate !== '') {
+                $streamId = $candidate;
+            }
+        }
+
+        return $streamId;
     }
 
     public function interruptStatus(string $executionId): InterruptStatus

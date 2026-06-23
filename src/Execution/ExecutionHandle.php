@@ -4,8 +4,9 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph\Execution;
 
-use Shahzad\AgenticGraph\AgenticGraph;
 use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Exceptions\InterruptPersistenceDisabledException;
+use Shahzad\AgenticGraph\Jobs\ResumeExecutionJob;
 use Shahzad\AgenticGraph\State\State;
 use Illuminate\Support\Facades\Route;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
@@ -226,20 +227,21 @@ final class ExecutionHandle
     public function resume(mixed $input): ExecutionHandle
     {
         if ($this->isAsync()) {
-            $result = app(AgenticGraph::class)->resume($this->executionId, $input);
-
-            if ($result->alreadyResolved) {
-                return new self(
-                    executionId: $this->executionId,
-                    options: $this->options,
-                    executor: $this->executor,
-                    store: $this->store,
-                    resolver: $this->resolver,
-                    checkpoints: $this->checkpoints,
-                    status: $result->handle->refresh()->status(),
-                    streamId: $result->streamId ?? $this->streamId(),
-                );
+            if (! (bool) config('agenticgraph.interrupts.persistence_enabled', true)) {
+                throw new InterruptPersistenceDisabledException;
             }
+
+            $interrupt = $this->pendingInterrupt();
+            if ($interrupt === null) {
+                return $this->refresh();
+            }
+
+            $interrupt->markResolving();
+            $interruptId = $interrupt->interruptId();
+            if ($interruptId === null) {
+                throw new \RuntimeException('Interrupt id is missing.');
+            }
+            dispatch(new ResumeExecutionJob($interruptId, $input));
 
             return new self(
                 executionId: $this->executionId,
@@ -249,12 +251,14 @@ final class ExecutionHandle
                 resolver: $this->resolver,
                 checkpoints: $this->checkpoints,
                 status: ExecutionStatus::RUNNING,
-                streamId: $result->streamId ?? $this->streamId(),
+                streamId: $this->streamId(),
             );
         }
 
-        $checkpointId = null;
-        if ($this->finalState !== null && $this->finalState->hasInterrupt()) {
+        $pending = $this->pendingInterrupt();
+        $checkpointId = $pending?->checkpointId();
+
+        if ($checkpointId === null && $this->finalState !== null && $this->finalState->hasInterrupt()) {
             $checkpointId = $this->finalState->getInterruptCheckpointId();
         }
 
@@ -267,6 +271,7 @@ final class ExecutionHandle
 
         if ($this->options->streaming === StreamingMode::NONE) {
             $state = $this->executor->resumeWithInput($checkpoint->id, $input);
+            $this->resolvePendingInterruptForCheckpoint($checkpoint->id, $input);
             $status = $state->hasInterrupt() ? ExecutionStatus::INTERRUPTED : ExecutionStatus::COMPLETED;
 
             return new self(
@@ -286,6 +291,7 @@ final class ExecutionHandle
             interrupts: $this->options->interrupts
         );
         $handle = app(StreamResumption::class)->resumeStream($checkpoint->id, $input, $streamOptions);
+        $this->resolvePendingInterruptForCheckpoint($checkpoint->id, $input);
         $state = $handle->getFinalState();
         $status = $state->hasInterrupt() ? ExecutionStatus::INTERRUPTED : ExecutionStatus::COMPLETED;
 
@@ -303,6 +309,22 @@ final class ExecutionHandle
         );
     }
 
+    private function resolvePendingInterruptForCheckpoint(string $checkpointId, mixed $input): void
+    {
+        $interrupt = InterruptRecord::query()
+            ->where('checkpoint_id', $checkpointId)
+            ->whereIn('status', ['pending', 'resolving'])
+            ->latest('id')
+            ->first();
+
+        if ($interrupt === null) {
+            return;
+        }
+
+        $metadata = $interrupt->metadata();
+        $interrupt->resolve(['input' => $input], $metadata['user_id'] ?? null);
+    }
+
     private function loadPersistedFinalState(): ?StateContract
     {
         $record = $this->store->get($this->executionId);
@@ -312,6 +334,21 @@ final class ExecutionHandle
 
         if ($this->status !== ExecutionStatus::INTERRUPTED) {
             return null;
+        }
+
+        $pending = $this->pendingInterrupt();
+        if ($pending?->checkpointId() !== null) {
+            $checkpoint = $this->checkpoints->load($pending->checkpointId());
+            if ($checkpoint !== null) {
+                $state = $checkpoint->state;
+                if ($state->hasInterrupt()) {
+                    return $state;
+                }
+
+                $reason = $pending->reason() ?? $checkpoint->metadata['interrupt_reason'] ?? 'Interrupted';
+
+                return $state->setInterrupt($reason, $checkpoint->id);
+            }
         }
 
         $checkpoint = $this->checkpoints->getLatestForExecution($this->executionId);

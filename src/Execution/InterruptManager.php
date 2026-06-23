@@ -170,7 +170,7 @@ final class InterruptManager implements InterruptServiceInterface
 
             $this->logger->warning(
                 'Interrupt persistence is disabled; AgenticGraph::resume() will not be available for this execution. '.
-                'Use AgenticGraph::resumeInterrupt() or a SYNC ExecutionHandle::resume() with the checkpoint id instead.',
+                'Use a SYNC ExecutionHandle::resume() instead.',
                 [
                     'execution_id' => $executionId,
                     'checkpoint_id' => $checkpointId,

@@ -13,7 +13,7 @@ final class InterruptPersistenceDisabledException extends RuntimeException
         parent::__construct(
             'Async resume via AgenticGraph::resume() requires interrupt persistence. '.
             'Enable agenticgraph.interrupts.persistence_enabled, or resume synchronously '.
-            'with AgenticGraph::resumeInterrupt($checkpointId, $input) or a SYNC ExecutionHandle::resume().'
+            'with a SYNC ExecutionHandle::resume().'
         );
     }
 }

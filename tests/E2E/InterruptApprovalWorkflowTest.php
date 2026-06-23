@@ -269,9 +269,9 @@ it('resumes past entry without re-gating when onResume does not satisfy shouldIn
 
     expect($handle->getFinalState()->has('approved'))->toBeFalse();
 
-    $final = AgenticGraph::resumeInterrupt($checkpointId, [
+    $final = $handle->resume([
         'comments' => 'Proceed without setting approved',
-    ]);
+    ])->getFinalState();
 
     expect($final->get('content_reviewed'))->toBeTrue()
         ->and($final->get('published'))->toBeTrue()
@@ -280,7 +280,7 @@ it('resumes past entry without re-gating when onResume does not satisfy shouldIn
         ->and($final->hasInterrupt())->toBeFalse();
 });
 
-it('resumes interrupt via facade using checkpoint id', function () {
+it('resumes interrupt via facade using execution id on sync execution', function () {
     $graph = GraphBuilder::create('approval-workflow-facade')
         ->addNode('generate', GenerateContentNode::class)
         ->addNode('approve', ApprovalInterruptNode::class)
@@ -294,20 +294,21 @@ it('resumes interrupt via facade using checkpoint id', function () {
     AgenticGraph::register('approval-workflow-facade', $graph);
 
     $handle = AgenticGraph::execute('approval-workflow-facade', new State(['topic' => 'Facade']));
-    $checkpointId = $handle->getFinalState()->getInterruptCheckpointId();
+    $executionId = $handle->id();
 
-    $final = AgenticGraph::resumeInterrupt($checkpointId, [
+    $result = AgenticGraph::resume($executionId, [
         'approved' => true,
         'comments' => 'OK',
     ]);
 
-    expect($final->get('published'))->toBeTrue()
-        ->and($final->get('approved'))->toBeTrue()
-        ->and($final->get('approval_comments'))->toBe('OK')
-        ->and($final->hasInterrupt())->toBeFalse();
+    expect($result->handle->refresh()->status()->value)->toBe('completed')
+        ->and($result->handle->getFinalState()->get('published'))->toBeTrue()
+        ->and($result->handle->getFinalState()->get('approved'))->toBeTrue()
+        ->and($result->handle->getFinalState()->get('approval_comments'))->toBe('OK')
+        ->and($result->handle->getFinalState()->hasInterrupt())->toBeFalse();
 });
 
-it('resumes interrupt via facade using execution id', function () {
+it('resumes interrupt via facade using execution id on async execution', function () {
     Bus::fake();
 
     $graph = GraphBuilder::create('approval-workflow-resume-id')
@@ -322,8 +323,26 @@ it('resumes interrupt via facade using execution id', function () {
 
     AgenticGraph::register('approval-workflow-resume-id', $graph);
 
-    $handle = AgenticGraph::execute('approval-workflow-resume-id', new State(['topic' => 'Facade']));
+    $handle = AgenticGraph::execute(
+        'approval-workflow-resume-id',
+        new State(['topic' => 'Facade']),
+        new \Shahzad\AgenticGraph\Execution\ExecutionOptions(
+            mode: \Shahzad\AgenticGraph\Execution\ExecutionMode::ASYNC,
+            streaming: \Shahzad\AgenticGraph\Execution\StreamingMode::NONE,
+        )
+    );
     $executionId = $handle->id();
+
+    $job = null;
+    Bus::assertDispatched(\Shahzad\AgenticGraph\Jobs\ExecuteGraphJob::class, function ($dispatched) use ($executionId, &$job): bool {
+        if ($dispatched->executionId !== $executionId) {
+            return false;
+        }
+        $job = $dispatched;
+
+        return true;
+    });
+    $job->handle(app(GraphExecutor::class), app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class));
 
     $pending = InterruptRecord::query()
         ->forExecution($executionId)
@@ -366,9 +385,9 @@ it('exposes pending interrupt on the execution handle', function () {
         ->and($interrupt?->executionId())->toBe($handle->id());
 });
 
-it('throws helpful error when interrupt checkpoint is missing', function () {
-    expect(fn () => AgenticGraph::resumeInterrupt('missing-interrupt-checkpoint', []))
-        ->toThrow(\RuntimeException::class, 'Persist the interrupt checkpoint id');
+it('throws helpful error when execution handle resume finds no interrupt checkpoint', function () {
+    expect(fn () => AgenticGraph::getExecution('missing-exec-id')->resume([]))
+        ->toThrow(\RuntimeException::class, 'No interrupt checkpoint found for execution.');
 });
 
 it('throws helpful error when checkpoint is not an interrupt checkpoint', function () {
@@ -392,8 +411,8 @@ it('throws helpful error when checkpoint is not an interrupt checkpoint', functi
     $checkpoint->createdAt = new \DateTimeImmutable;
 
     $storage = app(StorageInterface::class);
-    $checkpointId = $storage->save($checkpoint);
+    $storage->save($checkpoint);
 
-    expect(fn () => AgenticGraph::resumeInterrupt($checkpointId, []))
+    expect(fn () => app(GraphExecutor::class)->resumeWithInput($checkpoint->id, []))
         ->toThrow(\InvalidArgumentException::class, 'Use the checkpoint id from State::getInterruptCheckpointId()');
 });

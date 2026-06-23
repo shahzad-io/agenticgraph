@@ -266,6 +266,25 @@ function resumeD17ParityExecution(
     return app(GraphExecutor::class)->resumeWithInput($checkpointId, $input);
 }
 
+function resumeD17ParityViaEscapeHatch(
+    string $executionId,
+    ExecutionOptions $options,
+    mixed $input
+): StateContract {
+    if ($options->mode === ExecutionMode::ASYNC) {
+        Bus::fake();
+        AgenticGraph::resume($executionId, $input);
+        runResumeExecutionJobFor($executionId);
+
+        return stateAfterAsyncResume($executionId);
+    }
+
+    $result = AgenticGraph::resume($executionId, $input);
+    $handle = $result->handle->refresh();
+
+    return $handle->getFinalState();
+}
+
 function assertD17ResumeGateParity(ExecutionOptions $options, string $suffix): void
 {
     $graphName = 'd17-parity-'.$suffix;
@@ -303,6 +322,48 @@ function assertD17ResumeGateParity(ExecutionOptions $options, string $suffix): v
         ->and(pendingInterruptNodeFor($executionId))->toBe('entry');
 }
 
+function assertD17EscapeHatchGateParity(ExecutionOptions $options, string $suffix): void
+{
+    $graphName = 'd17-escape-'.$suffix;
+    registerD17ParityGraph($graphName);
+
+    $started = startD17ParityExecution($graphName, $options);
+    $executionId = $started['executionId'];
+
+    expect($started['state']->hasInterrupt())->toBeTrue()
+        ->and($started['state']->get('entry_runs', 0))->toBe(0)
+        ->and(pendingInterruptNodeFor($executionId))->toBe('entry');
+
+    $afterEntryResume = resumeD17ParityViaEscapeHatch(
+        $executionId,
+        $options,
+        ['marker' => 'entry-resume']
+    );
+
+    expect($afterEntryResume->get('resume_marker'))->toBe('entry-resume')
+        ->and($afterEntryResume->get('entry_runs'))->toBe(
+            1,
+            'D17 footgun guard (step 3): entry body must run once via escape hatch — fails if bare executeFromNode drops skipInterruptGateForEntry'
+        )
+        ->and($afterEntryResume->hasInterrupt())->toBeTrue()
+        ->and(pendingInterruptNodeFor($executionId))->toBe('downstream');
+
+    $afterDownstreamResume = resumeD17ParityViaEscapeHatch(
+        $executionId,
+        $options,
+        ['downstream_passed' => true]
+    );
+
+    expect($afterDownstreamResume->get('downstream_ran'))->toBeTrue()
+        ->and($afterDownstreamResume->get('route_to_entry'))->toBeTrue()
+        ->and($afterDownstreamResume->hasInterrupt())->toBeTrue()
+        ->and($afterDownstreamResume->get('entry_runs'))->toBe(
+            1,
+            'D17 footgun guard (step 4a): downstream gate must survive escape-hatch reconstruction — entry_runs stays 1 while loop re-gates entry'
+        )
+        ->and(pendingInterruptNodeFor($executionId))->toBe('entry');
+}
+
 beforeEach(function () {
     config()->set('agenticgraph.checkpoint.enabled', true);
     config()->set('agenticgraph.interrupts.persistence_enabled', true);
@@ -327,6 +388,27 @@ it('enforces D17 resume gate parity on ASYNC+NONE', function () {
     assertD17ResumeGateParity(
         new ExecutionOptions(mode: ExecutionMode::ASYNC, streaming: StreamingMode::NONE),
         'async-none'
+    );
+});
+
+it('preserves D17 via AgenticGraph::resume escape hatch on SYNC+NONE', function () {
+    assertD17EscapeHatchGateParity(
+        new ExecutionOptions(mode: ExecutionMode::SYNC, streaming: StreamingMode::NONE),
+        'escape-sync-none'
+    );
+});
+
+it('preserves D17 via AgenticGraph::resume escape hatch on SYNC+ITERATOR streaming', function () {
+    assertD17EscapeHatchGateParity(
+        new ExecutionOptions(mode: ExecutionMode::SYNC, streaming: StreamingMode::ITERATOR),
+        'escape-sync-iterator'
+    );
+});
+
+it('preserves D17 via AgenticGraph::resume escape hatch on ASYNC+NONE', function () {
+    assertD17EscapeHatchGateParity(
+        new ExecutionOptions(mode: ExecutionMode::ASYNC, streaming: StreamingMode::NONE),
+        'escape-async-none'
     );
 });
 
