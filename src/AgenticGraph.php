@@ -64,6 +64,74 @@ class AgenticGraph
         return $this->executor()->executeWithOptions($graph, $state, $options);
     }
 
+    public function run(string $name, StateContract $state): ExecutionHandle
+    {
+        return $this->execute($name, $state, new ExecutionOptions(
+            mode: ExecutionMode::SYNC,
+            streaming: StreamingMode::NONE,
+        ));
+    }
+
+    public function dispatch(string $name, StateContract $state): ExecutionHandle
+    {
+        return $this->execute($name, $state, new ExecutionOptions(
+            mode: ExecutionMode::ASYNC,
+            streaming: StreamingMode::NONE,
+        ));
+    }
+
+    /**
+     * @param  list<string>|null  $nodes
+     * @param  list<string>|null  $events
+     */
+    public function stream(
+        string $name,
+        StateContract $state,
+        ?array $nodes = null,
+        ?array $events = null,
+        bool $inline = false,
+    ): ExecutionHandle {
+        $options = new ExecutionOptions(
+            mode: $inline ? ExecutionMode::SYNC : ExecutionMode::ASYNC,
+            streaming: $inline ? StreamingMode::ITERATOR : StreamingMode::SSE,
+        );
+
+        if ($nodes !== null) {
+            $options = $options->withNodeFilter($nodes);
+        }
+        if ($events !== null) {
+            $options = $options->withEventTypeFilter($events);
+        }
+
+        return $this->execute($name, $state, $options);
+    }
+
+    /**
+     * @param  list<string>|null  $nodes
+     * @param  list<string>|null  $events
+     */
+    public function broadcast(
+        string $name,
+        StateContract $state,
+        ?array $nodes = null,
+        ?array $events = null,
+        bool $async = true,
+    ): ExecutionHandle {
+        $options = new ExecutionOptions(
+            mode: $async ? ExecutionMode::ASYNC : ExecutionMode::SYNC,
+            streaming: StreamingMode::BROADCAST,
+        );
+
+        if ($nodes !== null) {
+            $options = $options->withNodeFilter($nodes);
+        }
+        if ($events !== null) {
+            $options = $options->withEventTypeFilter($events);
+        }
+
+        return $this->execute($name, $state, $options);
+    }
+
     public function getExecution(string $executionId): ExecutionHandle
     {
         $store = app(ExecutionStore::class);
