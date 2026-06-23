@@ -23,6 +23,8 @@ use Shahzad\AgenticGraph\Jobs\ExecuteNodeJob;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\State\StateManager;
 use Shahzad\AgenticGraph\Streaming\StreamContext;
+use Shahzad\AgenticGraph\Streaming\StreamLifecycleEventEmitter;
+use Shahzad\AgenticGraph\Streaming\StreamNodeCompletePayloadBuilder;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 
 final class ParallelExecutionCoordinator implements ParallelExecutorInterface
@@ -73,6 +75,8 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
         $results = [];
         $traceContext = ($this->traceContextProvider)();
         $parentSpanId = $traceContext instanceof TraceContext ? $traceContext->getSpanId() : null;
+        $nodeSeqs = new \stdClass;
+        $nodeCompletePayloadBuilder = StreamNodeCompletePayloadBuilder::fromConfig($this->stateManager);
         foreach ($parallelNodes as $nodeName) {
             $node = $graph->getNode($nodeName);
             $spanId = $traceContext instanceof TraceContext ? $traceContext->startSpan($nodeName) : null;
@@ -87,6 +91,15 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
                 $spanId,
                 $parentSpanId
             ));
+            $this->emitStreamLifecycleIfActive(
+                $streamContext,
+                $nodeName,
+                $spanId,
+                $parentSpanId,
+                'node_start',
+                ['node_name' => $nodeName],
+                $nodeSeqs
+            );
             try {
                 $resultState = $this->runNodeWithMiddleware($state, $node, $executionId, $nodeName, $spanId);
             } finally {
@@ -104,6 +117,15 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
                 ['node_type' => $node::class],
                 $spanId
             ));
+            $this->emitStreamLifecycleIfActive(
+                $streamContext,
+                $nodeName,
+                $spanId,
+                $parentSpanId,
+                'node_complete',
+                $nodeCompletePayloadBuilder->build($nodeName, $nodeDuration * 1000, $inputState, $resultState),
+                $nodeSeqs
+            );
             $results[] = $resultState;
         }
         $merged = $this->stateManager->mergeAll($results);
@@ -444,5 +466,47 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
         );
 
         return $pipeline($state);
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function emitStreamLifecycleIfActive(
+        ?StreamContext $streamContext,
+        string $nodeName,
+        ?string $spanId,
+        ?string $parentSpanId,
+        string $type,
+        array $payload,
+        \stdClass $nodeSeqs
+    ): void {
+        if ($streamContext === null || ! $streamContext->isStreamingActive()) {
+            return;
+        }
+
+        $sink = $streamContext->sink();
+        if ($sink === null) {
+            return;
+        }
+
+        StreamLifecycleEventEmitter::emit(
+            $sink,
+            $streamContext->session(),
+            $nodeName,
+            $spanId,
+            $parentSpanId,
+            $type,
+            $payload,
+            $this->nextNodeSeq($nodeSeqs, $nodeName)
+        );
+    }
+
+    private function nextNodeSeq(\stdClass $nodeSeqs, string $nodeName): int
+    {
+        $current = property_exists($nodeSeqs, $nodeName) ? (int) $nodeSeqs->{$nodeName} : 0;
+        $next = $current + 1;
+        $nodeSeqs->{$nodeName} = $next;
+
+        return $next;
     }
 }
