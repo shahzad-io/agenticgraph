@@ -4,14 +4,14 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph\Tracing;
 
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
  * Exports traces to AgenticPulse SaaS.
- * Buffers spans during execution and flushes asynchronously on completion.
+ * Buffers spans in memory during execution and flushes once on completion.
  * Supports payload size management with automatic truncation.
  */
 class PulseExporter
@@ -28,8 +28,13 @@ class PulseExporter
     /** @var array<string, bool> */
     private array $sampledTraces = [];
 
-    /** @var array<string, \Illuminate\Support\Carbon> */
+    /** @var array<string, Carbon> */
     private array $traceStarts = [];
+
+    /** @var array<string, true> */
+    private array $flushedTraceIds = [];
+
+    private int $captureDepth = 0;
 
     /** Payload size limits */
     private const MAX_PAYLOAD_BYTES = 1_048_576; // 1MB
@@ -47,74 +52,6 @@ class PulseExporter
         $this->endpoint = config('agenticgraph.tracing.endpoint');
         $this->apiKey = config('agenticgraph.tracing.api_key');
         $this->enabled = config('agenticgraph.tracing.enabled', false) && ! empty($this->apiKey);
-    }
-
-    private function bufferStore(): \Illuminate\Contracts\Cache\Repository
-    {
-        $store = config('agenticgraph.tracing.buffer.store');
-
-        return $store ? Cache::store($store) : Cache::store();
-    }
-
-    private function bufferTtlSeconds(): int
-    {
-        return (int) config('agenticgraph.tracing.buffer.ttl_seconds', 3600);
-    }
-
-    private function bufferKey(string $traceId, string $type): string
-    {
-        return "agenticpulse:trace:{$traceId}:{$type}";
-    }
-
-    /**
-     * @param  array<string, mixed>  $item
-     */
-    private function appendBuffered(string $traceId, string $type, array $item): void
-    {
-        $store = $this->bufferStore();
-        $key = $this->bufferKey($traceId, $type);
-        $ttl = $this->bufferTtlSeconds();
-        $items = $store->get($key, []);
-        $items = is_array($items) ? $items : [];
-        $items[] = $item;
-        $store->put($key, $items, $ttl);
-    }
-
-    /**
-     * @return array<int, array<string, mixed>>
-     */
-    private function getBufferedItems(string $traceId, string $type): array
-    {
-        $store = $this->bufferStore();
-        $items = $store->get($this->bufferKey($traceId, $type), []);
-
-        return is_array($items) ? $items : [];
-    }
-
-    private function clearBufferedItems(string $traceId, string $type): void
-    {
-        $store = $this->bufferStore();
-        $store->forget($this->bufferKey($traceId, $type));
-    }
-
-    /**
-     * @param  array<int, array<string, mixed>>  $items
-     * @return array<int, array<string, mixed>>
-     */
-    private function mergeById(array $items): array
-    {
-        $byId = [];
-        $others = [];
-        foreach ($items as $item) {
-            if (array_key_exists('id', $item) && $item['id'] !== null) {
-                $traceId = array_key_exists('trace_id', $item) ? (string) $item['trace_id'] : '';
-                $byId[$traceId.':'.(string) $item['id']] = $item;
-            } else {
-                $others[] = $item;
-            }
-        }
-
-        return array_values(array_merge($byId, $others));
     }
 
     /**
@@ -247,6 +184,32 @@ class PulseExporter
     }
 
     /**
+     * True while the exporter is capturing, buffering, or flushing trace data.
+     * Instrumentation must not record operations triggered by tracing itself.
+     */
+    public function isCapturing(): bool
+    {
+        return $this->captureDepth > 0;
+    }
+
+    /**
+     * @template TReturn
+     *
+     * @param  callable(): TReturn  $callback
+     * @return TReturn
+     */
+    protected function whileCapturing(callable $callback): mixed
+    {
+        $this->captureDepth++;
+
+        try {
+            return $callback();
+        } finally {
+            $this->captureDepth--;
+        }
+    }
+
+    /**
      * Start a new trace.
      *
      * @param  array<int, string>  $initialStateKeys
@@ -289,7 +252,7 @@ class PulseExporter
         }
     }
 
-    public function getTraceStartTime(string $traceId): ?\Illuminate\Support\Carbon
+    public function getTraceStartTime(string $traceId): ?Carbon
     {
         return $this->traceStarts[$traceId] ?? null;
     }
@@ -311,10 +274,9 @@ class PulseExporter
             return;
         }
 
-        $this->spans[] = $span;
-        if ($traceId) {
-            $this->appendBuffered($traceId, 'spans', $span);
-        }
+        $this->whileCapturing(function () use ($span): void {
+            $this->spans[] = $span;
+        });
     }
 
     /**
@@ -334,10 +296,9 @@ class PulseExporter
             return;
         }
 
-        $this->llmCalls[] = $call;
-        if ($traceId) {
-            $this->appendBuffered($traceId, 'llm_calls', $call);
-        }
+        $this->whileCapturing(function () use ($call): void {
+            $this->llmCalls[] = $call;
+        });
     }
 
     /**
@@ -352,7 +313,7 @@ class PulseExporter
         float $durationMs = 0,
         ?array $finalStateData = null
     ): void {
-        if (! $this->enabled || ! isset($this->traces[$traceId])) {
+        if (! $this->enabled || ! isset($this->traces[$traceId]) || isset($this->flushedTraceIds[$traceId])) {
             return;
         }
 
@@ -375,8 +336,6 @@ class PulseExporter
         }
 
         if (! $this->isSampled($traceId)) {
-            $this->clearBufferedItems($traceId, 'spans');
-            $this->clearBufferedItems($traceId, 'llm_calls');
             $this->reset();
 
             return;
@@ -396,7 +355,7 @@ class PulseExporter
         float $durationMs = 0,
         ?array $finalStateData = null
     ): void {
-        if (! $this->enabled || ! isset($this->traces[$traceId])) {
+        if (! $this->enabled || ! isset($this->traces[$traceId]) || isset($this->flushedTraceIds[$traceId])) {
             return;
         }
 
@@ -423,8 +382,6 @@ class PulseExporter
 
         if (! $this->isSampled($traceId)) {
             if (! $this->shouldAlwaysSampleOnError()) {
-                $this->clearBufferedItems($traceId, 'spans');
-                $this->clearBufferedItems($traceId, 'llm_calls');
                 $this->reset();
 
                 return;
@@ -448,11 +405,7 @@ class PulseExporter
         $this->traces[$traceId]['interrupt_reason'] = $reason;
         $this->traces[$traceId]['interrupted_at'] = now()->toIso8601String();
 
-        // Mark trace as interrupted but don't reset - it may be resumed
-        // The trace stays in buffer with interrupted status
         if (! $this->isSampled($traceId)) {
-            $this->clearBufferedItems($traceId, 'spans');
-            $this->clearBufferedItems($traceId, 'llm_calls');
             $this->reset();
 
             return;
@@ -478,6 +431,7 @@ class PulseExporter
             $this->traces[$traceId]['resumed_at'] = now()->toIso8601String();
             unset($this->traces[$traceId]['interrupt_reason']);
             unset($this->traces[$traceId]['interrupted_at']);
+            unset($this->flushedTraceIds[$traceId]);
         }
     }
 
@@ -492,77 +446,42 @@ class PulseExporter
             return;
         }
 
-        $localSpans = array_filter($this->spans, fn ($s) => ($s['trace_id'] ?? '') === $traceId);
-        $localCalls = array_filter($this->llmCalls, fn ($c) => ($c['trace_id'] ?? '') === $traceId);
-        $bufferedSpans = $this->getBufferedItems($traceId, 'spans');
-        $bufferedCalls = $this->getBufferedItems($traceId, 'llm_calls');
+        if (isset($this->flushedTraceIds[$traceId])) {
+            return;
+        }
 
-        $payload = $this->buildPayload(
-            $traceId,
-            $localSpans,
-            $bufferedSpans,
-            $localCalls,
-            $bufferedCalls
-        );
+        $this->flushedTraceIds[$traceId] = true;
+
+        $payload = $this->whileCapturing(function () use ($traceId): array {
+            $localSpans = array_values(array_filter(
+                $this->spans,
+                fn ($s) => ($s['trace_id'] ?? '') === $traceId
+            ));
+            $localCalls = array_values(array_filter(
+                $this->llmCalls,
+                fn ($c) => ($c['trace_id'] ?? '') === $traceId
+            ));
+
+            return $this->buildPayload($traceId, $localSpans, $localCalls);
+        });
 
         $requestBound = app()->bound('request');
         $isHttpContext = $requestBound && (! app()->runningInConsole() || app()->runningUnitTests());
 
         if ($isHttpContext) {
             // In HTTP context, dispatch after response to avoid blocking
-            dispatch(function () use ($payload) {
-                try {
-                    /** @var \Illuminate\Http\Client\Response $response */
-                    $response = Http::withToken($this->apiKey)
-                        ->timeout(5)
-                        ->post("{$this->endpoint}/v1/ingest", $payload);
-
-                    if ($response->failed()) {
-                        if ((bool) config('agenticgraph.logging.enabled', true)) {
-                            Log::warning('AgenticPulse ingest failed', [
-                                'status' => $response->status(),
-                                'body' => $response->body(),
-                            ]);
-                        }
-                    }
-                } catch (\Throwable $e) {
-                    // Silent fail - don't break the user's application
-                    if ((bool) config('agenticgraph.logging.enabled', true)) {
-                        Log::debug('AgenticPulse ingest error', [
-                            'error' => $e->getMessage(),
-                        ]);
-                    }
-                }
+            dispatch(function () use ($payload): void {
+                $this->whileCapturing(function () use ($payload): void {
+                    $this->sendIngestPayload($payload);
+                });
             })->afterResponse();
         } else {
             // In queue/console context, execute synchronously
-            // This ensures traces are sent immediately when queue jobs complete
-            try {
-                /** @var \Illuminate\Http\Client\Response $response */
-                $response = Http::withToken($this->apiKey)
-                    ->timeout(5)
-                    ->post("{$this->endpoint}/v1/ingest", $payload);
-
-                if ($response->failed()) {
-                    if ((bool) config('agenticgraph.logging.enabled', true)) {
-                        Log::warning('AgenticPulse ingest failed', [
-                            'status' => $response->status(),
-                            'body' => $response->body(),
-                        ]);
-                    }
-                }
-            } catch (\Throwable $e) {
-                // Silent fail - don't break the user's application
-                if ((bool) config('agenticgraph.logging.enabled', true)) {
-                    Log::debug('AgenticPulse ingest error', [
-                        'error' => $e->getMessage(),
-                    ]);
-                }
-            }
+            $this->whileCapturing(function () use ($payload): void {
+                $this->sendIngestPayload($payload);
+            });
         }
 
-        $this->clearBufferedItems($traceId, 'spans');
-        $this->clearBufferedItems($traceId, 'llm_calls');
         $this->reset();
     }
 
@@ -576,6 +495,8 @@ class PulseExporter
         $this->llmCalls = [];
         $this->sampledTraces = [];
         $this->traceStarts = [];
+        $this->flushedTraceIds = [];
+        $this->captureDepth = 0;
     }
 
     /**
@@ -594,23 +515,19 @@ class PulseExporter
 
     /**
      * @param  array<int, array<string, mixed>>  $localSpans
-     * @param  array<int, array<string, mixed>>  $bufferedSpans
      * @param  array<int, array<string, mixed>>  $localCalls
-     * @param  array<int, array<string, mixed>>  $bufferedCalls
      * @return array<string, mixed>
      */
     protected function buildPayload(
         string $traceId,
         array $localSpans,
-        array $bufferedSpans,
-        array $localCalls,
-        array $bufferedCalls
+        array $localCalls
     ): array {
-        $spans = $this->mergeById(array_merge($localSpans, $bufferedSpans));
+        $spans = $this->mergeById($localSpans);
         $spans = $this->normalizeSpans($spans);
         $trace = $this->normalizeTraceWindow($this->traces[$traceId], $spans);
 
-        $llmCalls = $this->mergeById(array_merge($localCalls, $bufferedCalls));
+        $llmCalls = $this->mergeById($localCalls);
 
         $payload = [
             'trace' => $trace,
@@ -620,6 +537,55 @@ class PulseExporter
 
         // Check and manage payload size
         return $this->preparePayload($payload);
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    protected function sendIngestPayload(array $payload): void
+    {
+        try {
+            /** @var Response $response */
+            $response = Http::withToken($this->apiKey)
+                ->timeout(5)
+                ->post("{$this->endpoint}/v1/ingest", $payload);
+
+            if ($response->failed()) {
+                if ((bool) config('agenticgraph.logging.enabled', true)) {
+                    Log::warning('AgenticPulse ingest failed', [
+                        'status' => $response->status(),
+                        'body' => $response->body(),
+                    ]);
+                }
+            }
+        } catch (\Throwable $e) {
+            // Silent fail - don't break the user's application
+            if ((bool) config('agenticgraph.logging.enabled', true)) {
+                Log::debug('AgenticPulse ingest error', [
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $items
+     * @return array<int, array<string, mixed>>
+     */
+    private function mergeById(array $items): array
+    {
+        $byId = [];
+        $others = [];
+        foreach ($items as $item) {
+            if (array_key_exists('id', $item) && $item['id'] !== null) {
+                $traceId = array_key_exists('trace_id', $item) ? (string) $item['trace_id'] : '';
+                $byId[$traceId.':'.(string) $item['id']] = $item;
+            } else {
+                $others[] = $item;
+            }
+        }
+
+        return array_values(array_merge($byId, $others));
     }
 
     /**

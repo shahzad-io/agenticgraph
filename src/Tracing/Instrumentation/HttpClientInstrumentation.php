@@ -4,11 +4,11 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph\Tracing\Instrumentation;
 
+use Illuminate\Contracts\Container\BindingResolutionException;
 use Illuminate\Http\Client\Events\ConnectionFailed;
 use Illuminate\Http\Client\Events\RequestSending;
 use Illuminate\Http\Client\Events\ResponseReceived;
 use Illuminate\Http\Client\Request;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Tracing\ExecutionClock;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
@@ -20,6 +20,9 @@ class HttpClientInstrumentation
      * @var array<string, array<int, float>>
      */
     private array $requestStarts = [];
+
+    /** @var array<string, true> */
+    private array $loggedMissingStarts = [];
 
     public function __construct(
         protected PulseExporter $exporter
@@ -40,6 +43,10 @@ class HttpClientInstrumentation
 
     public function onRequestSending(RequestSending $event): void
     {
+        if ($this->exporter->isCapturing()) {
+            return;
+        }
+
         $clock = ExecutionClock::tryGet();
         if (! $clock) {
             return;
@@ -66,6 +73,10 @@ class HttpClientInstrumentation
 
     public function onResponseReceived(ResponseReceived $event): void
     {
+        if ($this->exporter->isCapturing()) {
+            return;
+        }
+
         $clock = ExecutionClock::tryGet();
         if (! $clock) {
             return;
@@ -78,7 +89,7 @@ class HttpClientInstrumentation
         $traceContext = null;
         try {
             $traceContext = app(TraceContext::class);
-        } catch (\Illuminate\Contracts\Container\BindingResolutionException $e) {
+        } catch (BindingResolutionException $e) {
         }
 
         $executionId = $clock->getExecutionId();
@@ -156,6 +167,10 @@ class HttpClientInstrumentation
 
     public function onConnectionFailed(ConnectionFailed $event): void
     {
+        if ($this->exporter->isCapturing()) {
+            return;
+        }
+
         $clock = ExecutionClock::tryGet();
         if (! $clock) {
             return;
@@ -168,7 +183,7 @@ class HttpClientInstrumentation
         $traceContext = null;
         try {
             $traceContext = app(TraceContext::class);
-        } catch (\Illuminate\Contracts\Container\BindingResolutionException $e) {
+        } catch (BindingResolutionException $e) {
         }
 
         $executionId = $clock->getExecutionId();
@@ -258,13 +273,12 @@ class HttpClientInstrumentation
             return false;
         }
 
-        $key = "agenticgraph:http:missing_start:{$executionId}:{$requestId}:{$event}";
-        $store = $this->requestStartStore();
-        if ($store->get($key)) {
+        $key = "{$executionId}:{$requestId}:{$event}";
+        if (isset($this->loggedMissingStarts[$key])) {
             return false;
         }
 
-        $store->put($key, true, 60);
+        $this->loggedMissingStarts[$key] = true;
 
         return true;
     }
@@ -314,23 +328,6 @@ class HttpClientInstrumentation
         ]);
     }
 
-    private function requestStartStore(): \Illuminate\Contracts\Cache\Repository
-    {
-        $store = config('agenticgraph.tracing.buffer.store');
-
-        return $store ? Cache::store($store) : Cache::store();
-    }
-
-    private function requestStartTtlSeconds(): int
-    {
-        return (int) config('agenticgraph.tracing.http.request_ttl_seconds', 120);
-    }
-
-    private function requestStartKey(string $executionId, int $requestId): string
-    {
-        return "agenticgraph:http:{$executionId}:{$requestId}";
-    }
-
     private function storeRequestStart(string $executionId, int $requestId, float $start): void
     {
         $this->requestStarts[$executionId] ??= [];
@@ -338,9 +335,6 @@ class HttpClientInstrumentation
         if (count($this->requestStarts) > 10000) {
             $this->requestStarts = [];
         }
-
-        $store = $this->requestStartStore();
-        $store->put($this->requestStartKey($executionId, $requestId), $start, $this->requestStartTtlSeconds());
     }
 
     private function pullRequestStart(string $executionId, int $requestId): ?float
@@ -352,12 +346,7 @@ class HttpClientInstrumentation
             return (float) $start;
         }
 
-        $store = $this->requestStartStore();
-        $key = $this->requestStartKey($executionId, $requestId);
-        $start = $store->get($key);
-        $store->forget($key);
-
-        return is_numeric($start) ? (float) $start : null;
+        return null;
     }
 
     private function safeUrl(string $url): string

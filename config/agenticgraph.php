@@ -1,5 +1,9 @@
 <?php
 
+use Shahzad\AgenticGraph\Middleware\LoggingMiddleware;
+use Shahzad\AgenticGraph\Middleware\TimingMiddleware;
+use Shahzad\AgenticGraph\Middleware\ValidationMiddleware;
+
 return [
     'storage' => env('AGENTICGRAPH_STORAGE', 'database'),
 
@@ -86,9 +90,9 @@ return [
 
     'middleware' => [
         'global' => [
-            \Shahzad\AgenticGraph\Middleware\LoggingMiddleware::class,
-            \Shahzad\AgenticGraph\Middleware\TimingMiddleware::class,
-            \Shahzad\AgenticGraph\Middleware\ValidationMiddleware::class,
+            LoggingMiddleware::class,
+            TimingMiddleware::class,
+            ValidationMiddleware::class,
         ],
         'cache_ttl' => env('AGENTICGRAPH_MIDDLEWARE_CACHE_TTL', 3600),
     ],
@@ -204,6 +208,8 @@ return [
             'rate' => env('AGENTICGRAPH_SAMPLE_RATE', 1.0),
             'always_on_error' => true,
         ],
+        // Trace spans are buffered in-memory for the duration of a single execution
+        // and flushed once on completion. These keys are retained for compatibility only.
         'buffer' => [
             'store' => env('AGENTICGRAPH_TRACING_BUFFER_STORE'),
             'ttl_seconds' => env('AGENTICGRAPH_TRACING_BUFFER_TTL', 3600),

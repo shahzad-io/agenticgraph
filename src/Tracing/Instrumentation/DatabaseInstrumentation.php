@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph\Tracing\Instrumentation;
 
+use Illuminate\Contracts\Container\BindingResolutionException;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Events\QueryExecuted;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
@@ -15,14 +16,6 @@ use Shahzad\AgenticGraph\Tracing\TraceContext;
  */
 class DatabaseInstrumentation
 {
-    private const IGNORED_PATTERNS = [
-        ' from "cache" ',
-        ' into "cache" ',
-        'update "cache"',
-        'agenticpulse:trace:',
-        'laravel-cache-agenticpulse:trace:',
-    ];
-
     public function __construct(
         private readonly PulseExporter $exporter,
         private readonly float $slowThresholdMs
@@ -41,21 +34,20 @@ class DatabaseInstrumentation
      */
     public function handleQuery(QueryExecuted $event): void
     {
+        if ($this->exporter->isCapturing()) {
+            return;
+        }
+
         // Only instrument if we're in an active trace
         $traceContext = null;
         try {
             $traceContext = app(TraceContext::class);
-        } catch (\Illuminate\Contracts\Container\BindingResolutionException $e) {
+        } catch (BindingResolutionException $e) {
             // TraceContext not bound, tracing not active
             return;
         }
 
         if (! $this->exporter->isEnabled()) {
-            return;
-        }
-
-        // Skip queries we don't want to trace
-        if ($this->shouldIgnoreQuery($event->sql)) {
             return;
         }
 
@@ -75,7 +67,7 @@ class DatabaseInstrumentation
             'span_type' => 'db',
             'status' => $status,
             'span_kind' => 'client',
-            'status_code' => $status === 'success' ? 'OK' : 'OK',
+            'status_code' => 'OK',
             'started_at' => $startedAt->toAtomString(),
             'ended_at' => $startedAt->copy()->addMilliseconds((int) $durationMs)->toAtomString(),
             'duration_ms' => $durationMs,
@@ -85,25 +77,5 @@ class DatabaseInstrumentation
             'db.bindings_count' => count($event->bindings),
             'db.rows_affected' => null,
         ]);
-    }
-
-    /**
-     * Check if a query should be ignored
-     */
-    private function shouldIgnoreQuery(string $sql): bool
-    {
-        if ($sql === '') {
-            return true;
-        }
-
-        $lower = strtolower($sql);
-
-        foreach (self::IGNORED_PATTERNS as $pattern) {
-            if (str_contains($lower, $pattern)) {
-                return true;
-            }
-        }
-
-        return false;
     }
 }
