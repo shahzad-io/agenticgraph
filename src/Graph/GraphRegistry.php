@@ -4,42 +4,30 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph\Graph;
 
-use Illuminate\Contracts\Cache\Repository as CacheRepository;
+use Illuminate\Support\Facades\Log;
 
 /**
- * Cache-based graph registry for Octane-safe graph storage.
- * Uses Laravel cache to store graphs instead of static properties.
+ * In-memory graph registry for Octane-safe graph storage.
+ *
+ * Graphs are stored on the registry singleton instance (per-worker), never
+ * serialized to Laravel cache. Built graphs hold live container-wired nodes
+ * and routers that cannot round-trip through serialize/unserialize.
  */
 class GraphRegistry
 {
-    private const CACHE_PREFIX = 'agenticgraph:graphs:';
-
-    private const INDEX_KEY = 'agenticgraph:graphs:index';
-
-    private const CACHE_TTL = 3600; // 1 hour
-
-    public function __construct(
-        private readonly CacheRepository $cache
-    ) {}
+    /** @var array<string, Graph> */
+    private array $graphs = [];
 
     public function register(string $name, Graph $graph): void
     {
-        $key = self::CACHE_PREFIX.$name;
-        $this->cache->put($key, $graph, self::CACHE_TTL);
-
-        // Update index
-        $index = $this->cache->get(self::INDEX_KEY, []);
-        if (! in_array($name, $index, true)) {
-            $index[] = $name;
-            $this->cache->put(self::INDEX_KEY, $index, self::CACHE_TTL);
-        }
+        $this->graphs[$name] = $graph;
     }
 
     public function get(string $name): ?Graph
     {
-        $key = self::CACHE_PREFIX.$name;
+        $graph = $this->graphs[$name] ?? null;
 
-        return $this->cache->get($key);
+        return $graph instanceof Graph ? $graph : null;
     }
 
     /**
@@ -47,96 +35,64 @@ class GraphRegistry
      */
     public function all(): array
     {
-        $index = $this->cache->get(self::INDEX_KEY, []);
-        $graphs = [];
-
-        foreach ($index as $name) {
-            $graph = $this->get($name);
-            if ($graph !== null) {
-                $graphs[$name] = $graph;
-            }
-        }
-
-        return $graphs;
+        return $this->graphs;
     }
 
     public function unregister(string $name): void
     {
-        $key = self::CACHE_PREFIX.$name;
-        $this->cache->forget($key);
-
-        // Update index
-        $index = $this->cache->get(self::INDEX_KEY, []);
-        $index = array_filter($index, fn ($n) => $n !== $name);
-        $this->cache->put(self::INDEX_KEY, array_values($index), self::CACHE_TTL);
+        unset($this->graphs[$name]);
     }
 
     public function clear(): void
     {
-        $index = $this->cache->get(self::INDEX_KEY, []);
-
-        foreach ($index as $name) {
-            $key = self::CACHE_PREFIX.$name;
-            $this->cache->forget($key);
-        }
-
-        $this->cache->forget(self::INDEX_KEY);
+        $this->graphs = [];
     }
 
     public function count(): int
     {
-        $index = $this->cache->get(self::INDEX_KEY, []);
-
-        return count($index);
+        return count($this->graphs);
     }
 
     public function has(string $name): bool
     {
-        return $this->cache->has(self::CACHE_PREFIX.$name);
+        return isset($this->graphs[$name]);
     }
 
     /**
-     * Get graph from cache, or auto-build from config if not cached.
+     * Get graph from the in-memory registry, or auto-build from config if missing.
      *
      * @param  string  $name  The graph name
-     * @return Graph|null The graph instance, or null if not found in cache or config
+     * @return Graph|null The graph instance, or null if not found in registry or config
      */
     public function getOrBuild(string $name): ?Graph
     {
-        // Try cache first
         $graph = $this->get($name);
-        if ($graph !== null) {
+        if ($graph instanceof Graph) {
             return $graph;
         }
 
-        // Try to build from config
         $graphClass = config("agenticgraph.graphs.{$name}");
         if ($graphClass === null || ! class_exists($graphClass)) {
             return null;
         }
 
-        // Check if the class has a build method
         if (! method_exists($graphClass, 'build')) {
             return null;
         }
 
-        // Build the graph
         try {
             $graph = $graphClass::build();
 
-            // Verify it's a Graph instance
             if (! $graph instanceof Graph) {
                 return null;
             }
 
-            // Register for future use
             $this->register($name, $graph);
 
             return $graph;
         } catch (\Throwable $e) {
-            // Log the error if logging is enabled
             if (config('agenticgraph.logging.enabled', true)) {
-                \Illuminate\Support\Facades\Log::error('Failed to auto-build graph from config', [
+                Log::error('Failed to auto-build graph from config', [
                     'graph_name' => $name,
                     'graph_class' => $graphClass,
                     'error' => $e->getMessage(),
