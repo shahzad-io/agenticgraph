@@ -33,6 +33,7 @@ use Shahzad\AgenticGraph\Middleware\LoggingMiddleware;
 use Shahzad\AgenticGraph\Middleware\TimingMiddleware;
 use Shahzad\AgenticGraph\Middleware\ValidationMiddleware;
 use Shahzad\AgenticGraph\State\State;
+use Shahzad\AgenticGraph\State\StateManager;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
@@ -487,6 +488,10 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
 
                     $this->delegate->checkpoint($graph, $executionId, $current, $state, $executionContext);
 
+                    $nodeCompletePayload = StreamNodeCompletePayloadBuilder::fromConfig(
+                        $this->container->make(StateManager::class)
+                    )->build($current, $nodeDuration * 1000, $inputState, $state);
+
                     $this->emitLifecycleEvent(
                         $sink,
                         $session,
@@ -494,10 +499,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                         $spanId,
                         $parentSpanId,
                         'node_complete',
-                        [
-                            'node_name' => $current,
-                            'duration_ms' => $nodeDuration * 1000,
-                        ],
+                        $nodeCompletePayload,
                         $this->nextNodeSeq($nodeSeqs, $current)
                     );
 

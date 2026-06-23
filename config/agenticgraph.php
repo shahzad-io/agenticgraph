@@ -151,6 +151,12 @@ return [
             'prefix' => env('AGENTICGRAPH_STREAMING_PREFIX', 'agentic-graph/streams'),
             'middleware' => ['api'],
         ],
+        'capture' => [
+            'state' => env('AGENTICGRAPH_STREAM_CAPTURE_STATE', 'none'),
+            // 'none' = lifecycle payload unchanged (default for stream store)
+            // 'diff' = attach input→output state diff on node_complete
+            // 'full' = attach full output state (toStoragePayload shape) on node_complete
+        ],
     ],
 
     'api' => [
