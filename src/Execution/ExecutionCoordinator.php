@@ -322,9 +322,9 @@ class ExecutionCoordinator
                 );
             }
 
-            $streamOptions = new StreamOptions(
+            $streamOptions = StreamOptions::fromExecution(
+                $options,
                 delivery: $options->streaming->value,
-                interrupts: $options->interrupts
             );
             $streamHandle = $this->executeWithStreaming($graph->name, $state, $streamOptions, $executionId, $options);
             $finalState = $streamHandle->getFinalState();

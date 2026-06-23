@@ -322,9 +322,9 @@ final class ExecutionHandle
             );
         }
 
-        $streamOptions = new StreamOptions(
+        $streamOptions = StreamOptions::fromExecution(
+            $this->options,
             delivery: $this->options->streaming->value,
-            interrupts: $this->options->interrupts
         );
         $handle = app(StreamResumption::class)->resumeStream($checkpoint->id, $input, $streamOptions);
         $this->resolvePendingInterruptForCheckpoint($checkpoint->id, $input);

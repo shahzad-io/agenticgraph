@@ -14,6 +14,8 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Contracts\InterruptHandlerInterface;
 use Shahzad\AgenticGraph\Contracts\InterruptServiceInterface;
+use Shahzad\AgenticGraph\Execution\ExecutionOptions;
+use Shahzad\AgenticGraph\Execution\ExecutionStore;
 use Shahzad\AgenticGraph\Execution\InterruptRecord;
 use Shahzad\AgenticGraph\Streaming\StreamOptions;
 use Shahzad\AgenticGraph\Streaming\StreamResumption;
@@ -51,10 +53,19 @@ class ResumeExecutionJob implements ShouldBeUnique, ShouldQueue
 
         try {
             if (is_string($delivery) && $delivery !== '') {
-                $streamOptions = new StreamOptions(
+                $executionOptions = new ExecutionOptions;
+                $executionId = $interrupt->executionId();
+                if (is_string($executionId) && $executionId !== '') {
+                    $record = app(ExecutionStore::class)->get($executionId);
+                    if ($record !== null) {
+                        $executionOptions = $record->executionOptions;
+                    }
+                }
+
+                $streamOptions = StreamOptions::fromExecution(
+                    $executionOptions,
                     delivery: $delivery,
-                    interrupts: true,
-                    resumeFromCheckpointId: $checkpointId
+                    resumeFromCheckpointId: $checkpointId,
                 );
                 $streamResumption->resumeStream($checkpointId, $this->humanInput, $streamOptions);
             } else {

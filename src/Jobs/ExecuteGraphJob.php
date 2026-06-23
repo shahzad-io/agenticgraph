@@ -85,9 +85,9 @@ class ExecuteGraphJob implements ShouldBeUnique, ShouldQueue
             $options = $this->executionOptions ?? new ExecutionOptions(ExecutionMode::ASYNC, StreamingMode::NONE);
             $options = $options->withStreaming($executor->resolveStreamingMode($options));
             if ($options->streaming !== StreamingMode::NONE) {
-                $streamOptions = new StreamOptions(
+                $streamOptions = StreamOptions::fromExecution(
+                    $options,
                     delivery: $options->streaming->value,
-                    interrupts: $options->interrupts
                 );
                 $session = new StreamSession(
                     streamId: $this->streamId ?? uniqid('stream_', true),
