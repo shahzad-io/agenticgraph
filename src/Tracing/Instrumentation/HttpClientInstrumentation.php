@@ -9,6 +9,7 @@ use Illuminate\Http\Client\Events\ConnectionFailed;
 use Illuminate\Http\Client\Events\RequestSending;
 use Illuminate\Http\Client\Events\ResponseReceived;
 use Illuminate\Http\Client\Request;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Tracing\ExecutionClock;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
@@ -127,7 +128,7 @@ class HttpClientInstrumentation
                 $event->response->successful() ? 'success' : 'failed',
                 (string) $event->response->status(),
                 $event->response->status(),
-                strlen($event->response->body())
+                $this->resolveResponseSize($event->response)
             );
 
             return;
@@ -136,6 +137,15 @@ class HttpClientInstrumentation
         $durationMs = $durationMs > 0 ? $durationMs : (microtime(true) - $requestStart) * 1000;
         $startedAt = $clock->spanStartedAt($requestStart);
         $endedAt = $clock->spanEndedAt($requestStart, $durationMs);
+        $http = [
+            'method' => $event->request->method(),
+            'url' => $event->request->url(),
+            'status_code' => $event->response->status(),
+        ];
+        $responseSize = $this->resolveResponseSize($event->response);
+        if ($responseSize !== null) {
+            $http['response_size'] = $responseSize;
+        }
         $this->exporter->addSpan([
             'id' => $spanId,
             'trace_id' => $executionId,
@@ -149,12 +159,7 @@ class HttpClientInstrumentation
             'started_at' => $startedAt->format(DATE_ATOM),
             'ended_at' => $endedAt->format(DATE_ATOM),
             'duration_ms' => $durationMs,
-            'http' => [
-                'method' => $event->request->method(),
-                'url' => $event->request->url(),
-                'status_code' => $event->response->status(),
-                'response_size' => strlen($event->response->body()),
-            ],
+            'http' => $http,
         ]);
 
         if ($this->shouldLog()) {
@@ -292,7 +297,7 @@ class HttpClientInstrumentation
         string $status,
         string $statusCode,
         ?int $httpStatusCode,
-        int $responseSize,
+        ?int $responseSize,
         ?string $errorMessage = null
     ): void {
         $durationMs = max($durationMs, 0);
@@ -305,8 +310,10 @@ class HttpClientInstrumentation
             'method' => $request->method(),
             'url' => $request->url(),
             'status_code' => $httpStatusCode,
-            'response_size' => $responseSize,
         ];
+        if ($responseSize !== null) {
+            $http['response_size'] = $responseSize;
+        }
         if ($errorMessage !== null) {
             $http['error'] = $errorMessage;
         }
@@ -347,6 +354,34 @@ class HttpClientInstrumentation
         }
 
         return null;
+    }
+
+    /**
+     * Observe response size without consuming streamed/SSE bodies that Prism reads incrementally.
+     */
+    private function resolveResponseSize(Response $response): ?int
+    {
+        if ($this->isStreamedResponse($response)) {
+            $contentLength = $response->header('Content-Length');
+
+            if ($contentLength !== '' && ctype_digit($contentLength)) {
+                return (int) $contentLength;
+            }
+
+            return null;
+        }
+
+        return strlen($response->body());
+    }
+
+    private function isStreamedResponse(Response $response): bool
+    {
+        $contentType = strtolower($response->header('Content-Type'));
+        if (str_contains($contentType, 'text/event-stream')) {
+            return true;
+        }
+
+        return ! $response->toPsrResponse()->getBody()->isSeekable();
     }
 
     private function safeUrl(string $url): string
