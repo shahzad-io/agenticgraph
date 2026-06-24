@@ -7,6 +7,8 @@ namespace Shahzad\AgenticGraph\Streaming;
 use Prism\Prism\Streaming\Events\CitationEvent;
 use Prism\Prism\Streaming\Events\ErrorEvent;
 use Prism\Prism\Streaming\Events\ProviderToolEvent;
+use Prism\Prism\Streaming\Events\StepFinishEvent;
+use Prism\Prism\Streaming\Events\StepStartEvent;
 use Prism\Prism\Streaming\Events\StreamEndEvent;
 use Prism\Prism\Streaming\Events\StreamEvent as PrismStreamEvent;
 use Prism\Prism\Streaming\Events\StreamStartEvent;
@@ -72,6 +74,8 @@ final class PrismStreamAdapter
             $event instanceof ThinkingCompleteEvent => 'thinking_complete',
             $event instanceof StreamStartEvent => 'step_start',
             $event instanceof StreamEndEvent => 'step_finish',
+            $event instanceof StepStartEvent => 'step_start',
+            $event instanceof StepFinishEvent => 'step_finish',
             $event instanceof ProviderToolEvent => 'provider_tool_event',
             $event instanceof CitationEvent => 'artifact',
             $event instanceof ErrorEvent => 'error',
@@ -147,6 +151,14 @@ final class PrismStreamAdapter
                 ] : null,
                 'citations' => $event->citations,
                 'additional_content' => $event->additionalContent,
+            ],
+            $event instanceof StepStartEvent => [
+                'id' => $event->id,
+                'timestamp' => $event->timestamp,
+            ],
+            $event instanceof StepFinishEvent => [
+                'id' => $event->id,
+                'timestamp' => $event->timestamp,
             ],
             $event instanceof ProviderToolEvent => [
                 'event_key' => $event->eventKey(),

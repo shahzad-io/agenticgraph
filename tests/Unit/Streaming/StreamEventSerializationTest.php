@@ -1,5 +1,9 @@
 <?php
 
+use Prism\Prism\Enums\FinishReason;
+use Prism\Prism\Enums\StreamEventType;
+use Prism\Prism\Streaming\Events\StepFinishEvent;
+use Prism\Prism\Streaming\Events\StepStartEvent;
 use Prism\Prism\Streaming\Events\StreamEndEvent;
 use Prism\Prism\Streaming\Events\StreamEvent as PrismStreamEvent;
 use Prism\Prism\Streaming\Events\StreamStartEvent;
@@ -144,9 +148,9 @@ test('prism stream adapter ignores unknown events', function () {
 
     $event = new readonly class('evt-x', 126) extends PrismStreamEvent
     {
-        public function type(): \Prism\Prism\Enums\StreamEventType
+        public function type(): StreamEventType
         {
-            return \Prism\Prism\Enums\StreamEventType::TextDelta;
+            return StreamEventType::TextDelta;
         }
 
         public function toArray(): array
@@ -175,7 +179,7 @@ test('prism stream adapter maps step events', function () {
     $start = new StreamStartEvent('evt-5', 200, 'gpt-4', 'openai');
     $startMapped = $adapter->adapt($start);
 
-    $end = new StreamEndEvent('evt-6', 210, \Prism\Prism\Enums\FinishReason::Stop, new Usage(3, 4));
+    $end = new StreamEndEvent('evt-6', 210, FinishReason::Stop, new Usage(3, 4));
     $endMapped = $adapter->adapt($end);
 
     expect($startMapped)->not->toBeNull()
@@ -190,6 +194,45 @@ test('prism stream adapter maps step events', function () {
             'id' => 'evt-6',
             'timestamp' => 210,
         ]);
+});
+
+test('prism stream adapter maps prism 0.99 step start and step finish events', function () {
+    $session = new StreamSession(
+        streamId: 'stream-6',
+        executionId: 'exec-6',
+        options: new StreamOptions,
+        startedAtUnix: time()
+    );
+    $adapter = new PrismStreamAdapter(
+        session: $session,
+        nodeName: 'TestNode',
+        spanId: 'span-6',
+        parentSpanId: 'span-5'
+    );
+
+    $stepStart = new StepStartEvent('step-start-1', 300);
+    $stepFinish = new StepFinishEvent('step-finish-1', 310);
+    $textDelta = new TextDeltaEvent('evt-delta', 305, 'Hello', 'msg-1');
+
+    $startMapped = $adapter->adapt($stepStart);
+    $finishMapped = $adapter->adapt($stepFinish);
+    $deltaMapped = $adapter->adapt($textDelta);
+
+    expect($startMapped)->not->toBeNull()
+        ->and($startMapped->type())->toBe('step_start')
+        ->and($startMapped->payload())->toMatchArray([
+            'id' => 'step-start-1',
+            'timestamp' => 300,
+        ])
+        ->and($finishMapped)->not->toBeNull()
+        ->and($finishMapped->type())->toBe('step_finish')
+        ->and($finishMapped->payload())->toMatchArray([
+            'id' => 'step-finish-1',
+            'timestamp' => 310,
+        ])
+        ->and($deltaMapped)->not->toBeNull()
+        ->and($deltaMapped->type())->toBe('text_delta')
+        ->and($deltaMapped->payload()['delta'])->toBe('Hello');
 });
 
 test('node stream accumulator rebuilds text and tool calls', function () {
