@@ -18,6 +18,10 @@ final class ExecutionStatusResolver
             return null;
         }
 
+        if ($this->hasResolvingInterrupt($executionId)) {
+            return ExecutionStatus::RUNNING;
+        }
+
         if ($record->status === ExecutionStatus::RUNNING || $record->status === ExecutionStatus::QUEUED) {
             $latest = $this->checkpoints->getLatestForExecution($executionId);
             if ($latest !== null && ($latest->metadata['interrupted'] ?? false) === true) {
@@ -26,5 +30,13 @@ final class ExecutionStatusResolver
         }
 
         return $record->status;
+    }
+
+    private function hasResolvingInterrupt(string $executionId): bool
+    {
+        return InterruptRecord::query()
+            ->forExecution($executionId)
+            ->resolving()
+            ->exists();
     }
 }

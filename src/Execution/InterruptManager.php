@@ -87,8 +87,6 @@ final class InterruptManager implements InterruptServiceInterface
         }
         if ($session) {
             $checkpoint->metadata['stream_id'] = $session->streamId;
-            $checkpoint->metadata['last_seq'] = $session->seq;
-            $checkpoint->metadata['stream_cursor'] = $session->seq;
         }
         $checkpoint->createdAt = new \DateTimeImmutable;
 
@@ -116,7 +114,6 @@ final class InterruptManager implements InterruptServiceInterface
         if ($session) {
             $metadata['stream_delivery'] = $session->options->delivery;
             $metadata['stream_id'] = $session->streamId;
-            $metadata['stream_last_seq'] = $session->seq;
         }
 
         if ($this->interruptPersistenceEnabled) {
@@ -201,6 +198,17 @@ final class InterruptManager implements InterruptServiceInterface
                     'checkpoint_id' => $checkpointId,
                     'final_state' => State::toStoragePayload($state),
                 ]);
+            }
+        }
+
+        if ($session) {
+            $checkpoint->metadata['last_seq'] = $session->seq;
+            $checkpoint->metadata['stream_cursor'] = $session->seq;
+            $this->storage->save($checkpoint);
+
+            if ($this->interruptPersistenceEnabled) {
+                $metadata['stream_last_seq'] = $session->seq;
+                $interruptRecord->update(['metadata' => $metadata]);
             }
         }
 

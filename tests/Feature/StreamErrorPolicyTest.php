@@ -2,6 +2,7 @@
 
 use Illuminate\Contracts\Broadcasting\Broadcaster;
 use Illuminate\Log\Events\MessageLogged;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\GraphExecutionFailed;
@@ -9,7 +10,6 @@ use Shahzad\AgenticGraph\Execution\ExecutionMode;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
 use Shahzad\AgenticGraph\Execution\ExecutionStatus;
 use Shahzad\AgenticGraph\Execution\ExecutionStore;
-use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
 use Shahzad\AgenticGraph\Facades\AgenticGraph;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
@@ -56,7 +56,7 @@ function bindThrowingStreamStore(): void
             throw new RuntimeException('store persist failed');
         }
 
-        public function readFrom(string $streamId, int $fromSeq, int $limit = 200): \Generator
+        public function readFrom(string $streamId, int $fromSeq, int $limit = 200): Generator
         {
             if (false) {
                 yield $streamId;
@@ -173,7 +173,7 @@ it('completes streaming execution when store persistence fails', function () {
         ->and($eventTypes)->toContain('text_delta');
 
     expect($warnings)->not->toBeEmpty()
-        ->and($warnings[0]->message)->toBe('Non-fatal stream error')
+        ->and($warnings[0]->message)->toBe('Non-fatal stream store write failed')
         ->and($warnings[0]->context['stage'] ?? null)->toBe('store');
     Event::assertNotDispatched(GraphExecutionFailed::class);
 
@@ -208,7 +208,7 @@ it('marks streaming execution failed when transport delivery fails', function ()
         expect($exception->getMessage())->toBe('broadcast transport failed');
     }
 
-    $executionId = \Illuminate\Support\Facades\DB::table('agenticgraph_executions')
+    $executionId = DB::table('agenticgraph_executions')
         ->where('graph_name', 'policy-transport-fatal')
         ->orderByDesc('created_at')
         ->value('id');
@@ -235,7 +235,7 @@ it('marks streaming execution failed when store_fatal override is enabled inside
             }
         }
 
-        public function readFrom(string $streamId, int $fromSeq, int $limit = 200): \Generator
+        public function readFrom(string $streamId, int $fromSeq, int $limit = 200): Generator
         {
             if (false) {
                 yield $streamId;
@@ -265,7 +265,7 @@ it('marks streaming execution failed when store_fatal override is enabled inside
         expect($exception->getMessage())->toBe('store persist failed');
     }
 
-    $executionId = \Illuminate\Support\Facades\DB::table('agenticgraph_executions')
+    $executionId = DB::table('agenticgraph_executions')
         ->where('graph_name', 'policy-store-fatal-config')
         ->orderByDesc('created_at')
         ->value('id');
