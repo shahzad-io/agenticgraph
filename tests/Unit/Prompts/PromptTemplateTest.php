@@ -131,3 +131,16 @@ test('handles multiline templates', function () {
     expect($result)->toContain('Hello John!');
     expect($result)->toContain('You have 5 messages.');
 });
+
+test('escapes double braces as literal single braces', function () {
+    $template = PromptTemplate::create('Return JSON like {{key}} for {name}');
+    $result = $template->format(['name' => 'Alice']);
+
+    expect($result)->toBe('Return JSON like {key} for Alice');
+});
+
+test('getVariables ignores escaped brace placeholders', function () {
+    $template = PromptTemplate::create('{{literal}} and {topic}');
+
+    expect($template->getVariables())->toBe(['topic']);
+});

@@ -44,36 +44,7 @@ class PromptTemplate
         // Validate required variables
         $this->validateRequiredVariables($vars);
 
-        // Replace variables in template
-        return preg_replace_callback('/\{(\w+)\}/', function ($matches) use ($vars) {
-            $key = $matches[1];
-
-            if (! array_key_exists($key, $vars)) {
-                throw new TemplateException("Missing template variable: {$key}");
-            }
-
-            return $this->formatValue($vars[$key]);
-        }, $this->template);
-    }
-
-    /**
-     * Format a value for insertion into template
-     */
-    protected function formatValue(mixed $value): string
-    {
-        if (is_array($value)) {
-            return json_encode($value, JSON_PRETTY_PRINT);
-        }
-
-        if (is_bool($value)) {
-            return $value ? 'true' : 'false';
-        }
-
-        if (is_null($value)) {
-            return '';
-        }
-
-        return (string) $value;
+        return TemplateInterpolator::interpolate($this->template, $vars);
     }
 
     /**
@@ -101,9 +72,7 @@ class PromptTemplate
      */
     public function getVariables(): array
     {
-        preg_match_all('/\{(\w+)\}/', $this->template, $matches);
-
-        return array_unique($matches[1]);
+        return TemplateInterpolator::extractVariables($this->template);
     }
 
     /**

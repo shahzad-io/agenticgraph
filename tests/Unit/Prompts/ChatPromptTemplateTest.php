@@ -170,3 +170,12 @@ test('few-shot example pattern', function () {
     expect($formatted)->toHaveCount(8); // 1 system + 3 pairs + 1 user = 8
     expect($formatted[7]['content'])->toBe('Classify: This is amazing!');
 });
+
+test('escapes double braces in chat messages', function () {
+    $template = ChatPromptTemplate::create()
+        ->user('Schema: {{field}} for {name}');
+
+    $formatted = $template->format(['name' => 'Ada']);
+
+    expect($formatted[0]['content'])->toBe('Schema: {field} for Ada');
+});

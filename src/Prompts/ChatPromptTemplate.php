@@ -82,16 +82,7 @@ class ChatPromptTemplate
         return array_map(function (Message $message) use ($variables) {
             $content = $message->getContent();
 
-            // Interpolate variables
-            $content = preg_replace_callback('/\{(\w+)\}/', function ($matches) use ($variables) {
-                $key = $matches[1];
-
-                if (! array_key_exists($key, $variables)) {
-                    throw new TemplateException("Missing template variable: {$key}");
-                }
-
-                return $this->formatValue($variables[$key]);
-            }, $content);
+            $content = TemplateInterpolator::interpolate($content, $variables);
 
             return [
                 'role' => $message->getRole(),
@@ -115,26 +106,6 @@ class ChatPromptTemplate
     }
 
     /**
-     * Format a value for insertion into template
-     */
-    protected function formatValue(mixed $value): string
-    {
-        if (is_array($value)) {
-            return json_encode($value, JSON_PRETTY_PRINT);
-        }
-
-        if (is_bool($value)) {
-            return $value ? 'true' : 'false';
-        }
-
-        if (is_null($value)) {
-            return '';
-        }
-
-        return (string) $value;
-    }
-
-    /**
      * Get all messages
      *
      * @return array<int, Message>
@@ -154,11 +125,13 @@ class ChatPromptTemplate
         $variables = [];
 
         foreach ($this->messages as $message) {
-            preg_match_all('/\{(\w+)\}/', $message->getContent(), $matches);
-            $variables = array_merge($variables, $matches[1]);
+            $variables = array_merge(
+                $variables,
+                TemplateInterpolator::extractVariables($message->getContent())
+            );
         }
 
-        return array_unique($variables);
+        return array_values(array_unique($variables));
     }
 
     /**

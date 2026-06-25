@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Facade;
  * @method static \Shahzad\AgenticGraph\Graph\GraphBuilder create(string $name)
  * @method static void register(string $name, \Shahzad\AgenticGraph\Graph\Graph $graph)
  * @method static \Shahzad\AgenticGraph\Graph\Graph|null get(string $name)
- * @method static \Shahzad\AgenticGraph\Execution\ExecutionHandle execute(string $name, \Shahzad\AgenticGraph\Contracts\StateContract $state, \Shahzad\AgenticGraph\Execution\ExecutionOptions $options)
+ * @method static \Shahzad\AgenticGraph\Execution\ExecutionHandle execute(string $name, \Shahzad\AgenticGraph\Contracts\StateContract $state, \Shahzad\AgenticGraph\Execution\ExecutionOptions $options = null)
  * @method static \Shahzad\AgenticGraph\Execution\ExecutionHandle run(string $name, \Shahzad\AgenticGraph\Contracts\StateContract $state)
  * @method static \Shahzad\AgenticGraph\Execution\ExecutionHandle dispatch(string $name, \Shahzad\AgenticGraph\Contracts\StateContract $state)
  * @method static \Shahzad\AgenticGraph\Execution\ExecutionHandle stream(string $name, \Shahzad\AgenticGraph\Contracts\StateContract $state, list<string>|null $nodes = null, list<string>|null $events = null, bool $inline = false)

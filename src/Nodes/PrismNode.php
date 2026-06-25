@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace Shahzad\AgenticGraph\Nodes;
 
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
+use Illuminate\Contracts\Container\BindingResolutionException;
 use Illuminate\Contracts\Events\Dispatcher;
+use Illuminate\Support\Collection;
 use Prism\Prism\Audio\AudioResponse;
 use Prism\Prism\Audio\PendingRequest as PendingAudioRequest;
 use Prism\Prism\Audio\TextResponse as AudioTextResponse;
@@ -19,16 +21,21 @@ use Prism\Prism\Images\PendingRequest as PendingImageRequest;
 use Prism\Prism\Images\Response as ImageResponse;
 use Prism\Prism\Streaming\Events\ToolCallEvent;
 use Prism\Prism\Text\PendingRequest as PendingTextRequest;
+use Prism\Prism\Tool;
 use Prism\Prism\ValueObjects\Media\Audio as AudioMedia;
+use Prism\Prism\ValueObjects\Media\Media;
+use Prism\Prism\ValueObjects\Media\Text;
+use Prism\Prism\ValueObjects\ToolCall;
 use Prism\Relay\Facades\Relay;
 use Shahzad\AgenticGraph\Contracts\PrismClient;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\TokensUsed;
 use Shahzad\AgenticGraph\Events\ToolCallCaptured;
 use Shahzad\AgenticGraph\Mcp\McpRequest;
+use Shahzad\AgenticGraph\Prompts\ChatPromptMessages;
 use Shahzad\AgenticGraph\Prompts\ChatPromptTemplate;
 use Shahzad\AgenticGraph\Prompts\PromptTemplate;
-use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
+use Shahzad\AgenticGraph\Prompts\TemplateInterpolator;
 use Shahzad\AgenticGraph\Streaming\PrismStreamAdapter;
 use Shahzad\AgenticGraph\Streaming\StreamContext;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
@@ -169,7 +176,7 @@ abstract class PrismNode extends AbstractNode
 
     /**
      * @param  array<string, mixed>  $variables
-     * @param  array<int, \Prism\Prism\ValueObjects\Media\Media|\Prism\Prism\ValueObjects\Media\Text>  $additionalContent
+     * @param  array<int, Media|Text>  $additionalContent
      */
     protected function prompt(string $template, array $variables = [], array $additionalContent = []): string
     {
@@ -298,7 +305,7 @@ abstract class PrismNode extends AbstractNode
     }
 
     /**
-     * @param  array<int, \Prism\Prism\ValueObjects\Media\Media|\Prism\Prism\ValueObjects\Media\Text>  $additionalContent
+     * @param  array<int, Media|Text>  $additionalContent
      * @param  array<string, mixed>  $providerOptions
      */
     protected function generateImage(string $prompt, array $additionalContent = [], array $providerOptions = []): ImageResponse
@@ -453,8 +460,8 @@ abstract class PrismNode extends AbstractNode
     }
 
     /**
-     * @param  array<int, \Prism\Prism\Tool>  $tools
-     * @return array<int, \Prism\Prism\ValueObjects\ToolCall>
+     * @param  array<int, Tool>  $tools
+     * @return array<int, ToolCall>
      */
     protected function tools(string $prompt, array $tools): array
     {
@@ -609,11 +616,7 @@ abstract class PrismNode extends AbstractNode
      */
     protected function interpolate(string $template, array $variables): string
     {
-        return preg_replace_callback('/\{(\w+)\}/', function ($matches) use ($variables) {
-            $k = $matches[1];
-
-            return array_key_exists($k, $variables) ? (string) $variables[$k] : $matches[0];
-        }, $template);
+        return TemplateInterpolator::interpolate($template, $variables);
     }
 
     /**
@@ -680,7 +683,7 @@ abstract class PrismNode extends AbstractNode
             $steps = $response['steps'];
         }
 
-        if ($steps instanceof \Illuminate\Support\Collection) {
+        if ($steps instanceof Collection) {
             $steps = $steps->all();
         }
 
@@ -726,16 +729,16 @@ abstract class PrismNode extends AbstractNode
     /**
      * Extract prompt text from messages (array or Collection).
      *
-     * @param  array<int, Message>|\Illuminate\Support\Collection<int, Message>|null  $messages
+     * @param  array<int, Message>|Collection<int, Message>|null  $messages
      */
-    private function extractPromptFromMessages(array|\Illuminate\Support\Collection|null $messages): ?string
+    private function extractPromptFromMessages(array|Collection|null $messages): ?string
     {
         if ($messages === null) {
             return null;
         }
 
         // Convert Collection to array if needed
-        if ($messages instanceof \Illuminate\Support\Collection) {
+        if ($messages instanceof Collection) {
             $messages = $messages->all();
         }
 
@@ -812,7 +815,7 @@ abstract class PrismNode extends AbstractNode
     {
         try {
             return app(TraceContext::class);
-        } catch (\Illuminate\Contracts\Container\BindingResolutionException $e) {
+        } catch (BindingResolutionException $e) {
             return null;
         }
     }
@@ -821,7 +824,7 @@ abstract class PrismNode extends AbstractNode
     {
         try {
             $context = app(StreamContext::class);
-        } catch (\Illuminate\Contracts\Container\BindingResolutionException $e) {
+        } catch (BindingResolutionException $e) {
             return false;
         }
 
@@ -832,7 +835,7 @@ abstract class PrismNode extends AbstractNode
     {
         try {
             $context = app(StreamContext::class);
-        } catch (\Illuminate\Contracts\Container\BindingResolutionException $e) {
+        } catch (BindingResolutionException $e) {
             return $request->asText()->text;
         }
 
@@ -904,7 +907,7 @@ abstract class PrismNode extends AbstractNode
         $traceContext = null;
         try {
             $traceContext = app(TraceContext::class);
-        } catch (\Illuminate\Contracts\Container\BindingResolutionException $e) {
+        } catch (BindingResolutionException $e) {
             // TraceContext not bound, tracing not active
             return;
         }
@@ -956,7 +959,7 @@ abstract class PrismNode extends AbstractNode
 
     /**
      * @param  array<int, mixed>  $tools
-     * @return array<int, \Prism\Prism\Tool>
+     * @return array<int, Tool>
      */
     private function wrapMcpTools(array $tools): array
     {
@@ -964,13 +967,13 @@ abstract class PrismNode extends AbstractNode
         $wrappedTools = false;
 
         foreach ($tools as $tool) {
-            if (! $tool instanceof \Prism\Prism\Tool) {
+            if (! $tool instanceof Tool) {
                 $wrapped[] = $tool;
 
                 continue;
             }
 
-            $wrappedTool = new \Prism\Prism\Tool;
+            $wrappedTool = new Tool;
             $toolName = $tool->name();
             $wrappedTool->as($toolName);
             $wrappedTool->for($tool->description());
@@ -1042,7 +1045,7 @@ abstract class PrismNode extends AbstractNode
         $traceContext = null;
         try {
             $traceContext = app(TraceContext::class);
-        } catch (\Illuminate\Contracts\Container\BindingResolutionException $e) {
+        } catch (BindingResolutionException $e) {
             // TraceContext not bound, tracing not active
             return;
         }
@@ -1099,7 +1102,7 @@ abstract class PrismNode extends AbstractNode
      * Use a prompt template
      *
      * @param  array<string, mixed>  $variables
-     * @param  array<int, \Prism\Prism\ValueObjects\Media\Media|\Prism\Prism\ValueObjects\Media\Text>  $additionalContent
+     * @param  array<int, Media|Text>  $additionalContent
      */
     protected function promptTemplate(PromptTemplate $template, array $variables = [], array $additionalContent = []): string
     {
@@ -1150,14 +1153,17 @@ abstract class PrismNode extends AbstractNode
      * Use a chat prompt template
      *
      * @param  array<string, mixed>  $variables
-     * @param  array<int, \Prism\Prism\ValueObjects\Media\Media|\Prism\Prism\ValueObjects\Media\Text>  $additionalContent
+     * @param  array<int, Media|Text>  $additionalContent
      */
     protected function chatPrompt(ChatPromptTemplate $template, array $variables = [], array $additionalContent = []): string
     {
         $startTime = microtime(true);
+        $formatted = $template->format($variables);
+        $messages = ChatPromptMessages::toPrismMessages($formatted, $additionalContent);
         $promptText = $template->formatAsString($variables);
+
         if ($this->streamingEnabled()) {
-            $request = $this->prism()->withPrompt($promptText, $additionalContent);
+            $request = $this->prism()->withMessages($messages);
 
             return $this->streamTextRequest($request);
         }
@@ -1171,7 +1177,7 @@ abstract class PrismNode extends AbstractNode
 
         $config = $this->model ?? (string) config('agenticgraph.prism.model');
         [$provider, $model] = $this->parseModel($config);
-        $response = $this->prism()->withPrompt($promptText, $additionalContent)->asText();
+        $response = $this->prism()->withMessages($messages)->asText();
         $responseText = $response->text;
 
         if ($useCache) {
@@ -1188,7 +1194,7 @@ abstract class PrismNode extends AbstractNode
                 completionTokens: $response->usage->completionTokens,
                 callType: 'text',
                 model: "{$provider}:{$model}",
-                prompt: $promptText,
+                prompt: $this->extractPromptFromMessages($messages),
                 response: $responseText
             ));
         }
@@ -1227,7 +1233,7 @@ abstract class PrismNode extends AbstractNode
      * Determine if execution should pause before this node runs.
      * Override this method to implement interrupt logic.
      */
-    public function shouldInterrupt(\Shahzad\AgenticGraph\Contracts\StateContract $state): bool
+    public function shouldInterrupt(StateContract $state): bool
     {
         return false; // Default: no interrupt
     }
@@ -1236,12 +1242,12 @@ abstract class PrismNode extends AbstractNode
      * Provide a human-readable reason for the interrupt.
      * This will be shown to the user.
      */
-    public function getInterruptReason(\Shahzad\AgenticGraph\Contracts\StateContract $state): string
+    public function getInterruptReason(StateContract $state): string
     {
         return "Node '{$this->getName()}' requires human review";
     }
 
-    public function getInterruptPayload(\Shahzad\AgenticGraph\Contracts\StateContract $state): mixed
+    public function getInterruptPayload(StateContract $state): mixed
     {
         return null;
     }
@@ -1250,7 +1256,7 @@ abstract class PrismNode extends AbstractNode
      * Process human input when resuming from interrupt.
      * Override this to handle approval, validation, etc.
      */
-    public function onResume(\Shahzad\AgenticGraph\Contracts\StateContract $state, mixed $humanInput): \Shahzad\AgenticGraph\Contracts\StateContract
+    public function onResume(StateContract $state, mixed $humanInput): StateContract
     {
         // Default: merge array input into state
         if (is_array($humanInput)) {
@@ -1266,10 +1272,10 @@ abstract class PrismNode extends AbstractNode
      * Helper: Handle approval workflows.
      */
     protected function handleApproval(
-        \Shahzad\AgenticGraph\Contracts\StateContract $state,
+        StateContract $state,
         bool $approved,
         ?string $comments = null
-    ): \Shahzad\AgenticGraph\Contracts\StateContract {
+    ): StateContract {
         return $state
             ->set('approved', $approved)
             ->set('approval_comments', $comments);
