@@ -12,11 +12,18 @@ use Shahzad\AgenticGraph\Streaming\StreamStatus;
 
 final class BroadcastSink implements StreamSinkInterface
 {
+    private readonly string $channelPrefix;
+
     public function __construct(
         private readonly Broadcaster $broadcaster,
         private readonly string $streamId,
-        private readonly string $channelPrefix = 'agenticgraph.stream.'
-    ) {}
+        ?string $channelPrefix = null
+    ) {
+        $this->channelPrefix = $channelPrefix ?? (string) config(
+            'agenticgraph.streaming.broadcast.channel_prefix',
+            'agenticgraph.stream.'
+        );
+    }
 
     public function emit(StreamEvent $event): void
     {

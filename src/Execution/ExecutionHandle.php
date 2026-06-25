@@ -4,11 +4,11 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph\Execution;
 
+use Illuminate\Support\Facades\Route;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Exceptions\InterruptPersistenceDisabledException;
 use Shahzad\AgenticGraph\Jobs\ResumeExecutionJob;
 use Shahzad\AgenticGraph\State\State;
-use Illuminate\Support\Facades\Route;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
 use Shahzad\AgenticGraph\Streaming\StreamDescriptor;
 use Shahzad\AgenticGraph\Streaming\StreamHandle;
@@ -44,11 +44,30 @@ final class ExecutionHandle
 
     public function streamId(): ?string
     {
-        if ($this->streamId !== null) {
-            return $this->streamId;
+        $streamId = $this->streamId;
+        if ($streamId === null || $streamId === '') {
+            $streamId = $this->streamHandle?->streamId();
         }
 
-        return $this->streamHandle?->streamId();
+        if ($streamId === null || $streamId === '') {
+            $record = $this->store->get($this->executionId);
+            $streamId = $record?->streamId;
+        }
+
+        $interrupt = $this->pendingInterrupt();
+        if ($interrupt !== null) {
+            $metadata = $interrupt->metadata();
+            $candidate = $metadata['stream_id'] ?? null;
+            if (is_string($candidate) && $candidate !== '') {
+                $streamId = $candidate;
+            }
+        }
+
+        if ($streamId === null || $streamId === '') {
+            return null;
+        }
+
+        return $streamId;
     }
 
     public function status(): ExecutionStatus
@@ -136,14 +155,7 @@ final class ExecutionHandle
 
     private function resolveStreamId(): ?string
     {
-        $streamId = $this->streamId();
-        if ($streamId !== null && $streamId !== '') {
-            return $streamId;
-        }
-
-        $record = $this->store->get($this->executionId);
-
-        return $record?->streamId;
+        return $this->streamId();
     }
 
     private function resolveStreamUrl(?string $streamId): ?string
@@ -198,10 +210,6 @@ final class ExecutionHandle
     {
         $streamId = $this->streamId();
         if ($streamId === null) {
-            $record = $this->store->get($this->executionId);
-            $streamId = $record?->streamId;
-        }
-        if ($streamId === null) {
             return new \ArrayIterator([]);
         }
 
@@ -210,9 +218,54 @@ final class ExecutionHandle
         return app(StreamStoreInterface::class)->readFrom($streamId, $fromSeq, $limit);
     }
 
+    public function error(): ?string
+    {
+        if (! $this->isFailed()) {
+            return null;
+        }
+
+        return $this->store->get($this->executionId)?->error;
+    }
+
+    public function broadcastChannel(): ?string
+    {
+        if ($this->options->streaming !== StreamingMode::BROADCAST) {
+            return null;
+        }
+
+        $streamId = $this->streamId();
+        if ($streamId === null || $streamId === '') {
+            return null;
+        }
+
+        $prefix = (string) config('agenticgraph.streaming.broadcast.channel_prefix', 'agenticgraph.stream.');
+
+        return $prefix.$streamId;
+    }
+
     public function isInterrupted(): bool
     {
         return $this->status === ExecutionStatus::INTERRUPTED;
+    }
+
+    public function isCompleted(): bool
+    {
+        return $this->status === ExecutionStatus::COMPLETED;
+    }
+
+    public function isFailed(): bool
+    {
+        return $this->status === ExecutionStatus::FAILED;
+    }
+
+    public function isRunning(): bool
+    {
+        return $this->status === ExecutionStatus::RUNNING;
+    }
+
+    public function isQueued(): bool
+    {
+        return $this->status === ExecutionStatus::QUEUED;
     }
 
     public function pendingInterrupt(): ?InterruptRecord

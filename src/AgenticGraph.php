@@ -146,7 +146,8 @@ class AgenticGraph
             store: $store,
             resolver: $resolver,
             checkpoints: $checkpoints,
-            status: $record?->status
+            status: $record?->status,
+            streamId: $record?->streamId,
         );
     }
 
@@ -224,23 +225,16 @@ class AgenticGraph
     {
         $handle = $this->getExecution($executionId)->refresh();
         $interrupt = $handle->pendingInterrupt();
-        $record = app(ExecutionStore::class)->get($executionId);
-        $streamId = $record?->streamId;
         $status = $handle->status();
 
         if ($interrupt) {
-            $metadata = $interrupt->metadata();
-            $candidate = $metadata['stream_id'] ?? null;
-            if (is_string($candidate) && $candidate !== '') {
-                $streamId = $candidate;
-            }
             $status = ExecutionStatus::INTERRUPTED;
         }
 
         return new InterruptStatus(
             status: $status,
             interrupt: $interrupt,
-            streamId: $streamId,
+            streamId: $handle->streamId(),
             latestState: $handle->latestState()
         );
     }
