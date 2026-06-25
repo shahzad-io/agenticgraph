@@ -44,11 +44,20 @@ class PrismRouter extends AbstractRouter implements RouterInterface
     public function route(StateContract $state): string|array
     {
         $prompt = $this->buildPrompt($state);
-        $cacheKey = 'agenticgraph:prism:router:'.md5($prompt);
+        $cacheKey = $this->buildCacheKey($prompt);
 
-        // Check cache first
         if (config('agenticgraph.prism.cache_enabled') && $this->cache->has($cacheKey)) {
-            return $this->cache->get($cacheKey);
+            $cachedRoute = $this->cache->get($cacheKey);
+            if (is_string($cachedRoute) && $this->validateRoute($cachedRoute)) {
+                return $cachedRoute;
+            }
+
+            if (is_string($cachedRoute) && (bool) config('agenticgraph.logging.enabled', true)) {
+                $this->logger->warning('PrismRouter cache hit returned invalid route for this router; treating as miss', [
+                    'route' => $cachedRoute,
+                    'available_routes' => $this->getAvailableRoutes(),
+                ]);
+            }
         }
 
         $maxRetries = (int) config('agenticgraph.router.max_retries', 3);
@@ -225,6 +234,13 @@ class PrismRouter extends AbstractRouter implements RouterInterface
         $routesText = implode("\n", $routes);
 
         return "Choose the best route for the current state.\n\nAvailable routes:\n{$routesText}\n\nCurrent state:\n".json_encode($state->toArray());
+    }
+
+    protected function buildCacheKey(string $prompt): string
+    {
+        $identity = static::class.':'.implode(',', array_keys($this->routes));
+
+        return 'agenticgraph:prism:router:'.md5($identity.':'.$prompt);
     }
 
     protected function buildRoutingSchema(): ObjectSchema

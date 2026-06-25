@@ -4,9 +4,11 @@ use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Support\Facades\Cache;
 use Prism\Prism\Facades\Prism;
 use Prism\Prism\Schema\EnumSchema;
+use Prism\Prism\Structured\Request;
 use Prism\Prism\Testing\StructuredResponseFake;
 use Prism\Prism\ValueObjects\Meta;
 use Prism\Prism\ValueObjects\Usage;
+use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Routers\PrismRouter;
 use Shahzad\AgenticGraph\State\State;
 
@@ -132,6 +134,170 @@ it('caches the parsed route keyed by prompt hash', function () {
         ->and($router->route($state))->toBe('billing');
 });
 
+it('scopes cache keys by router class and route set so different routers do not collide', function () {
+    if (! class_exists(Prism::class)) {
+        expect(true)->toBeTrue();
+
+        return;
+    }
+
+    config()->set('agenticgraph.prism.cache_enabled', true);
+    config()->set('agenticgraph.prism.cache_ttl', 60);
+    Cache::flush();
+
+    $sharedPrompt = 'COLLISION_TEST_IDENTICAL_PROMPT';
+
+    $routerA = new class(['writer' => 'writer path', 'critic' => 'critic path']) extends PrismRouter
+    {
+        protected function buildPrompt(StateContract $state): string
+        {
+            return 'COLLISION_TEST_IDENTICAL_PROMPT';
+        }
+    };
+
+    $routerB = new class(['editor' => 'editor path', 'finalize' => 'finalize path']) extends PrismRouter
+    {
+        protected function buildPrompt(StateContract $state): string
+        {
+            return 'COLLISION_TEST_IDENTICAL_PROMPT';
+        }
+    };
+
+    $legacyPromptOnlyKey = 'agenticgraph:prism:router:'.md5($sharedPrompt);
+    Cache::put($legacyPromptOnlyKey, 'writer', 3600);
+
+    $fakeWriter = StructuredResponseFake::make()
+        ->withStructured(['route' => 'writer'])
+        ->withUsage(new Usage(1, 1))
+        ->withMeta(new Meta('fake-collision-a', 'fake-model'));
+    $fakeEditor = StructuredResponseFake::make()
+        ->withStructured(['route' => 'editor'])
+        ->withUsage(new Usage(1, 1))
+        ->withMeta(new Meta('fake-collision-b', 'fake-model'));
+    $prismFake = Prism::fake([$fakeWriter, $fakeEditor]);
+
+    $state = new State([]);
+
+    expect($routerA->route($state))->toBe('writer');
+
+    $routeB = $routerB->route($state);
+
+    expect($routeB)->toBe('editor')
+        ->and($routeB)->not->toBe('writer');
+
+    $prismFake->assertRequest(fn (array $requests) => expect($requests)->toHaveCount(2));
+});
+
+it('preserves legitimate caching for the same router and prompt', function () {
+    if (! class_exists(Prism::class)) {
+        expect(true)->toBeTrue();
+
+        return;
+    }
+
+    config()->set('agenticgraph.prism.cache_enabled', true);
+    config()->set('agenticgraph.prism.cache_ttl', 60);
+    Cache::flush();
+
+    $fake = StructuredResponseFake::make()
+        ->withStructured(['route' => 'billing'])
+        ->withUsage(new Usage(10, 20))
+        ->withMeta(new Meta('fake-same-router', 'fake-model'));
+    $prismFake = Prism::fake([$fake]);
+
+    $router = new PrismRouter([
+        'billing' => 'bill',
+        'general' => 'gen',
+    ], defaultRoute: 'general');
+
+    $state = new State(['message' => 'invoice']);
+
+    expect($router->route($state))->toBe('billing')
+        ->and($router->route($state))->toBe('billing');
+
+    $prismFake->assertRequest(fn (array $requests) => expect($requests)->toHaveCount(1));
+});
+
+it('keys cache entries distinctly per PrismRouter subclass', function () {
+    if (! class_exists(Prism::class)) {
+        expect(true)->toBeTrue();
+
+        return;
+    }
+
+    config()->set('agenticgraph.prism.cache_enabled', true);
+    config()->set('agenticgraph.prism.cache_ttl', 60);
+    Cache::flush();
+
+    $routerSubclassA = new class(['alpha' => 'alpha path', 'beta' => 'beta path']) extends PrismRouter
+    {
+        protected function buildPrompt(StateContract $state): string
+        {
+            return 'SUBCLASS_CACHE_KEY_PROMPT';
+        }
+    };
+
+    $routerSubclassB = new class(['alpha' => 'alpha path', 'beta' => 'beta path']) extends PrismRouter
+    {
+        protected function buildPrompt(StateContract $state): string
+        {
+            return 'SUBCLASS_CACHE_KEY_PROMPT';
+        }
+    };
+
+    $fakeAlpha = StructuredResponseFake::make()
+        ->withStructured(['route' => 'alpha'])
+        ->withUsage(new Usage(1, 1))
+        ->withMeta(new Meta('fake-subclass-a', 'fake-model'));
+    $fakeBeta = StructuredResponseFake::make()
+        ->withStructured(['route' => 'beta'])
+        ->withUsage(new Usage(1, 1))
+        ->withMeta(new Meta('fake-subclass-b', 'fake-model'));
+    $prismFake = Prism::fake([$fakeAlpha, $fakeBeta]);
+
+    $state = new State([]);
+
+    expect($routerSubclassA->route($state))->toBe('alpha')
+        ->and($routerSubclassB->route($state))->toBe('beta');
+
+    $prismFake->assertRequest(fn (array $requests) => expect($requests)->toHaveCount(2));
+});
+
+it('treats a cached route invalid for the current router as a cache miss', function () {
+    if (! class_exists(Prism::class)) {
+        expect(true)->toBeTrue();
+
+        return;
+    }
+
+    config()->set('agenticgraph.prism.cache_enabled', true);
+    config()->set('agenticgraph.prism.cache_ttl', 60);
+    Cache::flush();
+
+    $router = new PrismRouter([
+        'target_a' => 'a',
+        'target_b' => 'b',
+    ], defaultRoute: 'target_b');
+
+    $state = new State(['message' => 'seeded invalid cache']);
+    $promptMethod = new ReflectionMethod($router, 'buildPrompt');
+    $prompt = $promptMethod->invoke($router, $state);
+    $cacheKeyMethod = new ReflectionMethod($router, 'buildCacheKey');
+    $cacheKey = $cacheKeyMethod->invoke($router, $prompt);
+
+    Cache::put($cacheKey, 'stale_foreign_route', 3600);
+
+    $fake = StructuredResponseFake::make()
+        ->withStructured(['route' => 'target_a'])
+        ->withUsage(new Usage(3, 2))
+        ->withMeta(new Meta('fake-invalid-cache', 'fake-model'));
+    $prismFake = Prism::fake([$fake]);
+
+    expect($router->route($state))->toBe('target_a');
+
+    $prismFake->assertRequest(fn (array $requests) => expect($requests)->toHaveCount(1));
+});
+
 it('issues a structured Prism request when routing', function () {
     if (! class_exists(Prism::class)) {
         expect(true)->toBeTrue();
@@ -157,7 +323,7 @@ it('issues a structured Prism request when routing', function () {
 
     $prismFake->assertRequest(function (array $requests) {
         expect($requests)->toHaveCount(1)
-            ->and($requests[0])->toBeInstanceOf(\Prism\Prism\Structured\Request::class)
+            ->and($requests[0])->toBeInstanceOf(Request::class)
             ->and($requests[0]->provider())->toBe('openai')
             ->and($requests[0]->schema())->not->toBeNull()
             ->and($requests[0]->schema()->name())->toBe('routing_decision');
