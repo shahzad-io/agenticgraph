@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Shahzad\AgenticGraph\Execution;
 
 use Illuminate\Cache\CacheManager;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Events\Dispatcher;
 use Psr\Log\LoggerInterface;
@@ -22,6 +23,7 @@ use Shahzad\AgenticGraph\Events\NodeExecutionFailed;
 use Shahzad\AgenticGraph\Events\NodeExecutionStarted;
 use Shahzad\AgenticGraph\Graph\Graph;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
+use Shahzad\AgenticGraph\Jobs\ExecuteGraphJob;
 use Shahzad\AgenticGraph\Middleware\LoggingMiddleware;
 use Shahzad\AgenticGraph\Middleware\TimingMiddleware;
 use Shahzad\AgenticGraph\Middleware\ValidationMiddleware;
@@ -127,8 +129,7 @@ class ExecutionCoordinator
         ExecutionOptions $options = new ExecutionOptions,
         bool $useBatch = false,
         ?string $executionId = null
-    ): StateContract
-    {
+    ): StateContract {
         $state->validate();
 
         $executionId = $executionId ?? $this->generateExecutionId();
@@ -166,6 +167,7 @@ class ExecutionCoordinator
 
                     try {
                         $this->loopGuard->check($executionContext, $cycle);
+                        $this->loopGuard->checkCyclicSafetyNet($executionContext, $graph->hasCycles());
                     } catch (LoopLimitExceededException $e) {
                         throw $e;
                     }
@@ -270,7 +272,7 @@ class ExecutionCoordinator
                         $current = $next;
                     }
                     $traceContext->endSpan();
-                } catch (\Illuminate\Contracts\Cache\LockTimeoutException $e) {
+                } catch (LockTimeoutException $e) {
                     $this->repo->failed($executionId, 'Lock timeout: '.$e->getMessage());
                     throw new \RuntimeException('Execution locked by another process', 0, $e);
                 } finally {
@@ -441,8 +443,7 @@ class ExecutionCoordinator
         Graph $graph,
         StateContract $state,
         ExecutionOptions $options = new ExecutionOptions(ExecutionMode::ASYNC, StreamingMode::NONE)
-    ): string
-    {
+    ): string {
         $state->validate();
 
         $executionId = $this->generateExecutionId();
@@ -457,7 +458,7 @@ class ExecutionCoordinator
             $this->httpClientInstrumentation->cleanupExecution($executionId);
         }
 
-        dispatch(new \Shahzad\AgenticGraph\Jobs\ExecuteGraphJob(
+        dispatch(new ExecuteGraphJob(
             graphName: $graph->name,
             executionId: $executionId,
             stateData: $state->toArray(),
@@ -610,7 +611,7 @@ class ExecutionCoordinator
                         $current = $next;
                     }
                     $traceContext->endSpan();
-                } catch (\Illuminate\Contracts\Cache\LockTimeoutException $e) {
+                } catch (LockTimeoutException $e) {
                     $this->repo->failed($executionId, 'Lock timeout: '.$e->getMessage());
                     throw new \RuntimeException('Execution locked by another process', 0, $e);
                 } finally {

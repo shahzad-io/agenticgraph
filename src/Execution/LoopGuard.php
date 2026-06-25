@@ -44,6 +44,32 @@ class LoopGuard
     }
 
     /**
+     * Default iteration backstop for cyclic graphs when the full loop guard is disabled.
+     *
+     * @throws LoopLimitExceededException
+     */
+    public function checkCyclicSafetyNet(ExecutionContext $context, bool $graphHasCycles): void
+    {
+        if ($this->enabled || ! $graphHasCycles) {
+            return;
+        }
+
+        $maxIterations = (int) config('agenticgraph.execution.max_iterations', 1000);
+
+        if ($context->globalIterations >= $maxIterations) {
+            throw new LoopLimitExceededException(
+                message: "Graph execution exceeded maximum iterations ({$maxIterations}). ".
+                         'Possible infinite loop detected in cyclic graph. '.
+                         'Path: '.implode('→', $context->pathStack),
+                limitType: 'global',
+                limitValue: $maxIterations,
+                currentValue: $context->globalIterations,
+                pathStack: $context->pathStack,
+            );
+        }
+    }
+
+    /**
      * Check global iteration limit.
      *
      * @throws LoopLimitExceededException

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Shahzad\AgenticGraph\Streaming;
 
 use Illuminate\Cache\CacheManager;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Events\Dispatcher;
 use Psr\Log\LoggerInterface;
@@ -364,6 +365,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
 
                     try {
                         $this->loopGuard->check($executionContext, $cycle);
+                        $this->loopGuard->checkCyclicSafetyNet($executionContext, $graph->hasCycles());
                     } catch (LoopLimitExceededException $e) {
                         $this->repo->failed($executionId, $e->getMessage());
                         throw $e;
@@ -526,7 +528,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                         $current = $next;
                     }
                     $traceContext->endSpan();
-                } catch (\Illuminate\Contracts\Cache\LockTimeoutException $e) {
+                } catch (LockTimeoutException $e) {
                     $this->repo->failed($executionId, 'Lock timeout: '.$e->getMessage());
                     throw new \RuntimeException('Execution locked by another process', 0, $e);
                 } finally {

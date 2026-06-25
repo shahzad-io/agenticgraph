@@ -52,7 +52,70 @@ describe('disabled guard', function () {
             globalIterations: 999,
         );
 
-        expect(fn () => $guard->check($context))->not->toThrow(\Throwable::class);
+        expect(fn () => $guard->check($context))->not->toThrow(Throwable::class);
+    });
+
+});
+
+describe('cyclic safety net', function () {
+
+    it('does not throw for acyclic graphs when disabled', function () {
+        $guard = new LoopGuard(
+            maxGlobalIterations: 1000,
+            maxCycleIterations: null,
+            timeoutSeconds: null,
+            enabled: false,
+        );
+
+        config()->set('agenticgraph.execution.max_iterations', 5);
+
+        $context = new ExecutionContext(
+            executionId: $this->executionId,
+            startTime: $this->startTime,
+            globalIterations: 999,
+        );
+
+        expect(fn () => $guard->checkCyclicSafetyNet($context, false))->not->toThrow(Throwable::class);
+    });
+
+    it('throws for cyclic graphs when disabled and iterations exceed execution max', function () {
+        $guard = new LoopGuard(
+            maxGlobalIterations: 1000,
+            maxCycleIterations: null,
+            timeoutSeconds: null,
+            enabled: false,
+        );
+
+        config()->set('agenticgraph.execution.max_iterations', 5);
+
+        $context = new ExecutionContext(
+            executionId: $this->executionId,
+            startTime: $this->startTime,
+            globalIterations: 5,
+            pathStack: ['A', 'B', 'A'],
+        );
+
+        expect(fn () => $guard->checkCyclicSafetyNet($context, true))
+            ->toThrow(LoopLimitExceededException::class);
+    });
+
+    it('does not throw when full loop guard is enabled', function () {
+        $guard = new LoopGuard(
+            maxGlobalIterations: 5,
+            maxCycleIterations: null,
+            timeoutSeconds: null,
+            enabled: true,
+        );
+
+        config()->set('agenticgraph.execution.max_iterations', 5);
+
+        $context = new ExecutionContext(
+            executionId: $this->executionId,
+            startTime: $this->startTime,
+            globalIterations: 999,
+        );
+
+        expect(fn () => $guard->checkCyclicSafetyNet($context, true))->not->toThrow(Throwable::class);
     });
 
 });
@@ -73,7 +136,7 @@ describe('global iteration limit', function () {
             globalIterations: 99,
         );
 
-        expect(fn () => $guard->check($context))->not->toThrow(\Throwable::class);
+        expect(fn () => $guard->check($context))->not->toThrow(Throwable::class);
     });
 
     it('throws when at limit', function () {
@@ -163,7 +226,7 @@ describe('cycle iteration limit', function () {
             startTime: $this->startTime,
         );
 
-        expect(fn () => $guard->check($context, $cycle))->not->toThrow(\Throwable::class);
+        expect(fn () => $guard->check($context, $cycle))->not->toThrow(Throwable::class);
     });
 
     it('does not throw when cycle under limit', function () {
@@ -186,7 +249,7 @@ describe('cycle iteration limit', function () {
             startTime: $this->startTime,
         );
 
-        expect(fn () => $guard->check($context, $cycle))->not->toThrow(\Throwable::class);
+        expect(fn () => $guard->check($context, $cycle))->not->toThrow(Throwable::class);
     });
 
     it('throws when cycle at limit', function () {
@@ -258,7 +321,7 @@ describe('cycle iteration limit', function () {
             globalIterations: 50,
         );
 
-        expect(fn () => $guard->check($context, null))->not->toThrow(\Throwable::class);
+        expect(fn () => $guard->check($context, null))->not->toThrow(Throwable::class);
     });
 
 });
@@ -278,7 +341,7 @@ describe('timeout limit', function () {
             startTime: microtime(true) - 9999, // Way in the past
         );
 
-        expect(fn () => $guard->check($context))->not->toThrow(\Throwable::class);
+        expect(fn () => $guard->check($context))->not->toThrow(Throwable::class);
     });
 
     it('does not throw when under timeout', function () {
@@ -294,7 +357,7 @@ describe('timeout limit', function () {
             startTime: microtime(true) - 5, // 5 seconds ago
         );
 
-        expect(fn () => $guard->check($context))->not->toThrow(\Throwable::class);
+        expect(fn () => $guard->check($context))->not->toThrow(Throwable::class);
     });
 
     it('throws when timeout exceeded', function () {
@@ -411,7 +474,7 @@ describe('combined limits', function () {
             cycleStartIndex: 0,
         );
 
-        expect(fn () => $guard->check($context, $cycle))->not->toThrow(\Throwable::class);
+        expect(fn () => $guard->check($context, $cycle))->not->toThrow(Throwable::class);
     });
 
 });

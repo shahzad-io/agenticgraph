@@ -103,4 +103,31 @@ describe('detectCycles', function () {
         expect($cycles[0]['path'])->toBe(['A', 'A']);
     });
 
+    it('sets has_cycles metadata false for acyclic graphs at build time', function () {
+        $graph = GraphBuilder::create('metadata-dag')
+            ->addNode('start', CDNodeA::class)
+            ->addNode('end', CDNodeC::class)
+            ->addEdge('start', 'end')
+            ->setEntryPoint('start')
+            ->addExitPoint('end')
+            ->build();
+
+        expect($graph->metadata['has_cycles'])->toBeFalse()
+            ->and($graph->hasCycles())->toBeFalse();
+    });
+
+    it('sets has_cycles metadata true for cyclic graphs at build time', function () {
+        $graph = GraphBuilder::create('metadata-cycle')
+            ->addNode('A', CDNodeA::class)
+            ->addNode('B', CDNodeB::class)
+            ->addConditionalEdge('A', CDRouter::class)
+            ->addEdge('B', 'A')
+            ->setEntryPoint('A')
+            ->addExitPoint('A')
+            ->build();
+
+        expect($graph->metadata['has_cycles'])->toBeTrue()
+            ->and($graph->hasCycles())->toBeTrue();
+    });
+
 });

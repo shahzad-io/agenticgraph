@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Shahzad\AgenticGraph\Graph;
 
 use Illuminate\Container\Container;
+use Shahzad\AgenticGraph\Contracts\NodeInterface;
 use Shahzad\AgenticGraph\Contracts\RouterInterface;
 
 class GraphBuilder
@@ -147,7 +148,8 @@ class GraphBuilder
             $node = $container->make($class);
             $instances[$name] = $node;
         }
-        $graph = new Graph(
+
+        $hasCycles = ! empty((new Graph(
             $this->name,
             $this->description,
             $this->entryPoint ?? '',
@@ -155,6 +157,19 @@ class GraphBuilder
             $instances,
             $this->edges,
             $this->metadata,
+            $this->joins,
+        ))->detectCycles());
+
+        $metadata = array_merge($this->metadata, ['has_cycles' => $hasCycles]);
+
+        $graph = new Graph(
+            $this->name,
+            $this->description,
+            $this->entryPoint ?? '',
+            $this->exitPoints,
+            $instances,
+            $this->edges,
+            $metadata,
             $this->joins,
         );
         $graph->validate();
@@ -226,7 +241,7 @@ class GraphBuilder
             throw new InvalidGraphException("Node class does not exist: {$class}");
         }
 
-        $requiredInterface = \Shahzad\AgenticGraph\Contracts\NodeInterface::class;
+        $requiredInterface = NodeInterface::class;
         if (! in_array($requiredInterface, class_implements($class) ?: [], true)) {
             throw new InvalidGraphException(
                 "Node class must implement NodeInterface: {$class}"

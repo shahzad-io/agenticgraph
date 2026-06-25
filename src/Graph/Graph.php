@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph\Graph;
 
+use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Contracts\EdgeInterface;
 use Shahzad\AgenticGraph\Contracts\NodeInterface;
 use Shahzad\AgenticGraph\Contracts\RouterInterface;
@@ -68,6 +69,18 @@ class Graph
         return array_key_exists($name, $this->nodes);
     }
 
+    /**
+     * Whether this graph contains at least one cycle (build-time metadata or runtime detection).
+     */
+    public function hasCycles(): bool
+    {
+        if (array_key_exists('has_cycles', $this->metadata)) {
+            return (bool) $this->metadata['has_cycles'];
+        }
+
+        return ! empty($this->detectCycles());
+    }
+
     public function validate(): bool
     {
         // 1. Check all edge sources and targets exist
@@ -124,7 +137,7 @@ class Graph
             $outgoing = $this->getEdgesFrom($nodeName);
             if (empty($outgoing) && ! in_array($nodeName, $this->exitPoints, true)) {
                 if ((bool) config('agenticgraph.logging.enabled', true)) {
-                    \Illuminate\Support\Facades\Log::warning("Node '{$nodeName}' has no outgoing edges and is not an exit point");
+                    Log::warning("Node '{$nodeName}' has no outgoing edges and is not an exit point");
                 }
             }
         }
@@ -142,7 +155,7 @@ class Graph
                 if ($cycleMode === 'error') {
                     throw new InvalidGraphException($message);
                 } elseif ($cycleMode === 'warn' && (bool) config('agenticgraph.logging.enabled', true)) {
-                    \Illuminate\Support\Facades\Log::warning($message, [
+                    Log::warning($message, [
                         'graph' => $this->name,
                         'cycles' => $cycles,
                     ]);
