@@ -1,12 +1,13 @@
 <?php
 
 use Illuminate\Support\Facades\Bus;
+use Shahzad\AgenticGraph\Contracts\InterruptServiceInterface;
 use Shahzad\AgenticGraph\Contracts\RouterInterface;
-use Shahzad\AgenticGraph\Contracts\StorageInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Contracts\StorageInterface;
+use Shahzad\AgenticGraph\Execution\ExecutionHandle;
 use Shahzad\AgenticGraph\Execution\ExecutionMode;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
-use Shahzad\AgenticGraph\Execution\ExecutionStatus;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Execution\InterruptRecord;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
@@ -16,9 +17,9 @@ use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Jobs\ExecuteGraphJob;
 use Shahzad\AgenticGraph\Jobs\ResumeExecutionJob;
 use Shahzad\AgenticGraph\Nodes\PrismNode;
+use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\StreamOptions;
 use Shahzad\AgenticGraph\Streaming\StreamResumption;
-use Shahzad\AgenticGraph\State\State;
 
 class D17ParityStartNode extends PrismNode
 {
@@ -177,13 +178,13 @@ function runResumeExecutionJobFor(string $executionId): void
 
     expect($job)->toBeInstanceOf(ResumeExecutionJob::class);
     $job->handle(
-        app(\Shahzad\AgenticGraph\Contracts\InterruptServiceInterface::class),
-        app(\Shahzad\AgenticGraph\Streaming\StreamResumption::class)
+        app(InterruptServiceInterface::class),
+        app(StreamResumption::class)
     );
 }
 
 /**
- * @return array{executionId: string, state: StateContract, handle: \Shahzad\AgenticGraph\Execution\ExecutionHandle}
+ * @return array{executionId: string, state: StateContract, handle: ExecutionHandle}
  */
 function startD17ParityExecution(string $graphName, ExecutionOptions $options): array
 {

@@ -92,7 +92,7 @@ it('does not expose raw execution context internals on the public surface', func
 
     $loop = LoopContext::from($context);
     $publicMethods = array_map(
-        fn (\ReflectionMethod $method): string => $method->getName(),
+        fn (ReflectionMethod $method): string => $method->getName(),
         (new ReflectionClass($loop))->getMethods(ReflectionMethod::IS_PUBLIC)
     );
 

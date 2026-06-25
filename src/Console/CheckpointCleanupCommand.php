@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace Shahzad\AgenticGraph\Console;
 
 use Illuminate\Console\Command;
+use Shahzad\AgenticGraph\Storage\DatabaseStorage;
+use Shahzad\AgenticGraph\Storage\FileStorage;
+use Shahzad\AgenticGraph\Storage\RedisStorage;
 
 class CheckpointCleanupCommand extends Command
 {
@@ -16,9 +19,9 @@ class CheckpointCleanupCommand extends Command
     {
         $days = (int) $this->option('days');
         $storage = match (config('agenticgraph.storage')) {
-            'redis' => app(\Shahzad\AgenticGraph\Storage\RedisStorage::class),
-            'file' => app(\Shahzad\AgenticGraph\Storage\FileStorage::class),
-            default => app(\Shahzad\AgenticGraph\Storage\DatabaseStorage::class),
+            'redis' => app(RedisStorage::class),
+            'file' => app(FileStorage::class),
+            default => app(DatabaseStorage::class),
         };
         $count = $storage->cleanup($days);
         $this->line((string) $count);

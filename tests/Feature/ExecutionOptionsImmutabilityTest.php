@@ -7,13 +7,15 @@ use Shahzad\AgenticGraph\Execution\ExecutionMode;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
-use Shahzad\AgenticGraph\Streaming\StreamLifecycleEventTypes;
 use Shahzad\AgenticGraph\Facades\AgenticGraph;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
+use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Jobs\ContinueExecutionJob;
 use Shahzad\AgenticGraph\Jobs\ExecuteGraphJob;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
 use Shahzad\AgenticGraph\State\State;
+use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
+use Shahzad\AgenticGraph\Streaming\StreamLifecycleEventTypes;
 
 class ImmutabilitySimpleNode extends AbstractNode
 {
@@ -248,9 +250,9 @@ it('ContinueExecutionJob serializes readonly executionOptions', function () {
     expect($copy->executionOptions)->not->toBeNull()
         ->and($copy->executionOptions->streaming)->toBe(StreamingMode::ITERATOR);
 
-    $copy->handle(new GraphExecutor, app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class));
+    $copy->handle(new GraphExecutor, app(GraphRegistry::class));
 
-    $store = app(\Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface::class);
+    $store = app(StreamStoreInterface::class);
     $events = iterator_to_array($store->readFrom('stream-continue-serialize', 1, 5));
 
     expect($events)->not->toBeEmpty()
@@ -287,6 +289,6 @@ it('ExecuteGraphJob resolves AUTO to broadcast and emits through the broadcast s
 
     $job->handle(
         app(GraphExecutor::class),
-        app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)
+        app(GraphRegistry::class)
     );
 });

@@ -200,7 +200,7 @@ it('exits with exception and cleans up scope bindings', function () {
     $exporter->shouldReceive('isEnabled')->andReturn(true);
     $exporter->shouldReceive('failTrace')
         ->once()
-        ->with($executionId, Mockery::type(\Throwable::class), Mockery::type('float'), null);
+        ->with($executionId, Mockery::type(Throwable::class), Mockery::type('float'), null);
     $instrumentation = Mockery::mock(HttpClientInstrumentation::class);
     $instrumentation->shouldReceive('cleanupExecution')->once()->with($executionId);
 

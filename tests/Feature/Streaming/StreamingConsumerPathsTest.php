@@ -10,6 +10,7 @@ use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
 use Shahzad\AgenticGraph\Facades\AgenticGraph;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
+use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Http\Controllers\StreamController;
 use Shahzad\AgenticGraph\Jobs\ExecuteGraphJob;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
@@ -83,7 +84,7 @@ function runConsumerPathExecuteGraphJob(): ExecuteGraphJob
 
     expect($job)->toBeInstanceOf(ExecuteGraphJob::class);
 
-    $job->handle(app(GraphExecutor::class), app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class));
+    $job->handle(app(GraphExecutor::class), app(GraphRegistry::class));
 
     return $job;
 }

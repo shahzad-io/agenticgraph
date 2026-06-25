@@ -1,5 +1,6 @@
 <?php
 
+use Shahzad\AgenticGraph\Contracts\NodeInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
@@ -16,7 +17,7 @@ class MWNode extends AbstractNode
 
 class TestMiddlewareA
 {
-    public function handle(StateContract $state, \Shahzad\AgenticGraph\Contracts\NodeInterface $node, \Closure $next): StateContract
+    public function handle(StateContract $state, NodeInterface $node, Closure $next): StateContract
     {
         return $next($state->set('mw', ['A']));
     }
@@ -24,7 +25,7 @@ class TestMiddlewareA
 
 class TestMiddlewareB
 {
-    public function handle(StateContract $state, \Shahzad\AgenticGraph\Contracts\NodeInterface $node, \Closure $next): StateContract
+    public function handle(StateContract $state, NodeInterface $node, Closure $next): StateContract
     {
         $mw = $state->get('mw', []);
         $mw[] = 'B';
@@ -35,7 +36,7 @@ class TestMiddlewareB
 
 class TestMiddlewareC
 {
-    public function handle(StateContract $state, \Shahzad\AgenticGraph\Contracts\NodeInterface $node, \Closure $next): StateContract
+    public function handle(StateContract $state, NodeInterface $node, Closure $next): StateContract
     {
         $mw = $state->get('mw', []);
         $mw[] = 'C';

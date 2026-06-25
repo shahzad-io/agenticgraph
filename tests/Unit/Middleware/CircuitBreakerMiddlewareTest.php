@@ -41,9 +41,9 @@ describe('closed state', function () {
         for ($i = 0; $i < $failureThreshold - 1; $i++) {
             try {
                 $this->middleware->handle($this->state, $this->node, function () {
-                    throw new \RuntimeException('Test error');
+                    throw new RuntimeException('Test error');
                 });
-            } catch (\RuntimeException $e) {
+            } catch (RuntimeException $e) {
                 // Expected
             }
         }
@@ -61,9 +61,9 @@ describe('closed state', function () {
         for ($i = 0; $i < $failureThreshold; $i++) {
             try {
                 $this->middleware->handle($this->state, $this->node, function () {
-                    throw new \RuntimeException('Test error');
+                    throw new RuntimeException('Test error');
                 });
-            } catch (\RuntimeException $e) {
+            } catch (RuntimeException $e) {
                 // Expected
             }
         }
@@ -76,9 +76,9 @@ describe('closed state', function () {
         // First failure
         try {
             $this->middleware->handle($this->state, $this->node, function () {
-                throw new \RuntimeException('Test error');
+                throw new RuntimeException('Test error');
             });
-        } catch (\RuntimeException $e) {
+        } catch (RuntimeException $e) {
             // Expected
         }
 
@@ -102,9 +102,9 @@ describe('open state', function () {
         for ($i = 0; $i < $failureThreshold; $i++) {
             try {
                 $this->middleware->handle($this->state, $this->node, function () {
-                    throw new \RuntimeException('Test error');
+                    throw new RuntimeException('Test error');
                 });
-            } catch (\RuntimeException $e) {
+            } catch (RuntimeException $e) {
                 // Expected
             }
         }
@@ -119,7 +119,7 @@ describe('open state', function () {
         };
 
         expect(fn () => $this->middleware->handle($this->state, $this->node, $next))
-            ->toThrow(\RuntimeException::class, 'Circuit breaker is OPEN');
+            ->toThrow(RuntimeException::class, 'Circuit breaker is OPEN');
 
         expect($called)->toBeFalse();
     });
@@ -139,7 +139,7 @@ describe('open state', function () {
         // Should attempt half-open
         try {
             $this->middleware->handle($this->state, $this->node, $next);
-        } catch (\RuntimeException $e) {
+        } catch (RuntimeException $e) {
             // Might throw if half-open limit reached
         }
 
@@ -150,7 +150,7 @@ describe('open state', function () {
 
     it('provides retry after information in error', function () {
         expect(fn () => $this->middleware->handle($this->state, $this->node, fn () => new State))
-            ->toThrow(\RuntimeException::class, 'Retry after');
+            ->toThrow(RuntimeException::class, 'Retry after');
     });
 
 });
@@ -163,9 +163,9 @@ describe('half-open state', function () {
         for ($i = 0; $i < $failureThreshold; $i++) {
             try {
                 $this->middleware->handle($this->state, $this->node, function () {
-                    throw new \RuntimeException('Test error');
+                    throw new RuntimeException('Test error');
                 });
-            } catch (\RuntimeException $e) {
+            } catch (RuntimeException $e) {
                 // Expected
             }
         }
@@ -213,9 +213,9 @@ describe('half-open state', function () {
         // Then failure
         try {
             $this->middleware->handle($this->state, $this->node, function () {
-                throw new \RuntimeException('Test error');
+                throw new RuntimeException('Test error');
             });
-        } catch (\RuntimeException $e) {
+        } catch (RuntimeException $e) {
             // Expected
         }
 
@@ -257,9 +257,9 @@ describe('metrics and reset', function () {
         for ($i = 0; $i < $failureThreshold; $i++) {
             try {
                 $this->middleware->handle($this->state, $this->node, function () {
-                    throw new \RuntimeException('Test error');
+                    throw new RuntimeException('Test error');
                 });
-            } catch (\RuntimeException $e) {
+            } catch (RuntimeException $e) {
                 // Expected
             }
         }
@@ -285,9 +285,9 @@ describe('metrics and reset', function () {
         for ($i = 0; $i < $failureThreshold; $i++) {
             try {
                 $this->middleware->handle($this->state, $nodeA, function () {
-                    throw new \RuntimeException('Test error');
+                    throw new RuntimeException('Test error');
                 });
-            } catch (\RuntimeException $e) {
+            } catch (RuntimeException $e) {
                 // Expected
             }
         }
@@ -307,9 +307,9 @@ describe('configuration', function () {
         // First failure
         try {
             $middleware->handle($this->state, $this->node, function () {
-                throw new \RuntimeException('Test error');
+                throw new RuntimeException('Test error');
             });
-        } catch (\RuntimeException $e) {
+        } catch (RuntimeException $e) {
             // Expected
         }
 
@@ -318,9 +318,9 @@ describe('configuration', function () {
         // Second failure should open
         try {
             $middleware->handle($this->state, $this->node, function () {
-                throw new \RuntimeException('Test error');
+                throw new RuntimeException('Test error');
             });
-        } catch (\RuntimeException $e) {
+        } catch (RuntimeException $e) {
             // Expected
         }
 
@@ -335,9 +335,9 @@ describe('configuration', function () {
         config(['agenticgraph.circuit_breaker.failure_threshold' => 1]);
         try {
             $middleware->handle($this->state, $this->node, function () {
-                throw new \RuntimeException('Test error');
+                throw new RuntimeException('Test error');
             });
-        } catch (\RuntimeException $e) {
+        } catch (RuntimeException $e) {
             // Expected
         }
 

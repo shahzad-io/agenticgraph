@@ -1,8 +1,8 @@
 <?php
 
 use Illuminate\Contracts\Broadcasting\Broadcaster;
-use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Str;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\GraphExecutionFailed;
 use Shahzad\AgenticGraph\Execution\ExecutionRepository;
@@ -10,6 +10,7 @@ use Shahzad\AgenticGraph\Execution\ExecutionStatus;
 use Shahzad\AgenticGraph\Execution\ExecutionStore;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
+use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamEvent;
@@ -38,7 +39,7 @@ class SetupThrowingResumeStreamStore implements StreamStoreInterface
         }
     }
 
-    public function readFrom(string $streamId, int $fromSeq, int $limit = 200): \Generator
+    public function readFrom(string $streamId, int $fromSeq, int $limit = 200): Generator
     {
         if (false) {
             yield $streamId;
@@ -61,7 +62,7 @@ function registerResumeSetupFailureGraph(string $name): void
         ->addExitPoint('review')
         ->build();
 
-    app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->register($name, $graph);
+    app(GraphRegistry::class)->register($name, $graph);
 }
 
 afterEach(function () {
@@ -88,7 +89,7 @@ it('marks interrupted streaming resume failed when setup throws before performSt
     $repository->started($executionId, $graphName, $payload, 'stream-resume-setup');
     $repository->interrupted($executionId);
 
-    $graph = app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->get($graphName);
+    $graph = app(GraphRegistry::class)->get($graphName);
     $resumePayload = new StreamResumePayload(
         fromSeq: 3,
         resumedAtSeq: 4,
@@ -155,7 +156,7 @@ it('closes the stream sink with ERROR when streaming resume setup fails', functi
     $repository->started($executionId, $graphName, $payload, 'stream-resume-close');
     $repository->interrupted($executionId);
 
-    $graph = app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->get($graphName);
+    $graph = app(GraphRegistry::class)->get($graphName);
     $resumePayload = new StreamResumePayload(
         fromSeq: 1,
         resumedAtSeq: 2,

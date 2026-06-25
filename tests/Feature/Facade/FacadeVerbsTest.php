@@ -10,10 +10,10 @@ use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
 use Shahzad\AgenticGraph\Facades\AgenticGraph;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
+use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Jobs\ExecuteGraphJob;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
 use Shahzad\AgenticGraph\State\State;
-use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
 use Shahzad\AgenticGraph\Streaming\StreamDescriptor;
 use Shahzad\AgenticGraph\Streaming\StreamLifecycleEventTypes;
 
@@ -111,7 +111,7 @@ function runVerbAsyncJob(): ExecuteGraphJob
 
     $job->handle(
         app(GraphExecutor::class),
-        app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)
+        app(GraphRegistry::class)
     );
 
     return $job;

@@ -1,18 +1,26 @@
 <?php
 
+use Illuminate\Support\Facades\Redis;
+use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Execution\GraphExecutor;
+use Shahzad\AgenticGraph\Facades\AgenticGraph;
+use Shahzad\AgenticGraph\Graph\GraphBuilder;
+use Shahzad\AgenticGraph\Nodes\AbstractNode;
+use Shahzad\AgenticGraph\Streaming\StreamOptions;
+
 it('executes 100-node graph under 5 seconds', function () {
     $graph = createLargeGraph(100);
     $start = microtime(true);
-    (new \Shahzad\AgenticGraph\Execution\GraphExecutor)->execute($graph, createTestState());
+    (new GraphExecutor)->execute($graph, createTestState());
     $duration = microtime(true) - $start;
     expect($duration)->toBeLessThan(5.0);
 });
 
-class PerfStreamNode extends \Shahzad\AgenticGraph\Nodes\AbstractNode
+class PerfStreamNode extends AbstractNode
 {
     protected ?string $name = 'perf';
 
-    public function execute(\Shahzad\AgenticGraph\Contracts\StateContract $state): \Shahzad\AgenticGraph\Contracts\StateContract
+    public function execute(StateContract $state): StateContract
     {
         for ($i = 0; $i < 1000; $i++) {
             $this->streamEvent('text_delta', ['delta' => (string) $i]);
@@ -22,11 +30,11 @@ class PerfStreamNode extends \Shahzad\AgenticGraph\Nodes\AbstractNode
     }
 }
 
-class LoadStreamNode extends \Shahzad\AgenticGraph\Nodes\AbstractNode
+class LoadStreamNode extends AbstractNode
 {
     protected ?string $name = 'load';
 
-    public function execute(\Shahzad\AgenticGraph\Contracts\StateContract $state): \Shahzad\AgenticGraph\Contracts\StateContract
+    public function execute(StateContract $state): StateContract
     {
         for ($i = 0; $i < 10000; $i++) {
             $this->streamEvent('text_delta', ['delta' => (string) $i]);
@@ -38,9 +46,9 @@ class LoadStreamNode extends \Shahzad\AgenticGraph\Nodes\AbstractNode
 
 it('keeps streaming overhead within 2x baseline', function () {
     $graph = createLargeGraph(50);
-    \Shahzad\AgenticGraph\Facades\AgenticGraph::register('perf-overhead', $graph);
+    AgenticGraph::register('perf-overhead', $graph);
 
-    $executor = new \Shahzad\AgenticGraph\Execution\GraphExecutor;
+    $executor = new GraphExecutor;
     $baselineSamples = [];
     for ($i = 0; $i < 5; $i++) {
         $start = microtime(true);
@@ -49,7 +57,7 @@ it('keeps streaming overhead within 2x baseline', function () {
     }
     $baseline = array_sum($baselineSamples) / count($baselineSamples);
 
-    $options = new \Shahzad\AgenticGraph\Streaming\StreamOptions(delivery: 'iterator', storeEnabled: false);
+    $options = new StreamOptions(delivery: 'iterator', storeEnabled: false);
     $streamSamples = [];
     for ($i = 0; $i < 5; $i++) {
         $start = microtime(true);
@@ -64,11 +72,11 @@ it('keeps streaming overhead within 2x baseline', function () {
 
 it('streams with sse sink within 2x memory sink time', function () {
     $graph = createLargeGraph(25);
-    \Shahzad\AgenticGraph\Facades\AgenticGraph::register('perf-sse', $graph);
+    AgenticGraph::register('perf-sse', $graph);
 
-    $executor = new \Shahzad\AgenticGraph\Execution\GraphExecutor;
-    $memoryOptions = new \Shahzad\AgenticGraph\Streaming\StreamOptions(delivery: 'iterator', storeEnabled: false);
-    $sseOptions = new \Shahzad\AgenticGraph\Streaming\StreamOptions(delivery: 'sse', storeEnabled: false);
+    $executor = new GraphExecutor;
+    $memoryOptions = new StreamOptions(delivery: 'iterator', storeEnabled: false);
+    $sseOptions = new StreamOptions(delivery: 'sse', storeEnabled: false);
 
     $start = microtime(true);
     $memoryHandle = $executor->executeWithStreaming('perf-sse', createTestState(), $memoryOptions);
@@ -86,15 +94,15 @@ it('streams with sse sink within 2x memory sink time', function () {
 it('streams 1000 events with database store under 5 seconds', function () {
     config()->set('agenticgraph.streaming.store.driver', 'database');
 
-    $graph = \Shahzad\AgenticGraph\Graph\GraphBuilder::create('perf-db-store')
+    $graph = GraphBuilder::create('perf-db-store')
         ->addNode('perf', PerfStreamNode::class)
         ->setEntryPoint('perf')
         ->addExitPoint('perf')
         ->build();
-    \Shahzad\AgenticGraph\Facades\AgenticGraph::register('perf-db-store', $graph);
+    AgenticGraph::register('perf-db-store', $graph);
 
-    $executor = new \Shahzad\AgenticGraph\Execution\GraphExecutor;
-    $options = new \Shahzad\AgenticGraph\Streaming\StreamOptions(delivery: 'iterator', storeEnabled: true);
+    $executor = new GraphExecutor;
+    $options = new StreamOptions(delivery: 'iterator', storeEnabled: true);
 
     $start = microtime(true);
     $handle = $executor->executeWithStreaming('perf-db-store', createTestState(), $options);
@@ -106,22 +114,22 @@ it('streams 1000 events with database store under 5 seconds', function () {
 
 it('streams 1000 events with redis store under 5 seconds', function () {
     try {
-        \Illuminate\Support\Facades\Redis::connection()->ping();
+        Redis::connection()->ping();
     } catch (Throwable $e) {
         $this->markTestSkipped('Redis is not available');
     }
 
     config()->set('agenticgraph.streaming.store.driver', 'redis');
 
-    $graph = \Shahzad\AgenticGraph\Graph\GraphBuilder::create('perf-redis-store')
+    $graph = GraphBuilder::create('perf-redis-store')
         ->addNode('perf', PerfStreamNode::class)
         ->setEntryPoint('perf')
         ->addExitPoint('perf')
         ->build();
-    \Shahzad\AgenticGraph\Facades\AgenticGraph::register('perf-redis-store', $graph);
+    AgenticGraph::register('perf-redis-store', $graph);
 
-    $executor = new \Shahzad\AgenticGraph\Execution\GraphExecutor;
-    $options = new \Shahzad\AgenticGraph\Streaming\StreamOptions(delivery: 'iterator', storeEnabled: true);
+    $executor = new GraphExecutor;
+    $options = new StreamOptions(delivery: 'iterator', storeEnabled: true);
 
     $start = microtime(true);
     $handle = $executor->executeWithStreaming('perf-redis-store', createTestState(), $options);
@@ -136,15 +144,15 @@ it('handles 100 stream sessions with 10k events each', function () {
         $this->markTestSkipped('Load test disabled');
     }
 
-    $graph = \Shahzad\AgenticGraph\Graph\GraphBuilder::create('load-stream')
+    $graph = GraphBuilder::create('load-stream')
         ->addNode('load', LoadStreamNode::class)
         ->setEntryPoint('load')
         ->addExitPoint('load')
         ->build();
-    \Shahzad\AgenticGraph\Facades\AgenticGraph::register('load-stream', $graph);
+    AgenticGraph::register('load-stream', $graph);
 
-    $executor = new \Shahzad\AgenticGraph\Execution\GraphExecutor;
-    $options = new \Shahzad\AgenticGraph\Streaming\StreamOptions(delivery: 'iterator', storeEnabled: false);
+    $executor = new GraphExecutor;
+    $options = new StreamOptions(delivery: 'iterator', storeEnabled: false);
 
     $handles = [];
     for ($i = 0; $i < 100; $i++) {

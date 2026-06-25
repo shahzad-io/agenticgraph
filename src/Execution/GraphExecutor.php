@@ -60,8 +60,7 @@ class GraphExecutor implements ExecutionLoopDelegate
         ExecutionOptions $options = new ExecutionOptions,
         bool $useBatch = false,
         ?string $executionId = null
-    ): StateContract
-    {
+    ): StateContract {
         return $this->coordinator->execute($graph, $state, $options, $useBatch, $executionId);
     }
 
@@ -138,8 +137,7 @@ class GraphExecutor implements ExecutionLoopDelegate
         Graph $graph,
         StateContract $state,
         ExecutionOptions $options = new ExecutionOptions(ExecutionMode::ASYNC, StreamingMode::NONE)
-    ): string
-    {
+    ): string {
         return $this->coordinator->executeAsync($graph, $state, $options);
     }
 

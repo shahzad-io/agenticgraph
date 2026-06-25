@@ -1,7 +1,9 @@
 <?php
 
 use Illuminate\Support\Facades\Event;
+use Prism\Prism\Audio\TextResponse;
 use Prism\Prism\Facades\Prism;
+use Prism\Prism\Schema\StringSchema;
 use Prism\Prism\Testing\EmbeddingsResponseFake;
 use Prism\Prism\Testing\ImageResponseFake;
 use Prism\Prism\Testing\StructuredResponseFake;
@@ -22,7 +24,7 @@ class StructuredTestNode extends PrismNode
 {
     public function execute(StateContract $state): StateContract
     {
-        $result = $this->structured('Analyze this', new \Prism\Prism\Schema\StringSchema('result', 'analysis'));
+        $result = $this->structured('Analyze this', new StringSchema('result', 'analysis'));
 
         return $state->set('analysis', $result);
     }
@@ -162,7 +164,7 @@ it('emits TokensUsed event from audio transcription helper', function () {
     Event::fake();
     config()->set('agenticgraph.prism.cache_enabled', false);
 
-    $fake = new \Prism\Prism\Audio\TextResponse('hi', new Usage(7, 2));
+    $fake = new TextResponse('hi', new Usage(7, 2));
     Prism::fake([$fake]);
 
     $node = new AudioTokenNode;
@@ -192,7 +194,7 @@ it('TokensUsed event has backward compatible defaults', function () {
 });
 
 it('TokensUsed event accepts all new fields', function () {
-    $endedAt = new \DateTimeImmutable;
+    $endedAt = new DateTimeImmutable;
     $event = new TokensUsed(
         node: 'TestNode',
         promptTokens: 10,

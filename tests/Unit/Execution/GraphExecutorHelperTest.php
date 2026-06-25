@@ -94,9 +94,9 @@ it('computes post-parallel next using joins', function () {
         ->addNode('a', ANode::class)
         ->addNode('b', BNode::class)
         ->addNode('c', CNode::class)
-        ->addConditionalEdge('start', new class implements \Shahzad\AgenticGraph\Contracts\RouterInterface
+        ->addConditionalEdge('start', new class implements RouterInterface
         {
-            public function route(\Shahzad\AgenticGraph\Contracts\StateContract $state): string|array
+            public function route(StateContract $state): string|array
             {
                 return ['a', 'b'];
             }

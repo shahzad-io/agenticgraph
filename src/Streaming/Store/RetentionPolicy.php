@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Shahzad\AgenticGraph\Streaming\Store;
 
 use Illuminate\Database\DatabaseManager;
+use Illuminate\Database\Query\Builder;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamEvent;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
 
@@ -58,7 +59,7 @@ final class RetentionPolicy
         return $query->delete();
     }
 
-    private function query(): \Illuminate\Database\Query\Builder
+    private function query(): Builder
     {
         if ($this->connection) {
             return $this->db->connection($this->connection)->table($this->table);

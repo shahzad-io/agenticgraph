@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph\Mcp;
 
+use Illuminate\Support\Collection;
+
 final class McpResponse
 {
     public function __construct(private mixed $response) {}
@@ -70,7 +72,7 @@ final class McpResponse
     {
         $toolResults = $this->getValue($this->response, 'toolResults');
 
-        if ($toolResults instanceof \Illuminate\Support\Collection) {
+        if ($toolResults instanceof Collection) {
             $toolResults = $toolResults->all();
         }
 
@@ -88,7 +90,7 @@ final class McpResponse
     {
         $toolCalls = $this->getValue($this->response, 'toolCalls');
 
-        if ($toolCalls instanceof \Illuminate\Support\Collection) {
+        if ($toolCalls instanceof Collection) {
             $toolCalls = $toolCalls->all();
         }
 
@@ -106,7 +108,7 @@ final class McpResponse
     {
         $steps = $this->getValue($this->response, 'steps');
 
-        if ($steps instanceof \Illuminate\Support\Collection) {
+        if ($steps instanceof Collection) {
             $steps = $steps->all();
         }
 
@@ -117,7 +119,7 @@ final class McpResponse
         $items = [];
         foreach ($steps as $step) {
             $value = $this->getValue($step, $key);
-            if ($value instanceof \Illuminate\Support\Collection) {
+            if ($value instanceof Collection) {
                 $value = $value->all();
             }
             if (is_array($value) && $value !== []) {

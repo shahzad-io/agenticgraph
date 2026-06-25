@@ -3,6 +3,7 @@
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\DatabaseManager;
 use Shahzad\AgenticGraph\Contracts\StorageInterface;
+use Shahzad\AgenticGraph\Execution\Checkpoint;
 use Shahzad\AgenticGraph\State\Facades\StateManager as StateManagerFacade;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\State\StateManager;
@@ -74,7 +75,7 @@ describe('instance methods', function () {
         $checkpointId = 'chk-1';
         $expectedState = new State(['key' => 'value']);
 
-        $checkpoint = new \Shahzad\AgenticGraph\Execution\Checkpoint;
+        $checkpoint = new Checkpoint;
         $checkpoint->executionId = $executionId;
         $checkpoint->state = $expectedState;
 
@@ -89,17 +90,17 @@ describe('instance methods', function () {
         $this->storage->shouldReceive('load')->with('chk-missing')->andReturn(null);
 
         expect(fn () => $this->stateManager->rollback('exec-123', 'chk-missing'))
-            ->toThrow(\RuntimeException::class, 'Checkpoint not found: chk-missing');
+            ->toThrow(RuntimeException::class, 'Checkpoint not found: chk-missing');
     });
 
     it('throws when checkpoint belongs to different execution', function () {
-        $checkpoint = new \Shahzad\AgenticGraph\Execution\Checkpoint;
+        $checkpoint = new Checkpoint;
         $checkpoint->executionId = 'different-exec';
 
         $this->storage->shouldReceive('load')->with('chk-1')->andReturn($checkpoint);
 
         expect(fn () => $this->stateManager->rollback('exec-123', 'chk-1'))
-            ->toThrow(\RuntimeException::class, 'does not belong to execution');
+            ->toThrow(RuntimeException::class, 'does not belong to execution');
     });
 
     it('merges multiple states', function () {

@@ -11,6 +11,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Shahzad\AgenticGraph\Execution\ExecutionContext;
 use Shahzad\AgenticGraph\Execution\ExecutionMode;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
@@ -20,6 +21,8 @@ use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\StreamContext;
 use Shahzad\AgenticGraph\Streaming\StreamOptions;
 use Shahzad\AgenticGraph\Streaming\StreamSession;
+use Shahzad\AgenticGraph\Tracing\ExecutionClock;
+use Shahzad\AgenticGraph\Tracing\TraceContext;
 
 class ExecuteGraphJob implements ShouldBeUnique, ShouldQueue
 {
@@ -64,22 +67,22 @@ class ExecuteGraphJob implements ShouldBeUnique, ShouldQueue
 
         // Set up tracing context for this job execution
         // This ensures all events dispatched during execution have proper trace context
-        $traceContext = new \Shahzad\AgenticGraph\Tracing\TraceContext(
+        $traceContext = new TraceContext(
             executionId: $this->executionId,
             rootSpanId: $this->rootSpanId ?? uniqid('span_', true)
         );
-        app()->instance(\Shahzad\AgenticGraph\Tracing\TraceContext::class, $traceContext);
+        app()->instance(TraceContext::class, $traceContext);
 
         // Set up execution clock for timing
         $jobStartMicrotime = microtime(true);
-        app()->instance(\Shahzad\AgenticGraph\Tracing\ExecutionClock::class, new \Shahzad\AgenticGraph\Tracing\ExecutionClock($this->executionId, $jobStartMicrotime));
+        app()->instance(ExecutionClock::class, new ExecutionClock($this->executionId, $jobStartMicrotime));
 
         // Set up execution context for loop tracking
-        $executionContext = new \Shahzad\AgenticGraph\Execution\ExecutionContext(
+        $executionContext = new ExecutionContext(
             executionId: $this->executionId,
             startTime: $jobStartMicrotime,
         );
-        app()->instance(\Shahzad\AgenticGraph\Execution\ExecutionContext::class, $executionContext);
+        app()->instance(ExecutionContext::class, $executionContext);
 
         try {
             $options = $this->executionOptions ?? new ExecutionOptions(ExecutionMode::ASYNC, StreamingMode::NONE);
@@ -104,9 +107,9 @@ class ExecuteGraphJob implements ShouldBeUnique, ShouldQueue
             }
         } finally {
             // Clean up container instances
-            app()->forgetInstance(\Shahzad\AgenticGraph\Tracing\TraceContext::class);
-            app()->forgetInstance(\Shahzad\AgenticGraph\Tracing\ExecutionClock::class);
-            app()->forgetInstance(\Shahzad\AgenticGraph\Execution\ExecutionContext::class);
+            app()->forgetInstance(TraceContext::class);
+            app()->forgetInstance(ExecutionClock::class);
+            app()->forgetInstance(ExecutionContext::class);
             app()->forgetInstance(StreamContext::class);
         }
     }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph\Middleware;
 
+use Illuminate\Contracts\Container\BindingResolutionException;
 use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Contracts\NodeInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
@@ -16,7 +17,7 @@ class LoggingMiddleware
         $traceContext = null;
         try {
             $traceContext = app(TraceContext::class);
-        } catch (\Illuminate\Contracts\Container\BindingResolutionException $e) {
+        } catch (BindingResolutionException $e) {
             // TraceContext not bound, tracing not active
         }
 

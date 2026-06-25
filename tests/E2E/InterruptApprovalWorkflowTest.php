@@ -7,10 +7,15 @@ use Shahzad\AgenticGraph\Contracts\StorageInterface;
 use Shahzad\AgenticGraph\Events\NodeInterrupted;
 use Shahzad\AgenticGraph\Events\NodeResumed;
 use Shahzad\AgenticGraph\Execution\Checkpoint;
+use Shahzad\AgenticGraph\Execution\ExecutionMode;
+use Shahzad\AgenticGraph\Execution\ExecutionOptions;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Execution\InterruptRecord;
+use Shahzad\AgenticGraph\Execution\StreamingMode;
 use Shahzad\AgenticGraph\Facades\AgenticGraph;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
+use Shahzad\AgenticGraph\Graph\GraphRegistry;
+use Shahzad\AgenticGraph\Jobs\ExecuteGraphJob;
 use Shahzad\AgenticGraph\Jobs\ResumeExecutionJob;
 use Shahzad\AgenticGraph\Nodes\PrismNode;
 use Shahzad\AgenticGraph\State\State;
@@ -102,7 +107,7 @@ it('executes full interrupt workflow with approval', function () {
         ->build();
 
     $executor = new GraphExecutor;
-    app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->register('approval-workflow', $graph);
+    app(GraphRegistry::class)->register('approval-workflow', $graph);
 
     $state = new State(['topic' => 'AI trends']);
 
@@ -144,7 +149,7 @@ it('executes full interrupt workflow with rejection', function () {
         ->build();
 
     $executor = new GraphExecutor;
-    app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->register('approval-workflow-rejection', $graph);
+    app(GraphRegistry::class)->register('approval-workflow-rejection', $graph);
 
     $state = new State(['topic' => 'Controversial topic']);
 
@@ -182,7 +187,7 @@ it('throws exception when resuming non-interrupt checkpoint', function () {
         ->addExitPoint('step2')
         ->build();
 
-    app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->register('regular-workflow', $graph);
+    app(GraphRegistry::class)->register('regular-workflow', $graph);
 
     // Manually create a regular checkpoint (not interrupted)
     $checkpoint = new Checkpoint;
@@ -192,20 +197,20 @@ it('throws exception when resuming non-interrupt checkpoint', function () {
     $checkpoint->state = new State(['data' => 'test']);
     $checkpoint->currentNode = 'step1';
     $checkpoint->metadata = []; // No 'interrupted' flag
-    $checkpoint->createdAt = new \DateTimeImmutable;
+    $checkpoint->createdAt = new DateTimeImmutable;
 
     $storage = app(StorageInterface::class);
     $checkpointId = $storage->save($checkpoint);
 
     expect(fn () => $executor->resumeWithInput($checkpointId, []))
-        ->toThrow(\InvalidArgumentException::class, 'not an interrupt checkpoint');
+        ->toThrow(InvalidArgumentException::class, 'not an interrupt checkpoint');
 });
 
 it('throws exception when checkpoint not found', function () {
     $executor = new GraphExecutor;
 
     expect(fn () => $executor->resumeWithInput('non-existent-checkpoint-id-12345', []))
-        ->toThrow(\RuntimeException::class, 'not found');
+        ->toThrow(RuntimeException::class, 'not found');
 });
 
 it('dispatches interrupt and resume events during execution', function () {
@@ -222,7 +227,7 @@ it('dispatches interrupt and resume events during execution', function () {
         ->build();
 
     $executor = new GraphExecutor;
-    app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->register('event-test-workflow', $graph);
+    app(GraphRegistry::class)->register('event-test-workflow', $graph);
 
     $state = new State(['topic' => 'Event testing']);
 
@@ -326,15 +331,15 @@ it('resumes interrupt via facade using execution id on async execution', functio
     $handle = AgenticGraph::execute(
         'approval-workflow-resume-id',
         new State(['topic' => 'Facade']),
-        new \Shahzad\AgenticGraph\Execution\ExecutionOptions(
-            mode: \Shahzad\AgenticGraph\Execution\ExecutionMode::ASYNC,
-            streaming: \Shahzad\AgenticGraph\Execution\StreamingMode::NONE,
+        new ExecutionOptions(
+            mode: ExecutionMode::ASYNC,
+            streaming: StreamingMode::NONE,
         )
     );
     $executionId = $handle->id();
 
     $job = null;
-    Bus::assertDispatched(\Shahzad\AgenticGraph\Jobs\ExecuteGraphJob::class, function ($dispatched) use ($executionId, &$job): bool {
+    Bus::assertDispatched(ExecuteGraphJob::class, function ($dispatched) use ($executionId, &$job): bool {
         if ($dispatched->executionId !== $executionId) {
             return false;
         }
@@ -342,7 +347,7 @@ it('resumes interrupt via facade using execution id on async execution', functio
 
         return true;
     });
-    $job->handle(app(GraphExecutor::class), app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class));
+    $job->handle(app(GraphExecutor::class), app(GraphRegistry::class));
 
     $pending = InterruptRecord::query()
         ->forExecution($executionId)
@@ -387,7 +392,7 @@ it('exposes pending interrupt on the execution handle', function () {
 
 it('throws helpful error when execution handle resume finds no interrupt checkpoint', function () {
     expect(fn () => AgenticGraph::getExecution('missing-exec-id')->resume([]))
-        ->toThrow(\RuntimeException::class, 'No interrupt checkpoint found for execution.');
+        ->toThrow(RuntimeException::class, 'No interrupt checkpoint found for execution.');
 });
 
 it('throws helpful error when checkpoint is not an interrupt checkpoint', function () {
@@ -408,11 +413,11 @@ it('throws helpful error when checkpoint is not an interrupt checkpoint', functi
     $checkpoint->state = new State(['data' => 'test']);
     $checkpoint->currentNode = 'step1';
     $checkpoint->metadata = [];
-    $checkpoint->createdAt = new \DateTimeImmutable;
+    $checkpoint->createdAt = new DateTimeImmutable;
 
     $storage = app(StorageInterface::class);
     $storage->save($checkpoint);
 
     expect(fn () => app(GraphExecutor::class)->resumeWithInput($checkpoint->id, []))
-        ->toThrow(\InvalidArgumentException::class, 'Use the checkpoint id from State::getInterruptCheckpointId()');
+        ->toThrow(InvalidArgumentException::class, 'Use the checkpoint id from State::getInterruptCheckpointId()');
 });

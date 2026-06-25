@@ -9,6 +9,7 @@ use Shahzad\AgenticGraph\Execution\ExecutionStore;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Execution\LoopLimitExceededException;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
+use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
 use Shahzad\AgenticGraph\Routers\AbstractRouter;
 use Shahzad\AgenticGraph\State\State;
@@ -51,14 +52,14 @@ it('dispatches GraphExecutionFailed exactly once when loop guard trips', functio
         ->addExitPoint('end')
         ->build();
 
-    app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->register('loop-limit-failed-once', $graph);
+    app(GraphRegistry::class)->register('loop-limit-failed-once', $graph);
 
     $executor = new GraphExecutor;
     $executionId = 'exec_loop_limit_'.Str::uuid();
 
     try {
         $executor->execute(
-            app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->get('loop-limit-failed-once'),
+            app(GraphRegistry::class)->get('loop-limit-failed-once'),
             new State,
             executionId: $executionId
         );

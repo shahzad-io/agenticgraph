@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph\Mcp;
 
+use Illuminate\Contracts\Container\BindingResolutionException;
 use Illuminate\Contracts\Events\Dispatcher;
 use Prism\Prism\Text\PendingRequest as PendingTextRequest;
 use Shahzad\AgenticGraph\Events\TokensUsed;
@@ -76,7 +77,7 @@ final class McpRequest
         $traceContext = null;
         try {
             $traceContext = app(TraceContext::class);
-        } catch (\Illuminate\Contracts\Container\BindingResolutionException $e) {
+        } catch (BindingResolutionException $e) {
             // TraceContext not bound, tracing not active
             return;
         }

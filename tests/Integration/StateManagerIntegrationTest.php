@@ -7,6 +7,8 @@ use Shahzad\AgenticGraph\Execution\Checkpoint;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\State\StateManager;
 use Shahzad\AgenticGraph\Storage\DatabaseStorage;
+use Shahzad\AgenticGraph\Storage\FileStorage;
+use Shahzad\AgenticGraph\Storage\RedisStorage;
 
 uses()->group('integration');
 
@@ -194,8 +196,8 @@ describe('storage integration', function () {
         $configuredDriver = config('agenticgraph.storage', 'database');
 
         $expectedClass = match ($configuredDriver) {
-            'redis' => \Shahzad\AgenticGraph\Storage\RedisStorage::class,
-            'file' => \Shahzad\AgenticGraph\Storage\FileStorage::class,
+            'redis' => RedisStorage::class,
+            'file' => FileStorage::class,
             default => DatabaseStorage::class,
         };
 

@@ -7,6 +7,7 @@ use Illuminate\Support\Str;
 use Shahzad\AgenticGraph\Contracts\ParallelExecutorInterface;
 use Shahzad\AgenticGraph\Contracts\RouterInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Execution\Checkpoint;
 use Shahzad\AgenticGraph\Execution\CheckpointManager;
 use Shahzad\AgenticGraph\Execution\ExecutionMode;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
@@ -241,7 +242,7 @@ it('does not increment the frequency counter on forced interrupt saves', functio
     $executionId = (string) Str::uuid();
     app(ExecutionRepository::class)->queued($executionId, 'counter-test', []);
 
-    $checkpoint = new \Shahzad\AgenticGraph\Execution\Checkpoint;
+    $checkpoint = new Checkpoint;
     $checkpoint->graphName = 'counter-test';
     $checkpoint->currentNode = 'review';
     $checkpoint->state = new State;

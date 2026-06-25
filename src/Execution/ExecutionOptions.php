@@ -121,7 +121,6 @@ final class ExecutionOptions
 
     /**
      * @param  array<int, mixed>|null  $value
-     *
      * @return list<string>|null
      */
     private static function normalizeStringListFromMixed(?array $value): ?array

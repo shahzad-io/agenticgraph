@@ -3,6 +3,7 @@
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
+use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Storage\DatabaseStorage;
@@ -53,7 +54,7 @@ it('pauses on human review and resumes to completion', function () {
         ->build();
 
     $executor = new GraphExecutor;
-    app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->register('human_review', $graph);
+    app(GraphRegistry::class)->register('human_review', $graph);
     $state = new State(['message' => 'Complex billing issue']);
     $result = $executor->executeUntil($graph, $state, fn ($s) => $s->get('needs_review') === true);
     expect($result['checkpointId'])->not()->toBeNull();

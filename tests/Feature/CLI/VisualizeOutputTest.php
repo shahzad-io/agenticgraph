@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Artisan;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
+use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
 
 class VizNode extends AbstractNode
@@ -21,7 +22,7 @@ it('writes mermaid output to file', function () {
         ->setEntryPoint('start')
         ->addExitPoint('end')
         ->build();
-    app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->register('viz-file', $graph);
+    app(GraphRegistry::class)->register('viz-file', $graph);
     $path = sys_get_temp_dir().'/agenticgraph-viz.mmd';
     @unlink($path);
     $code = Artisan::call('agenticgraph:visualize', ['name' => 'viz-file', '--output' => $path]);

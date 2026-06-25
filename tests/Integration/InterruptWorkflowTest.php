@@ -11,6 +11,8 @@ use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Execution\InterruptRecord;
 use Shahzad\AgenticGraph\Facades\AgenticGraph;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
+use Shahzad\AgenticGraph\Graph\GraphRegistry;
+use Shahzad\AgenticGraph\Nodes\AbstractNode;
 use Shahzad\AgenticGraph\Nodes\PrismNode;
 use Shahzad\AgenticGraph\State\State;
 
@@ -168,7 +170,7 @@ it('node resumed event is dispatched correctly', function () {
 
 it('non-prism nodes do not interrupt', function () {
     // Create a simple non-PrismNode
-    $node = new class extends \Shahzad\AgenticGraph\Nodes\AbstractNode
+    $node = new class extends AbstractNode
     {
         public function execute(StateContract $state): StateContract
         {
@@ -225,7 +227,7 @@ it('persists interrupt records with payload data', function () {
         ->build();
 
     $executor = new GraphExecutor;
-    app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->register('interrupt-payload-graph', $graph);
+    app(GraphRegistry::class)->register('interrupt-payload-graph', $graph);
 
     $state = new State(['topic' => 'Payload']);
     $result = $executor->execute($graph, $state);
@@ -252,7 +254,7 @@ it('returns interrupt status with latest state', function () {
         ->addExitPoint('review')
         ->build();
 
-    app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->register('interrupt-status-graph', $graph);
+    app(GraphRegistry::class)->register('interrupt-status-graph', $graph);
 
     $state = new State(['topic' => 'Status']);
     $handle = AgenticGraph::execute('interrupt-status-graph', $state);
@@ -297,7 +299,7 @@ it('dispatches interrupt pending event when interrupt is persisted', function ()
         ->build();
 
     $executor = new GraphExecutor;
-    app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->register('interrupt-pending-graph', $graph);
+    app(GraphRegistry::class)->register('interrupt-pending-graph', $graph);
 
     $state = new State(['topic' => 'Pending']);
     $result = $executor->execute($graph, $state);

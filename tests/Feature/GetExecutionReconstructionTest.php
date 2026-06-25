@@ -8,6 +8,7 @@ use Shahzad\AgenticGraph\Events\NodeInterrupted;
 use Shahzad\AgenticGraph\Execution\ExecutionMode;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
 use Shahzad\AgenticGraph\Execution\ExecutionStatus;
+use Shahzad\AgenticGraph\Execution\ExecutionStore;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Execution\NotYetCompleteException;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
@@ -232,7 +233,7 @@ it('reconstructs interrupts false from persisted execution_options', function ()
 
     AgenticGraph::getExecution($handle->id());
 
-    $record = app(\Shahzad\AgenticGraph\Execution\ExecutionStore::class)->get($handle->id());
+    $record = app(ExecutionStore::class)->get($handle->id());
 
     expect($record)->not->toBeNull()
         ->and($record->executionOptions)->toEqual($expected)

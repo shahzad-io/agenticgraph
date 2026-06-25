@@ -1,12 +1,14 @@
 <?php
 
 use Illuminate\Contracts\Broadcasting\Broadcaster;
+use Illuminate\Contracts\Container\BindingResolutionException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Str;
 use Prism\Prism\Streaming\Events\TextCompleteEvent;
 use Prism\Prism\Streaming\Events\TextDeltaEvent;
 use Prism\Prism\Streaming\Events\TextStartEvent;
+use Prism\Prism\Streaming\Events\ToolCallEvent;
 use Prism\Prism\Text\PendingRequest as PendingTextRequest;
 use Prism\Prism\ValueObjects\ToolCall;
 use Shahzad\AgenticGraph\Contracts\RouterInterface;
@@ -29,10 +31,10 @@ use Shahzad\AgenticGraph\Streaming\NodeStreamAccumulator;
 use Shahzad\AgenticGraph\Streaming\PrismStreamAdapter;
 use Shahzad\AgenticGraph\Streaming\Sinks\BroadcastSink;
 use Shahzad\AgenticGraph\Streaming\Sinks\MemorySink;
-use Shahzad\AgenticGraph\Streaming\StreamEventEnvelope;
 use Shahzad\AgenticGraph\Streaming\Store\DatabaseStreamStore;
 use Shahzad\AgenticGraph\Streaming\Store\RedisStreamStore;
 use Shahzad\AgenticGraph\Streaming\StreamContext;
+use Shahzad\AgenticGraph\Streaming\StreamEventEnvelope;
 use Shahzad\AgenticGraph\Streaming\StreamOptions;
 use Shahzad\AgenticGraph\Streaming\StreamSession;
 use Shahzad\AgenticGraph\Streaming\StreamStatus;
@@ -200,7 +202,7 @@ class IntegrationStreamingNode extends PrismNode
             $traceContext = null;
             try {
                 $traceContext = app(TraceContext::class);
-            } catch (\Illuminate\Contracts\Container\BindingResolutionException) {
+            } catch (BindingResolutionException) {
             }
 
             $adapter = new PrismStreamAdapter(
@@ -266,13 +268,13 @@ it('streams prism node events into the stream store', function () {
         new TextDeltaEvent('evt-2', 101, 'Hello ', 'msg-1'),
         new TextDeltaEvent('evt-3', 102, 'world', 'msg-1'),
         new TextCompleteEvent('evt-4', 103, 'msg-1'),
-        new \Prism\Prism\Streaming\Events\ToolCallEvent(
+        new ToolCallEvent(
             'evt-5',
             104,
             new ToolCall('tool-1', 'search', ['query' => 'a']),
             'msg-1'
         ),
-        new \Prism\Prism\Streaming\Events\ToolCallEvent(
+        new ToolCallEvent(
             'evt-6',
             105,
             new ToolCall('tool-2', 'lookup', ['query' => 'b']),

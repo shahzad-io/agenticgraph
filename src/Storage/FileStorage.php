@@ -213,7 +213,7 @@ class FileStorage implements StorageInterface
         $c->id = $data['id'] ?? '';
         $c->graphName = $data['graph_name'] ?? '';
         $c->executionId = $data['execution_id'] ?? '';
-        $c->state = \Shahzad\AgenticGraph\State\State::fromArray($data['state'] ?? []);
+        $c->state = State::fromArray($data['state'] ?? []);
         $c->currentNode = $data['current_node'] ?? '';
         $c->completedNodes = $data['completed_nodes'] ?? [];
         $c->pendingNodes = $data['pending_nodes'] ?? [];

@@ -1,7 +1,9 @@
 <?php
 
+use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
+use Shahzad\AgenticGraph\Nodes\AbstractNode;
 
 it('registers and retrieves graphs', function () {
     $registry = app(GraphRegistry::class);
@@ -20,9 +22,9 @@ it('registers and retrieves graphs', function () {
         ->and($registry->count())->toBeGreaterThan(0);
 });
 
-class GraphRegistryTestNode extends \Shahzad\AgenticGraph\Nodes\AbstractNode
+class GraphRegistryTestNode extends AbstractNode
 {
-    public function execute(\Shahzad\AgenticGraph\Contracts\StateContract $state): \Shahzad\AgenticGraph\Contracts\StateContract
+    public function execute(StateContract $state): StateContract
     {
         return $state;
     }

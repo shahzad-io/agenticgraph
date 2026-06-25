@@ -2,11 +2,9 @@
 
 use Illuminate\Support\Facades\Bus;
 use Shahzad\AgenticGraph\Contracts\StateContract;
-use Shahzad\AgenticGraph\Execution\ExecutionMode;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
 use Shahzad\AgenticGraph\Execution\ExecutionStatus;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
-use Shahzad\AgenticGraph\Execution\StreamingMode;
 use Shahzad\AgenticGraph\Facades\AgenticGraph;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
@@ -16,6 +14,7 @@ use Shahzad\AgenticGraph\Nodes\PrismNode;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
 use Shahzad\AgenticGraph\Streaming\StreamLifecycleEventTypes;
+use Shahzad\AgenticGraph\Streaming\StreamOptions;
 
 class FilterStreamNodeA extends AbstractNode
 {
@@ -100,7 +99,7 @@ function registerFilterStreamGraph(string $name, bool $interruptAtB = false): vo
 /**
  * @return list<string>
  */
-function textDeltaNodeNamesFromInline(?\Iterator $inline): array
+function textDeltaNodeNamesFromInline(?Iterator $inline): array
 {
     $events = iterator_to_array($inline ?? new ArrayIterator([]));
 
@@ -116,7 +115,7 @@ function textDeltaNodeNamesFromInline(?\Iterator $inline): array
 /**
  * @return list<string>
  */
-function textDeltaEventTypesFromInline(?\Iterator $inline): array
+function textDeltaEventTypesFromInline(?Iterator $inline): array
 {
     $events = iterator_to_array($inline ?? new ArrayIterator([]));
 
@@ -294,7 +293,7 @@ it('builds stream options with filters from execution options', function () {
         eventTypeFilter: ['text_delta'],
     );
 
-    $streamOptions = \Shahzad\AgenticGraph\Streaming\StreamOptions::fromExecution(
+    $streamOptions = StreamOptions::fromExecution(
         $options,
         delivery: 'iterator',
     );

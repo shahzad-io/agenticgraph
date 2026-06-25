@@ -91,7 +91,7 @@ it('flags spans outside the trace window', function () {
         }
     };
 
-    $traceStart = new \DateTimeImmutable('2026-01-31T22:00:53+00:00');
+    $traceStart = new DateTimeImmutable('2026-01-31T22:00:53+00:00');
     $trace = [
         'started_at' => $traceStart->format(DATE_ATOM),
         'ended_at' => $traceStart->modify('+7 seconds')->format(DATE_ATOM),

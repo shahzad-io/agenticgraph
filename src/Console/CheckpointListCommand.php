@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace Shahzad\AgenticGraph\Console;
 
 use Illuminate\Console\Command;
+use Shahzad\AgenticGraph\Storage\DatabaseStorage;
+use Shahzad\AgenticGraph\Storage\FileStorage;
+use Shahzad\AgenticGraph\Storage\RedisStorage;
 
 class CheckpointListCommand extends Command
 {
@@ -17,9 +20,9 @@ class CheckpointListCommand extends Command
         $graph = $this->option('graph') ?? '';
         $limit = (int) $this->option('limit');
         $storage = match (config('agenticgraph.storage')) {
-            'redis' => app(\Shahzad\AgenticGraph\Storage\RedisStorage::class),
-            'file' => app(\Shahzad\AgenticGraph\Storage\FileStorage::class),
-            default => app(\Shahzad\AgenticGraph\Storage\DatabaseStorage::class),
+            'redis' => app(RedisStorage::class),
+            'file' => app(FileStorage::class),
+            default => app(DatabaseStorage::class),
         };
         $list = $storage->list($graph, $limit);
         foreach ($list as $id) {

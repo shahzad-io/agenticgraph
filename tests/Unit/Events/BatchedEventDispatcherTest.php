@@ -21,7 +21,7 @@ class TestBatchableEvent implements BatchableEventInterface
     public function merge(BatchableEventInterface $other): self
     {
         if (! $other instanceof self) {
-            throw new \InvalidArgumentException('Cannot merge with different event type');
+            throw new InvalidArgumentException('Cannot merge with different event type');
         }
 
         return new self(
@@ -227,12 +227,12 @@ describe('event merging', function () {
         // Create incompatible mock
         $incompatible = Mockery::mock(BatchableEventInterface::class);
         $incompatible->shouldReceive('getBatchKey')->andReturn('test:key');
-        $incompatible->shouldReceive('merge')->andThrow(new \InvalidArgumentException('Incompatible types'));
+        $incompatible->shouldReceive('merge')->andThrow(new InvalidArgumentException('Incompatible types'));
 
         $this->dispatcher->dispatch($event1);
 
         expect(fn () => $this->dispatcher->dispatch($incompatible))
-            ->toThrow(\InvalidArgumentException::class);
+            ->toThrow(InvalidArgumentException::class);
     });
 
 });

@@ -221,7 +221,7 @@ describe('state size validation', function () {
         $checkpoint->state = new State(['data' => str_repeat('x', 200)]);
 
         expect(fn () => $manager->save('exec-123', $checkpoint))
-            ->toThrow(\RuntimeException::class, 'exceeds maximum');
+            ->toThrow(RuntimeException::class, 'exceeds maximum');
     });
 
     it('allows state within size limit', function () {

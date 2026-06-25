@@ -1,6 +1,7 @@
 <?php
 
 use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Execution\ExecutionHandle;
 use Shahzad\AgenticGraph\Execution\ExecutionMode;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
 use Shahzad\AgenticGraph\Execution\ExecutionStatus;
@@ -58,7 +59,7 @@ function registerAccessorGraph(string $name, string $nodeClass): void
 }
 
 function assertInterruptedHandleAccessors(
-    \Shahzad\AgenticGraph\Execution\ExecutionHandle $handle,
+    ExecutionHandle $handle,
     InterruptRecord $record
 ): void {
     expect($handle->isInterrupted())->toBeTrue()

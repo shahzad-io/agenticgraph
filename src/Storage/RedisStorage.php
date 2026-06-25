@@ -7,6 +7,7 @@ namespace Shahzad\AgenticGraph\Storage;
 use Illuminate\Support\Facades\Redis;
 use Shahzad\AgenticGraph\Contracts\StorageInterface;
 use Shahzad\AgenticGraph\Execution\Checkpoint;
+use Shahzad\AgenticGraph\State\State;
 
 class RedisStorage implements StorageInterface
 {
@@ -47,7 +48,7 @@ class RedisStorage implements StorageInterface
         $c->id = $data['id'] ?? $id;
         $c->graphName = $data['graph_name'] ?? '';
         $c->executionId = $data['execution_id'] ?? '';
-        $c->state = \Shahzad\AgenticGraph\State\State::fromArray($data['state'] ?? []);
+        $c->state = State::fromArray($data['state'] ?? []);
         $c->currentNode = $data['current_node'] ?? '';
         $c->completedNodes = $data['completed_nodes'] ?? [];
         $c->pendingNodes = $data['pending_nodes'] ?? [];

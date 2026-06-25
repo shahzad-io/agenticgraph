@@ -13,11 +13,7 @@ use Shahzad\AgenticGraph\Streaming\StreamStatus;
  */
 final class NullTransportSink implements StreamSinkInterface
 {
-    public function emit(StreamEvent $event): void
-    {
-    }
+    public function emit(StreamEvent $event): void {}
 
-    public function close(StreamStatus $status, mixed $meta = null): void
-    {
-    }
+    public function close(StreamStatus $status, mixed $meta = null): void {}
 }

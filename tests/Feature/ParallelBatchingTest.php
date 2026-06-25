@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Mockery;
 use Psr\Log\LoggerInterface;
+use Shahzad\AgenticGraph\Contracts\RouterInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Contracts\StorageInterface;
 use Shahzad\AgenticGraph\Execution\CheckpointManager;
@@ -16,6 +17,7 @@ use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Execution\ParallelExecutionCoordinator;
 use Shahzad\AgenticGraph\Execution\RoutingEngine;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
+use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Jobs\ContinueExecutionJob;
 use Shahzad\AgenticGraph\Jobs\ExecuteGraphJob;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
@@ -50,9 +52,9 @@ it('uses Bus::batch for parallel execution', function () {
         ->addNode('branch1', PBNode::class)
         ->addNode('branch2', PBNode::class)
         ->addNode('end', PBNode::class)
-        ->addConditionalEdge('start', new class implements \Shahzad\AgenticGraph\Contracts\RouterInterface
+        ->addConditionalEdge('start', new class implements RouterInterface
         {
-            public function route(\Shahzad\AgenticGraph\Contracts\StateContract $state): string|array
+            public function route(StateContract $state): string|array
             {
                 return ['branch1', 'branch2'];
             }
@@ -77,9 +79,9 @@ it('uses Bus::batch for parallel execution', function () {
         ->setEntryPoint('start')
         ->addExitPoint('end')
         ->build();
-    app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->register('parallel-batch', $graph);
+    app(GraphRegistry::class)->register('parallel-batch', $graph);
     $job = new ExecuteGraphJob('parallel-batch', 'exec-batch', (new State)->toArray());
-    $job->handle(new GraphExecutor, app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class));
+    $job->handle(new GraphExecutor, app(GraphRegistry::class));
     Bus::assertBatched(fn ($batch) => $batch->jobs->count() === 2);
 });
 
@@ -92,9 +94,9 @@ it('dispatches continuation job after batch completion', function () {
         ->addNode('branch1', PBNode::class)
         ->addNode('branch2', PBNode::class)
         ->addNode('end', PBNode::class)
-        ->addConditionalEdge('start', new class implements \Shahzad\AgenticGraph\Contracts\RouterInterface
+        ->addConditionalEdge('start', new class implements RouterInterface
         {
-            public function route(\Shahzad\AgenticGraph\Contracts\StateContract $state): string|array
+            public function route(StateContract $state): string|array
             {
                 return ['branch1', 'branch2'];
             }
@@ -121,7 +123,7 @@ it('dispatches continuation job after batch completion', function () {
         ->addExitPoint('end')
         ->build();
 
-    app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->register('parallel-batch-complete', $graph);
+    app(GraphRegistry::class)->register('parallel-batch-complete', $graph);
 
     $executionId = 'exec-batch-complete';
     Cache::put('agenticgraph:batch:'.$executionId.':branch1', (new State(['branch' => 1]))->toArray());

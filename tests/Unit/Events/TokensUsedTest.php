@@ -49,8 +49,8 @@ it('creates tokens event with execution clock when trace context missing', funct
     );
 
     expect($event->executionId)->toBe($executionId);
-    expect($event->startedAt)->toBeInstanceOf(\DateTimeImmutable::class);
-    expect($event->endedAt)->toBeInstanceOf(\DateTimeImmutable::class);
+    expect($event->startedAt)->toBeInstanceOf(DateTimeImmutable::class);
+    expect($event->endedAt)->toBeInstanceOf(DateTimeImmutable::class);
     expect($event->endedAt->getTimestamp())->toBeGreaterThanOrEqual($event->startedAt->getTimestamp());
 
     app()->forgetInstance(ExecutionClock::class);

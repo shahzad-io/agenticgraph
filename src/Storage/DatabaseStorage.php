@@ -50,7 +50,7 @@ class DatabaseStorage implements StorageInterface
         $c->id = $row->id;
         $c->graphName = $row->graph_name;
         $c->executionId = $row->execution_id;
-        $c->state = \Shahzad\AgenticGraph\State\State::fromArray(json_decode($row->state, true) ?? []);
+        $c->state = State::fromArray(json_decode($row->state, true) ?? []);
         $c->currentNode = $row->current_node;
         $c->completedNodes = json_decode($row->completed_nodes, true) ?? [];
         $c->pendingNodes = json_decode($row->pending_nodes, true) ?? [];
@@ -74,7 +74,7 @@ class DatabaseStorage implements StorageInterface
         $c->id = $row->id;
         $c->graphName = $row->graph_name;
         $c->executionId = $row->execution_id;
-        $c->state = \Shahzad\AgenticGraph\State\State::fromArray(json_decode($row->state, true) ?? []);
+        $c->state = State::fromArray(json_decode($row->state, true) ?? []);
         $c->currentNode = $row->current_node;
         $c->completedNodes = json_decode($row->completed_nodes, true) ?? [];
         $c->pendingNodes = json_decode($row->pending_nodes, true) ?? [];

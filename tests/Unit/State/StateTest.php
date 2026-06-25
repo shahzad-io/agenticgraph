@@ -93,7 +93,7 @@ it('handles merge conflicts with nested arrays', function () {
 });
 
 it('handles merging with objects that implement JsonSerializable', function () {
-    $obj = new class implements \JsonSerializable
+    $obj = new class implements JsonSerializable
     {
         public function jsonSerialize(): mixed
         {

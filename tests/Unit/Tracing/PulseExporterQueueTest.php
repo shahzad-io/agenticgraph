@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
 
@@ -50,7 +51,7 @@ it('dispatches trace after response in HTTP context', function () {
     ]);
 
     // Simulate HTTP context by binding a request
-    $request = \Illuminate\Http\Request::create('/test', 'GET');
+    $request = Request::create('/test', 'GET');
     app()->instance('request', $request);
 
     $exporter = new PulseExporter;

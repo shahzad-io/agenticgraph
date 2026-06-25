@@ -5,12 +5,14 @@ use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Laravel\SerializableClosure\SerializableClosure;
 use Laravel\SerializableClosure\UnsignedSerializableClosure;
+use Shahzad\AgenticGraph\Contracts\RouterInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Contracts\StorageInterface;
 use Shahzad\AgenticGraph\Execution\ExecutionRepository;
 use Shahzad\AgenticGraph\Execution\ExecutionStatus;
 use Shahzad\AgenticGraph\Execution\ParallelExecutionCoordinator;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
+use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Jobs\ContinueExecutionJob;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
 use Shahzad\AgenticGraph\State\State;
@@ -38,7 +40,7 @@ function registerP14ParallelGraph(string $name): void
         ->addNode('branch1', P14Branch::class)
         ->addNode('branch2', P14Branch::class)
         ->addNode('end', P14Branch::class)
-        ->addConditionalEdge('start', new class implements \Shahzad\AgenticGraph\Contracts\RouterInterface
+        ->addConditionalEdge('start', new class implements RouterInterface
         {
             public function route(StateContract $state): string|array
             {
@@ -67,13 +69,10 @@ function registerP14ParallelGraph(string $name): void
         ->addExitPoint('end')
         ->build();
 
-    app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->register($name, $graph);
+    app(GraphRegistry::class)->register($name, $graph);
 }
 
-/**
- * @return \Closure
- */
-function roundTripSerializableClosure(\Closure $closure): \Closure
+function roundTripSerializableClosure(Closure $closure): Closure
 {
     $wrapped = new SerializableClosure($closure);
     $serialized = serialize($wrapped);
@@ -91,7 +90,7 @@ afterEach(function () {
 
 it('cannot serialize batch callbacks that capture the live Graph object', function () {
     registerP14ParallelGraph('p14-nonserializable');
-    $graph = app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->get('p14-nonserializable');
+    $graph = app(GraphRegistry::class)->get('p14-nonserializable');
 
     $graphCapturing = static function (Batch $batch) use ($graph): void {
         unset($batch, $graph);
@@ -100,7 +99,7 @@ it('cannot serialize batch callbacks that capture the live Graph object', functi
     try {
         serialize(new UnsignedSerializableClosure($graphCapturing));
         expect(false)->toBeTrue('Expected graph-capturing callback serialization to fail');
-    } catch (\Throwable $exception) {
+    } catch (Throwable $exception) {
         expect($exception->getMessage())->toContain('not allowed');
     }
 });

@@ -143,8 +143,8 @@ it('routes streaming nodes through middleware and preserves output state', funct
     expect($handle->getFinalState()->get('marker'))->toBe('done');
 
     Event::assertDispatched(NodeExecutionTimed::class, fn (NodeExecutionTimed $event) => $event->node === $expectedNodeName);
-    Log::shouldHaveReceived('debug')->with('Executing node', \Mockery::any());
-    Log::shouldHaveReceived('debug')->with('Completed node', \Mockery::any());
+    Log::shouldHaveReceived('debug')->with('Executing node', Mockery::any());
+    Log::shouldHaveReceived('debug')->with('Completed node', Mockery::any());
 });
 
 it('does not retry streaming nodes after content emission (D27)', function () {

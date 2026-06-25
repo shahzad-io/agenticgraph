@@ -6,6 +6,7 @@ use Shahzad\AgenticGraph\Execution\ExecutionOptions;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
+use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Jobs\ContinueExecutionJob;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
 use Shahzad\AgenticGraph\State\State;
@@ -53,9 +54,9 @@ it('continues execution from a node', function () {
         ->setEntryPoint('a')
         ->addExitPoint('end')
         ->build();
-    app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->register('ce-graph', $graph);
+    app(GraphRegistry::class)->register('ce-graph', $graph);
     $job = new ContinueExecutionJob('ce-graph', 'exec-2', (new State)->toArray(), 'a');
-    $job->handle(new GraphExecutor, app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class));
+    $job->handle(new GraphExecutor, app(GraphRegistry::class));
     $list = (new DatabaseStorage)->list('ce-graph');
     expect($list)->not()->toBeEmpty();
 });
@@ -68,7 +69,7 @@ it('uses provided stream id for streaming', function () {
         ->setEntryPoint('a')
         ->addExitPoint('a')
         ->build();
-    app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->register('ce-stream-id', $graph);
+    app(GraphRegistry::class)->register('ce-stream-id', $graph);
 
     $streamId = uniqid('stream_', true);
     $options = new ExecutionOptions(mode: ExecutionMode::ASYNC, streaming: StreamingMode::ITERATOR);
@@ -83,7 +84,7 @@ it('uses provided stream id for streaming', function () {
         $streamId,
         0
     );
-    $job->handle(new GraphExecutor, app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class));
+    $job->handle(new GraphExecutor, app(GraphRegistry::class));
 
     $store = app(StreamStoreInterface::class);
     $events = iterator_to_array($store->readFrom($streamId, 1, 5));
@@ -100,7 +101,7 @@ it('continues sequence correctly', function () {
         ->setEntryPoint('a')
         ->addExitPoint('a')
         ->build();
-    app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->register('ce-seq', $graph);
+    app(GraphRegistry::class)->register('ce-seq', $graph);
 
     $streamId = uniqid('stream_', true);
     $options = new ExecutionOptions(mode: ExecutionMode::ASYNC, streaming: StreamingMode::ITERATOR);
@@ -115,7 +116,7 @@ it('continues sequence correctly', function () {
         $streamId,
         7
     );
-    $job->handle(new GraphExecutor, app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class));
+    $job->handle(new GraphExecutor, app(GraphRegistry::class));
 
     $store = app(StreamStoreInterface::class);
     $events = iterator_to_array($store->readFrom($streamId, 8, 5));
@@ -132,7 +133,7 @@ it('emits stream resume event', function () {
         ->setEntryPoint('a')
         ->addExitPoint('a')
         ->build();
-    app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->register('ce-resume', $graph);
+    app(GraphRegistry::class)->register('ce-resume', $graph);
 
     $streamId = uniqid('stream_', true);
     $options = new ExecutionOptions(mode: ExecutionMode::ASYNC, streaming: StreamingMode::ITERATOR);
@@ -154,7 +155,7 @@ it('emits stream resume event', function () {
         5,
         $resumePayload
     );
-    $job->handle(new GraphExecutor, app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class));
+    $job->handle(new GraphExecutor, app(GraphRegistry::class));
 
     $store = app(StreamStoreInterface::class);
     $events = iterator_to_array($store->readFrom($streamId, 6, 10));

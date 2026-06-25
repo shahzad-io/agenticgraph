@@ -10,6 +10,7 @@ use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
 use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
 use Shahzad\AgenticGraph\Streaming\RetentionPolicyFactory;
 use Shahzad\AgenticGraph\Streaming\Sinks\MemorySink;
+use Shahzad\AgenticGraph\Streaming\Sinks\NullTransportSink;
 use Shahzad\AgenticGraph\Streaming\Sinks\RateLimitedSink;
 use Shahzad\AgenticGraph\Streaming\StreamClock;
 use Shahzad\AgenticGraph\Streaming\StreamErrorDecision;
@@ -125,7 +126,7 @@ test('wrapped sink emits stream_error on redis store failure', function () {
             throw new RuntimeException('Redis connection lost');
         }
 
-        public function readFrom(string $streamId, int $fromSeq, int $limit = 200): \Generator
+        public function readFrom(string $streamId, int $fromSeq, int $limit = 200): Generator
         {
             if (false) {
                 yield $streamId;
@@ -200,7 +201,7 @@ test('wrapped sink treats store failure as fatal when configured', function () {
             throw new RuntimeException('Database connection lost');
         }
 
-        public function readFrom(string $streamId, int $fromSeq, int $limit = 200): \Generator
+        public function readFrom(string $streamId, int $fromSeq, int $limit = 200): Generator
         {
             if (false) {
                 yield $streamId;
@@ -272,7 +273,7 @@ test('wrapped sink emits stream_error on database store failure', function () {
             throw new RuntimeException('Database connection lost');
         }
 
-        public function readFrom(string $streamId, int $fromSeq, int $limit = 200): \Generator
+        public function readFrom(string $streamId, int $fromSeq, int $limit = 200): Generator
         {
             if (false) {
                 yield $streamId;
@@ -338,7 +339,7 @@ test('wrapped sink emits stream_error on database store failure', function () {
 });
 
 test('wrapped sink handles client disconnect mid-stream', function () {
-    $baseSink = new class implements \Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface
+    $baseSink = new class implements StreamSinkInterface
     {
         public array $events = [];
 
@@ -427,7 +428,7 @@ test('wrapped sink enforces retention and emits metrics on close', function () {
             $this->events[] = $event;
         }
 
-        public function readFrom(string $streamId, int $fromSeq, int $limit = 200): \Generator
+        public function readFrom(string $streamId, int $fromSeq, int $limit = 200): Generator
         {
             if (false) {
                 yield $streamId;
@@ -504,7 +505,7 @@ test('wrapped sink applies retention metrics and error handling in order', funct
             $this->order[] = 'append';
         }
 
-        public function readFrom(string $streamId, int $fromSeq, int $limit = 200): \Generator
+        public function readFrom(string $streamId, int $fromSeq, int $limit = 200): Generator
         {
             if (false) {
                 yield $streamId;
@@ -604,7 +605,7 @@ test('wrapped sink applies retention metrics and error handling in order', funct
             throw new RuntimeException('Store failure');
         }
 
-        public function readFrom(string $streamId, int $fromSeq, int $limit = 200): \Generator
+        public function readFrom(string $streamId, int $fromSeq, int $limit = 200): Generator
         {
             if (false) {
                 yield $streamId;
@@ -764,7 +765,7 @@ test('wrapped sink with sse delivery uses null transport sink', function () {
         new StreamErrorHandler
     );
     $baseSink = $factory->create($session, $options);
-    expect($baseSink)->toBeInstanceOf(\Shahzad\AgenticGraph\Streaming\Sinks\NullTransportSink::class);
+    expect($baseSink)->toBeInstanceOf(NullTransportSink::class);
 
     $wrapped = $factory->wrap($baseSink, $options, $session);
 
@@ -930,7 +931,7 @@ test('wrapped stream sink handles nonfatal store failure without rethrowing', fu
             throw new RuntimeException('Store failure');
         }
 
-        public function readFrom(string $streamId, int $fromSeq, int $limit = 200): \Generator
+        public function readFrom(string $streamId, int $fromSeq, int $limit = 200): Generator
         {
             if (false) {
                 yield $streamId;
@@ -948,7 +949,7 @@ test('wrapped stream sink handles nonfatal store failure without rethrowing', fu
     $observer = new StreamObserver(new StreamMetrics, 'stream-store', 'exec-store', (float) time());
     $errorHandler = new class extends StreamErrorHandler
     {
-        public function decide(\Throwable $error, StreamEvent $event, string $stage): StreamErrorDecision
+        public function decide(Throwable $error, StreamEvent $event, string $stage): StreamErrorDecision
         {
             return new StreamErrorDecision(false, new StreamErrorPayload(
                 errorType: $error::class,
@@ -999,7 +1000,7 @@ test('wrapped stream sink handles fatal store failure by rethrowing', function (
             throw new RuntimeException('Store failure');
         }
 
-        public function readFrom(string $streamId, int $fromSeq, int $limit = 200): \Generator
+        public function readFrom(string $streamId, int $fromSeq, int $limit = 200): Generator
         {
             if (false) {
                 yield $streamId;
@@ -1017,7 +1018,7 @@ test('wrapped stream sink handles fatal store failure by rethrowing', function (
     $observer = new StreamObserver(new StreamMetrics, 'stream-store-fatal', 'exec-store-fatal', (float) time());
     $errorHandler = new class extends StreamErrorHandler
     {
-        public function decide(\Throwable $error, StreamEvent $event, string $stage): StreamErrorDecision
+        public function decide(Throwable $error, StreamEvent $event, string $stage): StreamErrorDecision
         {
             return new StreamErrorDecision(true, new StreamErrorPayload(
                 errorType: $error::class,
@@ -1084,7 +1085,7 @@ test('wrapped stream sink handles sink failure correctly', function () {
     $observer = new StreamObserver(new StreamMetrics, 'stream-sink', 'exec-sink', (float) time());
     $errorHandler = new class extends StreamErrorHandler
     {
-        public function decide(\Throwable $error, StreamEvent $event, string $stage): StreamErrorDecision
+        public function decide(Throwable $error, StreamEvent $event, string $stage): StreamErrorDecision
         {
             return new StreamErrorDecision(false, new StreamErrorPayload(
                 errorType: $error::class,

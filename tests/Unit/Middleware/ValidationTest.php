@@ -37,7 +37,7 @@ class ValidatedState implements StateContract
     {
         $v = Validator::make($this->data, ['foo' => 'required|string']);
         if ($v->fails()) {
-            throw new \Shahzad\AgenticGraph\State\StateValidationException($v->errors()->toJson());
+            throw new StateValidationException($v->errors()->toJson());
         }
 
         return true;
@@ -85,7 +85,7 @@ class ValidatedState implements StateContract
         $copy['_interrupt'] = [
             'reason' => $reason,
             'checkpoint_id' => $checkpointId,
-            'created_at' => (new \DateTimeImmutable)->format(DATE_ATOM),
+            'created_at' => (new DateTimeImmutable)->format(DATE_ATOM),
         ];
 
         return new static($copy);

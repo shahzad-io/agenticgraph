@@ -5,6 +5,7 @@ use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\NodeExecutionTimed;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
+use Shahzad\AgenticGraph\Middleware\TimingMiddleware;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
 use Shahzad\AgenticGraph\State\State;
 
@@ -19,7 +20,7 @@ class TENode extends AbstractNode
 }
 
 it('emits NodeExecutionTimed event', function () {
-    config()->set('agenticgraph.middleware.global', [\Shahzad\AgenticGraph\Middleware\TimingMiddleware::class]);
+    config()->set('agenticgraph.middleware.global', [TimingMiddleware::class]);
     Event::fake();
     $graph = GraphBuilder::create('te')
         ->addNode('start', TENode::class)

@@ -1,5 +1,7 @@
 <?php
 
+use Illuminate\Contracts\Container\BindingResolutionException;
+use Prism\Prism\Audio\TextResponse;
 use Prism\Prism\Facades\Prism;
 use Prism\Prism\Streaming\Events\TextCompleteEvent;
 use Prism\Prism\Streaming\Events\TextDeltaEvent;
@@ -148,7 +150,7 @@ abstract class TestStreamingPrismNodeBase extends PrismNode
         $traceContext = null;
         try {
             $traceContext = app(TraceContext::class);
-        } catch (\Illuminate\Contracts\Container\BindingResolutionException) {
+        } catch (BindingResolutionException) {
         }
 
         $adapter = new PrismStreamAdapter(
@@ -171,7 +173,7 @@ abstract class TestStreamingPrismNodeBase extends PrismNode
             $sink->close(StreamStatus::SUCCESS);
 
             return $accumulator->finalize();
-        } catch (\Throwable $e) {
+        } catch (Throwable $e) {
             $sink->close(StreamStatus::ERROR, [
                 'error_type' => $e::class,
                 'message' => $e->getMessage(),
@@ -292,7 +294,7 @@ it('supports audio transcription helper with Prism fake', function () {
         return;
     }
 
-    $fakeResponse = new \Prism\Prism\Audio\TextResponse('Transcribed text', new Usage(8, 0));
+    $fakeResponse = new TextResponse('Transcribed text', new Usage(8, 0));
     Prism::fake([$fakeResponse]);
     $node = new AudioPrismNode;
     $result = $node->execute(new State);

@@ -12,9 +12,11 @@ use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
 use Shahzad\AgenticGraph\Events\NodeExecutionStarted;
 use Shahzad\AgenticGraph\Execution\ExecutionMode;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
+use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
 use Shahzad\AgenticGraph\Facades\AgenticGraph;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
+use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Jobs\ContinueExecutionJob;
 use Shahzad\AgenticGraph\Jobs\ExecuteGraphJob;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
@@ -167,8 +169,8 @@ it('ExecuteGraphJob sets up tracing context before execution', function () {
 
     // Execute the job
     $job->handle(
-        app(\Shahzad\AgenticGraph\Execution\GraphExecutor::class),
-        app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)
+        app(GraphExecutor::class),
+        app(GraphRegistry::class)
     );
 
     // Verify TraceContext was created
@@ -217,8 +219,8 @@ it('ExecuteGraphJob emits to broadcast sink', function () {
     );
 
     $job->handle(
-        app(\Shahzad\AgenticGraph\Execution\GraphExecutor::class),
-        app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)
+        app(GraphExecutor::class),
+        app(GraphRegistry::class)
     );
 });
 
@@ -247,8 +249,8 @@ it('ExecuteGraphJob writes events to stream store', function () {
     );
 
     $job->handle(
-        app(\Shahzad\AgenticGraph\Execution\GraphExecutor::class),
-        app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)
+        app(GraphExecutor::class),
+        app(GraphRegistry::class)
     );
 
     $events = iterator_to_array($store->readFrom($streamId, 1, 10));
@@ -280,8 +282,8 @@ it('ExecuteGraphJob includes stream id in checkpoints', function () {
     );
 
     $job->handle(
-        app(\Shahzad\AgenticGraph\Execution\GraphExecutor::class),
-        app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)
+        app(GraphExecutor::class),
+        app(GraphRegistry::class)
     );
 
     $storage = app(StorageInterface::class);
@@ -318,8 +320,8 @@ it('ExecuteGraphJob handles streaming errors', function () {
 
     expect(function () use ($job): void {
         $job->handle(
-            app(\Shahzad\AgenticGraph\Execution\GraphExecutor::class),
-            app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)
+            app(GraphExecutor::class),
+            app(GraphRegistry::class)
         );
     })->toThrow(RuntimeException::class);
 });
@@ -354,8 +356,8 @@ it('recovers from crash by resuming stream from checkpoint', function () {
 
     expect(function () use ($job): void {
         $job->handle(
-            app(\Shahzad\AgenticGraph\Execution\GraphExecutor::class),
-            app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)
+            app(GraphExecutor::class),
+            app(GraphRegistry::class)
         );
     })->toThrow(RuntimeException::class);
 
@@ -391,8 +393,8 @@ it('recovers from crash by resuming stream from checkpoint', function () {
     );
 
     $resumeJob->handle(
-        app(\Shahzad\AgenticGraph\Execution\GraphExecutor::class),
-        app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)
+        app(GraphExecutor::class),
+        app(GraphRegistry::class)
     );
 
     $store = app(StreamStoreInterface::class);

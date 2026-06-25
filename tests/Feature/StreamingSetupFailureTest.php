@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Contracts\Broadcasting\Broadcaster;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\GraphExecutionFailed;
@@ -37,7 +38,7 @@ class SetupThrowingStreamStore implements StreamStoreInterface
         }
     }
 
-    public function readFrom(string $streamId, int $fromSeq, int $limit = 200): \Generator
+    public function readFrom(string $streamId, int $fromSeq, int $limit = 200): Generator
     {
         if (false) {
             yield $streamId;
@@ -94,7 +95,7 @@ it('marks streaming execution failed when setup throws before performStreamingEx
         expect($exception->getMessage())->toBe('stream setup failed');
     }
 
-    $executionId = \Illuminate\Support\Facades\DB::table('agenticgraph_executions')
+    $executionId = DB::table('agenticgraph_executions')
         ->where('graph_name', 'stream-setup-failure')
         ->orderByDesc('created_at')
         ->value('id');

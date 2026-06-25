@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph\Tracing\Listeners;
 
+use Illuminate\Contracts\Container\BindingResolutionException;
 use Shahzad\AgenticGraph\Events\GraphExecutionCompleted;
 use Shahzad\AgenticGraph\Events\GraphExecutionFailed;
 use Shahzad\AgenticGraph\Events\GraphExecutionStarted;
@@ -250,7 +251,7 @@ class TracingListener
                 'path_depth' => count($executionContext->pathStack),
                 'in_cycle' => ! empty($executionContext->cycleCompletionCounts),
             ];
-        } catch (\Illuminate\Contracts\Container\BindingResolutionException $e) {
+        } catch (BindingResolutionException $e) {
             // ExecutionContext not bound (loop disabled or old execution)
         }
 
@@ -332,7 +333,7 @@ class TracingListener
         $traceContext = null;
         try {
             $traceContext = app(TraceContext::class);
-        } catch (\Illuminate\Contracts\Container\BindingResolutionException $e) {
+        } catch (BindingResolutionException $e) {
             // TraceContext not bound, tracing not active
         }
 

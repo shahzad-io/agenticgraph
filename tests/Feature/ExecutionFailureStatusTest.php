@@ -1,5 +1,6 @@
 <?php
 
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Str;
 use Shahzad\AgenticGraph\Contracts\StateContract;
@@ -15,6 +16,7 @@ use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
 use Shahzad\AgenticGraph\Facades\AgenticGraph;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
+use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
 use Shahzad\AgenticGraph\Nodes\PrismNode;
 use Shahzad\AgenticGraph\State\State;
@@ -70,7 +72,7 @@ function registerFailureGraph(string $name, string $nodeClass): GraphExecutor
         ->addExitPoint('start')
         ->build();
 
-    app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->register($name, $graph);
+    app(GraphRegistry::class)->register($name, $graph);
 
     return new GraphExecutor;
 }
@@ -84,7 +86,7 @@ it('marks SYNC execution failed when a node throws', function () {
 
     try {
         $executor->execute(
-            app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->get('sync-failure'),
+            app(GraphRegistry::class)->get('sync-failure'),
             new State,
             executionId: $executionId
         );
@@ -126,7 +128,7 @@ it('marks SYNC+ITERATOR execution failed when a streaming node throws', function
         expect($exception->getMessage())->toBe('streaming node failed');
     }
 
-    $executionId = \Illuminate\Support\Facades\DB::table('agenticgraph_executions')
+    $executionId = DB::table('agenticgraph_executions')
         ->where('graph_name', 'stream-failure-status')
         ->orderByDesc('created_at')
         ->value('id');
@@ -145,7 +147,7 @@ it('does not mark a clean SYNC interrupt as failed', function () {
     $executionId = 'exec_sync_interrupt_'.Str::uuid();
 
     $executor->execute(
-        app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->get('sync-interrupt-clean'),
+        app(GraphRegistry::class)->get('sync-interrupt-clean'),
         new State,
         executionId: $executionId
     );
@@ -177,7 +179,7 @@ it('marks execution failed when interrupt handling throws', function () {
 
     try {
         $executor->execute(
-            app(\Shahzad\AgenticGraph\Graph\GraphRegistry::class)->get('sync-interrupt-failure'),
+            app(GraphRegistry::class)->get('sync-interrupt-failure'),
             new State,
             executionId: $executionId
         );

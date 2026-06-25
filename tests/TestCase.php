@@ -3,8 +3,11 @@
 namespace Shahzad\AgenticGraph\Tests;
 
 use Illuminate\Database\Eloquent\Factories\Factory;
+use Illuminate\Support\Facades\File;
 use Orchestra\Testbench\TestCase as Orchestra;
+use Prism\Prism\PrismServiceProvider;
 use Shahzad\AgenticGraph\AgenticGraphServiceProvider;
+use Shahzad\AgenticGraph\Tracing\TraceContext;
 
 class TestCase extends Orchestra
 {
@@ -20,7 +23,7 @@ class TestCase extends Orchestra
     protected function tearDown(): void
     {
         // Clear any TraceContext instance from container to prevent state leakage between tests
-        app()->forgetInstance(\Shahzad\AgenticGraph\Tracing\TraceContext::class);
+        app()->forgetInstance(TraceContext::class);
 
         parent::tearDown();
     }
@@ -28,8 +31,8 @@ class TestCase extends Orchestra
     protected function getPackageProviders($app)
     {
         $providers = [AgenticGraphServiceProvider::class];
-        if (class_exists(\Prism\Prism\PrismServiceProvider::class)) {
-            $providers[] = \Prism\Prism\PrismServiceProvider::class;
+        if (class_exists(PrismServiceProvider::class)) {
+            $providers[] = PrismServiceProvider::class;
         }
 
         return $providers;
@@ -51,7 +54,7 @@ class TestCase extends Orchestra
             'driver' => 'array',
             'serialize' => false,
         ]);
-        foreach (\Illuminate\Support\Facades\File::allFiles(__DIR__.'/../database/migrations') as $migration) {
+        foreach (File::allFiles(__DIR__.'/../database/migrations') as $migration) {
             (include $migration->getRealPath())->up();
         }
     }

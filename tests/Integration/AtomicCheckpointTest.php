@@ -39,7 +39,7 @@ afterEach(function () {
         foreach ($this->createdCheckpointIds as $id) {
             try {
                 $this->storage->delete($id);
-            } catch (\Throwable $e) {
+            } catch (Throwable $e) {
                 // Ignore cleanup errors
             }
         }
