@@ -6,6 +6,7 @@ namespace Shahzad\AgenticGraph\State;
 
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\DatabaseManager;
+use Psr\Log\LoggerInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Contracts\StorageInterface;
 
@@ -148,6 +149,116 @@ class StateManager
         }
 
         return $result;
+    }
+
+    /**
+     * Detect keys written by multiple parallel branches with divergent values.
+     *
+     * Compares each branch's changes relative to the pre-fan-out state so unchanged
+     * pre-existing keys do not false-positive.
+     *
+     * @param  array<int, string>  $branchNames
+     * @param  array<int, StateContract>  $branchResults
+     * @return array<int, array{key: string, branch_values: array<string, mixed>}>
+     */
+    public function detectParallelMergeCollisions(
+        StateContract $baseState,
+        array $branchNames,
+        array $branchResults,
+    ): array {
+        if (count($branchNames) !== count($branchResults)) {
+            throw new \InvalidArgumentException('Branch names and result states must align by index.');
+        }
+
+        /** @var array<string, array<string, mixed>> $writesByKey */
+        $writesByKey = [];
+
+        foreach ($branchNames as $index => $branchName) {
+            $diff = $this->diff($baseState, $branchResults[$index]);
+
+            foreach ($diff['added'] as $key => $value) {
+                $writesByKey[$key][$branchName] = $value;
+            }
+
+            foreach ($diff['modified'] as $key => $change) {
+                $writesByKey[$key][$branchName] = $change['to'];
+            }
+        }
+
+        $collisions = [];
+
+        foreach ($writesByKey as $key => $branchValues) {
+            if (count($branchValues) < 2) {
+                continue;
+            }
+
+            $distinctValues = [];
+            foreach ($branchValues as $branchName => $value) {
+                $fingerprint = $this->valueFingerprint($value);
+                $distinctValues[$fingerprint] ??= [];
+                $distinctValues[$fingerprint][] = $branchName;
+            }
+
+            if (count($distinctValues) > 1) {
+                $collisions[] = [
+                    'key' => $key,
+                    'branch_values' => $branchValues,
+                ];
+            }
+        }
+
+        return $collisions;
+    }
+
+    /**
+     * Log warnings for parallel merge key collisions (observational only; merge unchanged).
+     *
+     * @param  array<int, string>  $branchNames
+     * @param  array<int, StateContract>  $branchResults
+     */
+    public function warnParallelMergeCollisions(
+        LoggerInterface $logger,
+        StateContract $baseState,
+        array $branchNames,
+        array $branchResults,
+    ): void {
+        if (! (bool) config('agenticgraph.logging.enabled', true)) {
+            return;
+        }
+
+        $collisions = $this->detectParallelMergeCollisions($baseState, $branchNames, $branchResults);
+
+        foreach ($collisions as $collision) {
+            $branchValues = $collision['branch_values'];
+            $keptBranch = null;
+
+            foreach (array_reverse($branchNames) as $branchName) {
+                if (array_key_exists($branchName, $branchValues)) {
+                    $keptBranch = $branchName;
+                    break;
+                }
+            }
+
+            $logger->warning(
+                'Parallel branch merge wrote the same state key with different values; last-write-wins kept one branch. '
+                .'Use unique keys per parallel branch to avoid silent data loss.',
+                [
+                    'key' => $collision['key'],
+                    'branch_values' => $branchValues,
+                    'kept_branch' => $keptBranch,
+                    'colliding_branches' => array_keys($branchValues),
+                ]
+            );
+        }
+    }
+
+    private function valueFingerprint(mixed $value): string
+    {
+        if (is_array($value)) {
+            return 'array:'.json_encode($value, JSON_THROW_ON_ERROR);
+        }
+
+        return get_debug_type($value).':'.var_export($value, true);
     }
 
     /**

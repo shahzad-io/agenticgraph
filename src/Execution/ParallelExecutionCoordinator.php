@@ -9,6 +9,7 @@ use Illuminate\Cache\CacheManager;
 use Illuminate\Contracts\Bus\Dispatcher as BusDispatcher;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Events\Dispatcher;
+use Illuminate\Foundation\Bus\PendingDispatch;
 use Psr\Log\LoggerInterface;
 use Shahzad\AgenticGraph\Contracts\NodeInterface;
 use Shahzad\AgenticGraph\Contracts\ParallelExecutorInterface;
@@ -20,6 +21,9 @@ use Shahzad\AgenticGraph\Graph\Graph;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Jobs\ContinueExecutionJob;
 use Shahzad\AgenticGraph\Jobs\ExecuteNodeJob;
+use Shahzad\AgenticGraph\Middleware\LoggingMiddleware;
+use Shahzad\AgenticGraph\Middleware\TimingMiddleware;
+use Shahzad\AgenticGraph\Middleware\ValidationMiddleware;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\State\StateManager;
 use Shahzad\AgenticGraph\Streaming\StreamContext;
@@ -39,7 +43,7 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
      * @param  array<int, class-string|object>|null  $globalMiddleware
      * @param  \Closure(): ?TraceContext  $traceContextProvider
      * @param  \Closure(): ?ExecutionContext  $executionContextProvider
-     * @param  \Closure(object): \Illuminate\Foundation\Bus\PendingDispatch  $dispatchCallable
+     * @param  \Closure(object): PendingDispatch  $dispatchCallable
      */
     public function __construct(
         private readonly RoutingEngine $routingEngine,
@@ -57,9 +61,9 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
         private readonly \Closure $dispatchCallable
     ) {
         $this->globalMiddleware = $globalMiddleware ?? config('agenticgraph.middleware.global', [
-            \Shahzad\AgenticGraph\Middleware\LoggingMiddleware::class,
-            \Shahzad\AgenticGraph\Middleware\TimingMiddleware::class,
-            \Shahzad\AgenticGraph\Middleware\ValidationMiddleware::class,
+            LoggingMiddleware::class,
+            TimingMiddleware::class,
+            ValidationMiddleware::class,
         ]);
     }
 
@@ -129,6 +133,7 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
             );
             $results[] = $resultState;
         }
+        $this->stateManager->warnParallelMergeCollisions($this->logger, $state, $parallelNodes, $results);
         $merged = $this->stateManager->mergeAll($results);
         $sourceNode = $this->resolveSourceNode($graph, $parallelNodes);
         $this->checkpoint($graph, $executionId, $sourceNode, $merged, $streamContext);
@@ -169,6 +174,11 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
 
         $sourceNode = $this->resolveSourceNode($graph, $parallelNodes);
         $loopMetadataArray = $this->captureLoopMetadataArray();
+        $this->cache->put(
+            $this->batchInputCacheKey($executionId),
+            $state->toArray(),
+            300
+        );
         $callbacks = $this->buildBatchCallbacks(
             $graph->name,
             $executionId,
@@ -194,9 +204,9 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
      * @param  array<int, string>  $parallelNodes
      * @param  array<string, mixed>|null  $loopMetadataArray
      * @return array{
-     *     then: \Closure(\Illuminate\Bus\Batch): void,
-     *     catch: \Closure(\Illuminate\Bus\Batch, \Throwable): void,
-     *     finally: \Closure(\Illuminate\Bus\Batch): void
+     *     then: \Closure(Batch): void,
+     *     catch: \Closure(Batch, \Throwable): void,
+     *     finally: \Closure(Batch): void
      * }
      */
     public function buildBatchCallbacks(
@@ -306,6 +316,9 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
             throw new \RuntimeException($errorMsg);
         }
 
+        $inputData = $this->cache->get($this->batchInputCacheKey($executionId));
+        $baseState = is_array($inputData) ? State::fromArray($inputData) : new State;
+        $this->stateManager->warnParallelMergeCollisions($this->logger, $baseState, $targets, $results);
         $merged = $this->stateManager->mergeAll($results);
         $this->checkpoint($graph, $executionId, $sourceNode, $merged, null);
         $next = $this->routingEngine->determinePostParallelNext($graph, $targets, $merged);
@@ -345,10 +358,17 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
      */
     public function cleanupBatchResults(string $executionId, array $targets): void
     {
+        $this->cache->forget($this->batchInputCacheKey($executionId));
+
         foreach ($targets as $nodeName) {
             $key = $this->batchResultCacheKey($executionId, $nodeName);
             $this->cache->forget($key);
         }
+    }
+
+    private function batchInputCacheKey(string $executionId): string
+    {
+        return 'agenticgraph:batch:'.$executionId.':input';
     }
 
     private function batchResultCacheKey(string $executionId, string $nodeName): string
