@@ -90,10 +90,12 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                 $executionId,
                 $graph->name,
                 new ExecutionOptions,
-                $traceContext
+                $traceContext,
+                null,
+                $graph
             );
         } else {
-            $scope = $this->contextManager->enter($executionId, $graph->name, new ExecutionOptions);
+            $scope = $this->contextManager->enter($executionId, $graph->name, new ExecutionOptions, null, $graph);
             $traceContext = $scope->traceContext;
         }
         $executionContext = $scope->context;
@@ -219,10 +221,11 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                 $graph->name,
                 new ExecutionOptions,
                 $traceContext,
-                $loopMetadata
+                $loopMetadata,
+                $graph
             );
         } else {
-            $scope = $this->contextManager->enter($executionId, $graph->name, new ExecutionOptions, $loopMetadata);
+            $scope = $this->contextManager->enter($executionId, $graph->name, new ExecutionOptions, $loopMetadata, $graph);
             $traceContext = $scope->traceContext;
         }
         $executionContext = $scope->context;

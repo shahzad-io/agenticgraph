@@ -5,20 +5,27 @@ declare(strict_types=1);
 namespace Shahzad\AgenticGraph\Routers;
 
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
+use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Events\Dispatcher;
 use Prism\Prism\Schema\EnumSchema;
 use Prism\Prism\Schema\ObjectSchema;
 use Psr\Log\LoggerInterface;
+use Shahzad\AgenticGraph\Contracts\LoopAwareRouterInterface;
 use Shahzad\AgenticGraph\Contracts\PrismClient;
 use Shahzad\AgenticGraph\Contracts\RouterInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\TokensUsed;
+use Shahzad\AgenticGraph\Execution\ExecutionContext;
+use Shahzad\AgenticGraph\Execution\LoopContext;
+use Shahzad\AgenticGraph\Graph\Graph;
 
-class PrismRouter extends AbstractRouter implements RouterInterface
+class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, RouterInterface
 {
     protected ?string $model = null;
 
     protected bool $trackTokens = true;
+
+    protected bool $includeLoopContextInPrompt = true;
 
     protected ?PrismClient $prismClient = null;
 
@@ -28,10 +35,12 @@ class PrismRouter extends AbstractRouter implements RouterInterface
 
     private CacheRepository $cache;
 
+    private Container $container;
+
     /**
      * @param  array<string, string>  $routes
      */
-    public function __construct(array $routes, ?string $defaultRoute = null, ?Dispatcher $events = null, ?LoggerInterface $logger = null, ?CacheRepository $cache = null, ?PrismClient $prismClient = null)
+    public function __construct(array $routes, ?string $defaultRoute = null, ?Dispatcher $events = null, ?LoggerInterface $logger = null, ?CacheRepository $cache = null, ?PrismClient $prismClient = null, ?Container $container = null)
     {
         $this->routes = $routes;
         $this->defaultRoute = $defaultRoute;
@@ -39,16 +48,32 @@ class PrismRouter extends AbstractRouter implements RouterInterface
         $this->logger = $logger ?? app(LoggerInterface::class);
         $this->cache = $cache ?? app(CacheRepository::class);
         $this->prismClient = $prismClient;
+        $this->container = $container ?? app();
     }
 
     public function route(StateContract $state): string|array
     {
-        $prompt = $this->buildPrompt($state);
+        return $this->routeWithLoop($state, $this->resolveLoopContext());
+    }
+
+    final public function routeWithContext(StateContract $state, ExecutionContext $context): string|array
+    {
+        return $this->routeWithLoop($state, LoopContext::from($context));
+    }
+
+    /**
+     * @return string|array<int, string>
+     */
+    protected function routeWithLoop(StateContract $state, ?LoopContext $loop): string|array
+    {
+        $prompt = $this->buildPromptWithLoop($state, $loop);
         $cacheKey = $this->buildCacheKey($prompt);
 
         if (config('agenticgraph.prism.cache_enabled') && $this->cache->has($cacheKey)) {
             $cachedRoute = $this->cache->get($cacheKey);
             if (is_string($cachedRoute) && $this->validateRoute($cachedRoute)) {
+                $this->afterRoute($state, $cachedRoute, $loop, true);
+
                 return $cachedRoute;
             }
 
@@ -67,16 +92,17 @@ class PrismRouter extends AbstractRouter implements RouterInterface
 
         for ($attempt = 1; $attempt <= $maxRetries; $attempt++) {
             try {
-                return $this->executeRouting($prompt, $cacheKey, $state);
+                $route = $this->executeRouting($prompt, $cacheKey, $state);
+                $this->afterRoute($state, $route, $loop, false);
+
+                return $route;
             } catch (\Throwable $e) {
                 $lastException = $e;
 
-                // Don't retry on certain error types
                 if ($this->isNonRetryableError($e)) {
                     break;
                 }
 
-                // Log retry attempt
                 if ((bool) config('agenticgraph.logging.enabled', true)) {
                     $this->logger->warning('PrismRouter retry attempt', [
                         'attempt' => $attempt,
@@ -85,7 +111,6 @@ class PrismRouter extends AbstractRouter implements RouterInterface
                     ]);
                 }
 
-                // Exponential backoff: 100ms, 200ms, 400ms, etc.
                 if ($attempt < $maxRetries) {
                     $delayMs = $baseDelayMs * (2 ** ($attempt - 1));
                     usleep($delayMs * 1000);
@@ -93,8 +118,10 @@ class PrismRouter extends AbstractRouter implements RouterInterface
             }
         }
 
-        // All retries exhausted or non-retryable error
-        return $this->handleRoutingFailure($lastException, $state);
+        $route = $this->handleRoutingFailure($lastException, $state);
+        $this->afterRoute($state, $route, $loop, false);
+
+        return $route;
     }
 
     /**
@@ -123,7 +150,6 @@ class PrismRouter extends AbstractRouter implements RouterInterface
 
         $structured = $response->structured;
 
-        // Dispatch token tracking event
         if ($this->trackTokens) {
             $durationMs = (microtime(true) - $startTime) * 1000;
             $this->events->dispatch(TokensUsed::fromLlmCall(
@@ -154,7 +180,6 @@ class PrismRouter extends AbstractRouter implements RouterInterface
 
         $route = $structured['route'];
 
-        // Validate route exists
         if (! $this->validateRoute($route)) {
             if ((bool) config('agenticgraph.logging.enabled', true)) {
                 $this->logger->warning('PrismRouter returned invalid route', [
@@ -167,7 +192,6 @@ class PrismRouter extends AbstractRouter implements RouterInterface
             return $this->defaultRoute ?? '';
         }
 
-        // Cache successful result
         if (config('agenticgraph.prism.cache_enabled')) {
             $this->cache->put($cacheKey, $route, config('agenticgraph.prism.cache_ttl', 60) * 60);
         }
@@ -180,7 +204,6 @@ class PrismRouter extends AbstractRouter implements RouterInterface
      */
     private function isNonRetryableError(\Throwable $e): bool
     {
-        // Don't retry on validation errors, auth errors, etc.
         $nonRetryablePatterns = [
             'invalid',
             'unauthorized',
@@ -236,6 +259,69 @@ class PrismRouter extends AbstractRouter implements RouterInterface
         return "Choose the best route for the current state.\n\nAvailable routes:\n{$routesText}\n\nCurrent state:\n".json_encode($state->toArray());
     }
 
+    /**
+     * Build the routing prompt with optional loop context (author hook).
+     * Defaults to buildPrompt() plus gated loop-context augmentation on cyclic graphs.
+     */
+    protected function buildPromptWithLoop(StateContract $state, ?LoopContext $loop = null): string
+    {
+        $prompt = $this->buildPrompt($state);
+
+        if ($this->shouldAppendLoopContext($loop)) {
+            $prompt .= $this->formatLoopContextForPrompt($loop);
+        }
+
+        return $prompt;
+    }
+
+    /**
+     * Hook for tracing or post-route side effects after a route is resolved.
+     *
+     * @param  string|array<int, string>  $route
+     */
+    protected function afterRoute(StateContract $state, string|array $route, ?LoopContext $loop, bool $fromCache): void {}
+
+    protected function shouldAppendLoopContext(?LoopContext $loop): bool
+    {
+        return $this->includeLoopContextInPrompt
+            && $loop !== null
+            && $this->graphHasCycles();
+    }
+
+    protected function formatLoopContextForPrompt(LoopContext $loop): string
+    {
+        $routeKeys = array_keys($this->routes);
+        $visitCounts = $loop->visitCountsFor($routeKeys);
+        $unvisited = $loop->unvisitedAmong($routeKeys);
+
+        $visitSummary = [];
+        foreach ($visitCounts as $node => $count) {
+            $visitSummary[] = "{$node}:{$count}";
+        }
+
+        $lines = [
+            '',
+            'Loop context:',
+            '- Global iterations: '.$loop->globalIterations(),
+            '- Route target visits: '.implode(', ', $visitSummary),
+        ];
+
+        if ($unvisited !== []) {
+            $lines[] = '- Unvisited route targets: '.implode(', ', $unvisited);
+        }
+
+        return "\n".implode("\n", $lines);
+    }
+
+    protected function graphHasCycles(): bool
+    {
+        if (! $this->container->bound(Graph::class)) {
+            return false;
+        }
+
+        return $this->container->make(Graph::class)->hasCycles();
+    }
+
     protected function buildCacheKey(string $prompt): string
     {
         $identity = static::class.':'.implode(',', array_keys($this->routes));
@@ -279,5 +365,14 @@ class PrismRouter extends AbstractRouter implements RouterInterface
         }
 
         return app(PrismClient::class);
+    }
+
+    private function resolveLoopContext(): ?LoopContext
+    {
+        if (! $this->container->bound(ExecutionContext::class)) {
+            return null;
+        }
+
+        return LoopContext::from($this->container->make(ExecutionContext::class));
     }
 }

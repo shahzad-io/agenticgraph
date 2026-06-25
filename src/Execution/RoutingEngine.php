@@ -24,14 +24,7 @@ final class RoutingEngine implements RouterResolverInterface
         foreach ($edges as $edge) {
             $condition = $this->resolveRouter($edge->getCondition());
             if ($condition !== null) {
-                if ($condition instanceof LoopAwareRouterInterface && $this->container->bound(ExecutionContext::class)) {
-                    $executionContext = $this->container->make(ExecutionContext::class);
-                    $route = $condition->routeWithContext($state, $executionContext);
-                } else {
-                    $route = $condition->route($state);
-                }
-
-                return $route;
+                return $this->resolveRoute($condition, $state);
             }
             $target = $edge->getTarget();
 
@@ -61,7 +54,7 @@ final class RoutingEngine implements RouterResolverInterface
             }
             $edge = $edges[0];
             $condition = $this->resolveRouter($edge->getCondition());
-            $target = $condition ? $condition->route($state) : $edge->getTarget();
+            $target = $condition ? $this->resolveRoute($condition, $state) : $edge->getTarget();
             $targetName = is_array($target) ? ($target[0] ?? null) : $target;
             if ($targetName) {
                 $nextTargets[] = $targetName;
@@ -73,6 +66,20 @@ final class RoutingEngine implements RouterResolverInterface
         $unique = array_values(array_unique($nextTargets));
 
         return $unique[0];
+    }
+
+    /**
+     * @return string|array<int, string>
+     */
+    public function resolveRoute(RouterInterface $router, StateContract $state): string|array
+    {
+        if ($router instanceof LoopAwareRouterInterface && $this->container->bound(ExecutionContext::class)) {
+            $executionContext = $this->container->make(ExecutionContext::class);
+
+            return $router->routeWithContext($state, $executionContext);
+        }
+
+        return $router->route($state);
     }
 
     public function resolveRouter(mixed $router): ?RouterInterface

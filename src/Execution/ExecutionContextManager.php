@@ -7,6 +7,7 @@ namespace Shahzad\AgenticGraph\Execution;
 use Illuminate\Contracts\Container\Container;
 use Psr\Log\LoggerInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Graph\Graph;
 use Shahzad\AgenticGraph\Tracing\ExecutionClock;
 use Shahzad\AgenticGraph\Tracing\ExecutionClockFactory;
 use Shahzad\AgenticGraph\Tracing\Instrumentation\HttpClientInstrumentation;
@@ -29,7 +30,8 @@ final class ExecutionContextManager implements ExecutionScopeInterface
         string $executionId,
         string $graphName,
         ExecutionOptions $options,
-        ?LoopMetadata $loopMetadata = null
+        ?LoopMetadata $loopMetadata = null,
+        ?Graph $graph = null
     ): ExecutionScope {
         $bindings = new \stdClass;
         $startTime = microtime(true);
@@ -70,6 +72,8 @@ final class ExecutionContextManager implements ExecutionScopeInterface
             }
         }
 
+        $this->bindGraphIfProvided($graph, $bindings);
+
         return new ExecutionScope(
             executionId: $executionId,
             traceContext: $traceContext,
@@ -86,7 +90,8 @@ final class ExecutionContextManager implements ExecutionScopeInterface
         string $graphName,
         ExecutionOptions $options,
         TraceContext $existingTrace,
-        ?LoopMetadata $loopMetadata = null
+        ?LoopMetadata $loopMetadata = null,
+        ?Graph $graph = null
     ): ExecutionScope {
         $bindings = new \stdClass;
         $startTime = microtime(true);
@@ -122,6 +127,8 @@ final class ExecutionContextManager implements ExecutionScopeInterface
             }
         }
 
+        $this->bindGraphIfProvided($graph, $bindings);
+
         return new ExecutionScope(
             executionId: $executionId,
             traceContext: $existingTrace,
@@ -131,6 +138,16 @@ final class ExecutionContextManager implements ExecutionScopeInterface
             bindings: $bindings,
             options: $options,
         );
+    }
+
+    private function bindGraphIfProvided(?Graph $graph, \stdClass $bindings): void
+    {
+        if ($graph === null || $this->container->bound(Graph::class)) {
+            return;
+        }
+
+        $this->container->instance(Graph::class, $graph);
+        $bindings->{Graph::class} = true;
     }
 
     public function exit(ExecutionScope $scope, ?StateContract $finalState = null): void

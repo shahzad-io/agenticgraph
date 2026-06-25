@@ -447,7 +447,7 @@ class ExecutionCoordinator
         $state->validate();
 
         $executionId = $this->generateExecutionId();
-        $scope = $this->contextManager->enter($executionId, $graph->name, $options);
+        $scope = $this->contextManager->enter($executionId, $graph->name, $options, null, $graph);
         $traceContext = $scope->traceContext;
         $rootSpanId = $traceContext->getRootSpanId();
 
@@ -870,10 +870,11 @@ class ExecutionCoordinator
                 $graph->name,
                 $options,
                 $traceContext,
-                $loopMetadata
+                $loopMetadata,
+                $graph
             );
         }
 
-        return $this->contextManager->enter($executionId, $graph->name, $options, $loopMetadata);
+        return $this->contextManager->enter($executionId, $graph->name, $options, $loopMetadata, $graph);
     }
 }
