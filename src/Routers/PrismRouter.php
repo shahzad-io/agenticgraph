@@ -6,6 +6,8 @@ namespace Shahzad\AgenticGraph\Routers;
 
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Events\Dispatcher;
+use Prism\Prism\Schema\EnumSchema;
+use Prism\Prism\Schema\ObjectSchema;
 use Psr\Log\LoggerInterface;
 use Shahzad\AgenticGraph\Contracts\PrismClient;
 use Shahzad\AgenticGraph\Contracts\RouterInterface;
@@ -88,10 +90,8 @@ class PrismRouter extends AbstractRouter implements RouterInterface
 
     /**
      * Execute the actual routing logic.
-     *
-     * @return string|array<int, string>
      */
-    private function executeRouting(string $prompt, string $cacheKey, StateContract $state): string|array
+    private function executeRouting(string $prompt, string $cacheKey, StateContract $state): string
     {
         $startTime = microtime(true);
         [$provider, $model] = $this->parseModel($this->model ?? (string) config('agenticgraph.prism.model'));
@@ -99,15 +99,20 @@ class PrismRouter extends AbstractRouter implements RouterInterface
         $timeout = (int) config('agenticgraph.api.timeout', 30);
         $connectTimeout = (int) config('agenticgraph.api.connect_timeout', 10);
 
-        $response = $this->prismClient()->text()
+        $schema = $this->buildRoutingSchema();
+
+        $response = $this->prismClient()->structured()
             ->using($provider, $model)
+            ->withSchema($schema)
             ->withPrompt($prompt)
-            ->withMaxTokens(100) // Limit response size
+            ->withMaxTokens(100)
             ->withClientOptions([
                 'timeout' => $timeout,
                 'connect_timeout' => $connectTimeout,
             ])
-            ->asText();
+            ->asStructured();
+
+        $structured = $response->structured;
 
         // Dispatch token tracking event
         if ($this->trackTokens) {
@@ -118,30 +123,19 @@ class PrismRouter extends AbstractRouter implements RouterInterface
                 callDurationMs: $durationMs,
                 promptTokens: $response->usage->promptTokens,
                 completionTokens: $response->usage->completionTokens,
-                callType: 'router',
+                callType: 'structured',
                 model: "{$provider}:{$model}",
                 prompt: $prompt,
-                response: $response->text
+                response: is_array($structured)
+                    ? json_encode($structured, JSON_THROW_ON_ERROR)
+                    : $response->text
             ));
         }
 
-        // Validate response format
-        $decoded = json_decode($response->text, true);
-        if (! is_array($decoded)) {
+        if (! is_array($structured) || ! isset($structured['route']) || ! is_string($structured['route'])) {
             if ((bool) config('agenticgraph.logging.enabled', true)) {
-                $this->logger->warning('PrismRouter received non-JSON response', [
-                    'response' => $response->text,
-                    'prompt' => $prompt,
-                ]);
-            }
-
-            return $this->defaultRoute ?? '';
-        }
-
-        if (! isset($decoded['route'])) {
-            if ((bool) config('agenticgraph.logging.enabled', true)) {
-                $this->logger->warning('PrismRouter response missing route key', [
-                    'response' => $decoded,
+                $this->logger->warning('PrismRouter structured response missing route key', [
+                    'response' => $structured,
                     'expected_routes' => $this->getAvailableRoutes(),
                 ]);
             }
@@ -149,7 +143,7 @@ class PrismRouter extends AbstractRouter implements RouterInterface
             return $this->defaultRoute ?? '';
         }
 
-        $route = $decoded['route'];
+        $route = $structured['route'];
 
         // Validate route exists
         if (! $this->validateRoute($route)) {
@@ -230,7 +224,23 @@ class PrismRouter extends AbstractRouter implements RouterInterface
         }
         $routesText = implode("\n", $routes);
 
-        return "Available routes:\n{$routesText}\n\nCurrent state:\n".json_encode($state->toArray());
+        return "Choose the best route for the current state.\n\nAvailable routes:\n{$routesText}\n\nCurrent state:\n".json_encode($state->toArray());
+    }
+
+    protected function buildRoutingSchema(): ObjectSchema
+    {
+        return new ObjectSchema(
+            name: 'routing_decision',
+            description: 'Select the route key that best matches the current state',
+            properties: [
+                new EnumSchema(
+                    name: 'route',
+                    description: 'The route key to take next',
+                    options: $this->getAvailableRoutes(),
+                ),
+            ],
+            requiredFields: ['route'],
+        );
     }
 
     /**

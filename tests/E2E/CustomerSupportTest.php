@@ -1,6 +1,7 @@
 <?php
 
 use Prism\Prism\Facades\Prism;
+use Prism\Prism\Testing\StructuredResponseFake;
 use Prism\Prism\Testing\TextResponseFake;
 use Prism\Prism\ValueObjects\Meta;
 use Prism\Prism\ValueObjects\Usage;
@@ -69,15 +70,15 @@ it('processes customer support workflow end-to-end', function () {
 
         return;
     }
-    $routeText = TextResponseFake::make()
-        ->withText(json_encode(['route' => 'technical']))
+    $routeFake = StructuredResponseFake::make()
+        ->withStructured(['route' => 'technical'])
         ->withUsage(new Usage(10, 20))
         ->withMeta(new Meta('fake-1', 'fake-model'));
     $respText = TextResponseFake::make()
         ->withText('Technical response')
         ->withUsage(new Usage(10, 20))
         ->withMeta(new Meta('fake-2', 'fake-model'));
-    Prism::fake([$routeText, $respText]);
+    Prism::fake([$routeFake, $respText]);
     $router = new PrismRouter([
         'technical' => 'Route to technical',
         'billing' => 'Route to billing',
