@@ -21,6 +21,8 @@ final class StreamLifecycleEventTypes
 
     public const NODE_ERROR = 'node_error';
 
+    public const NODE_INTERRUPT = 'node_interrupt';
+
     public const STREAM_RESUME = 'stream_resume';
 
     /**
@@ -33,6 +35,7 @@ final class StreamLifecycleEventTypes
         self::NODE_START,
         self::NODE_COMPLETE,
         self::NODE_ERROR,
+        self::NODE_INTERRUPT,
         self::STREAM_RESUME,
     ];
 

@@ -20,6 +20,7 @@ use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
 use Shahzad\AgenticGraph\Streaming\StreamContext;
 use Shahzad\AgenticGraph\Streaming\StreamLifecycleEventEmitter;
+use Shahzad\AgenticGraph\Streaming\StreamLifecycleEventTypes;
 use Shahzad\AgenticGraph\Streaming\StreamSession;
 use Shahzad\AgenticGraph\Streaming\StreamStatus;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
@@ -184,7 +185,7 @@ final class InterruptManager implements InterruptServiceInterface
                 $nodeName,
                 $traceContext?->getSpanId(),
                 $traceContext?->getParentSpanId(),
-                'node_interrupt',
+                StreamLifecycleEventTypes::NODE_INTERRUPT,
                 [
                     'node_name' => $nodeName,
                     'reason' => $reason,
