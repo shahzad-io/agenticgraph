@@ -8,17 +8,28 @@ use Shahzad\AgenticGraph\Streaming\Contracts\StreamEvent;
 use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
 
 /**
- * Internal wire-serialization contract for stream events (not frozen public API).
+ * FROZEN PUBLIC WIRE CONTRACT (v1.0).
  *
- * Canonical JSON body fields (type is owned once — carried by SSE event name / broadcast event name):
- * - stream_id, execution_id, node_name, span_id, parent_span_id
- * - seq, node_seq, occurred_at
- * - payload (opaque; lifecycle events may nest payload.stream = {seq, node_seq, event_type, bytes})
+ * The shapes below are stable public API for NPM clients, AgenticPulse, and other
+ * stream consumers. Changing frozen fields, event type strings, or delivery semantics
+ * is a breaking change requiring a major version bump.
  *
- * Store terminal events use type {@see self::TYPE_EXECUTION_TERMINAL} with payload:
- * - status: completed|interrupted|failed
- * - final_state: array (unconditional when provided at close)
- * - meta: close metadata from the transport path
+ * Canonical spec: docs/streaming/WIRE-CONTRACT.md
+ *
+ * FROZEN PUBLIC surface:
+ * - Wire body: {@see self::FROZEN_WIRE_BODY_KEYS} (snake_case JSON; `type` is NOT in the body)
+ * - Event `type` carried externally (SSE `event:` line / broadcast event name)
+ * - Closed framework/lifecycle type strings ({@see StreamLifecycleEventTypes}, envelope constants)
+ * - Prism content type set (version-pinned to Prism >=0.99.20 <0.100.0)
+ * - Open author types via streamEvent() (any string + author payload)
+ * - Broadcast channel convention and terminal contracts (stream_close / execution_terminal)
+ * - Optional node_complete state capture shapes (config-gated)
+ * - Observability fields: span_id, parent_span_id, node_seq (nullable semantics documented)
+ *
+ * SERIALIZED BUT NOT PROMISED (may change without a major bump):
+ * - payload.stream on lifecycle events (framework telemetry)
+ * - SSE transport-only events: stream_heartbeat, stream_replay_unavailable
+ * - Raw Redis/database store row layout (differs from broadcast/SSE wire body)
  */
 final class StreamEventEnvelope
 {
@@ -27,6 +38,24 @@ final class StreamEventEnvelope
     public const TYPE_STREAM_CLOSE = 'stream_close';
 
     public const TYPE_STREAM_ERROR = 'stream_error';
+
+    /**
+     * Frozen v1.0 wire-body field names emitted by {@see toWireArray()}.
+     * `type` is intentionally excluded — it is carried by the transport event name.
+     *
+     * @var list<string>
+     */
+    public const FROZEN_WIRE_BODY_KEYS = [
+        'stream_id',
+        'execution_id',
+        'node_name',
+        'span_id',
+        'parent_span_id',
+        'seq',
+        'node_seq',
+        'occurred_at',
+        'payload',
+    ];
 
     public function __construct(
         public readonly string $type,

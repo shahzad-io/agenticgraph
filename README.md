@@ -20,6 +20,7 @@ AgenticGraph is the first open-source Laravel AI orchestration package, bringing
 
 ## Streaming
 
+- **Wire contract v1.0 (frozen):** [docs/streaming/WIRE-CONTRACT.md](docs/streaming/WIRE-CONTRACT.md) — canonical NPM/AgenticPulse type spec
 - Streaming guide: [docs/streaming/README.md](docs/streaming/README.md)
 - API reference: [docs/streaming/API.md](docs/streaming/API.md)
 - Event catalog: [docs/streaming/EVENTS.md](docs/streaming/EVENTS.md)
