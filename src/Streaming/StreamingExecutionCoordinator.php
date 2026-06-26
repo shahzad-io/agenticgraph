@@ -349,7 +349,6 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
     ): StreamHandle {
         try {
             $interrupted = false;
-            $nodeSeqs = new \stdClass;
             $skipEntryInterruptGate = $skipInterruptGateForEntry;
             while (true) {
                 $lockTimeout = (int) config('agenticgraph.lock.timeout', 10);
@@ -424,6 +423,8 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                         $parentSpanId
                     ));
 
+                    $this->streamContext?->resetNodeSeq($current);
+
                     $this->emitLifecycleEvent(
                         $sink,
                         $session,
@@ -432,7 +433,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                         $parentSpanId,
                         StreamLifecycleEventTypes::NODE_START,
                         ['node_name' => $current],
-                        $this->nextNodeSeq($nodeSeqs, $current)
+                        $this->streamContext?->nextNodeSeq($current)
                     );
 
                     try {
@@ -464,7 +465,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                                 'error_type' => $e::class,
                                 'message' => $e->getMessage(),
                             ],
-                            $this->nextNodeSeq($nodeSeqs, $current)
+                            $this->streamContext?->nextNodeSeq($current)
                         );
 
                         $sink->close(StreamStatus::ERROR, [
@@ -505,7 +506,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                         $parentSpanId,
                         StreamLifecycleEventTypes::NODE_COMPLETE,
                         $nodeCompletePayload,
-                        $this->nextNodeSeq($nodeSeqs, $current)
+                        $this->streamContext?->nextNodeSeq($current)
                     );
 
                     if (in_array($current, $graph->exitPoints, true)) {
@@ -683,15 +684,6 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
             $payload,
             $nodeSeq
         );
-    }
-
-    private function nextNodeSeq(\stdClass $nodeSeqs, string $nodeName): int
-    {
-        $current = property_exists($nodeSeqs, $nodeName) ? (int) $nodeSeqs->{$nodeName} : 0;
-        $next = $current + 1;
-        $nodeSeqs->{$nodeName} = $next;
-
-        return $next;
     }
 
     protected function determineNext(Graph $graph, string $current, StateContract $state): mixed

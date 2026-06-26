@@ -29,7 +29,6 @@ final class PrismStreamAdapter
         private readonly ?string $nodeName,
         private readonly ?string $spanId,
         private readonly ?string $parentSpanId,
-        private readonly ?int $nodeSeq = null
     ) {}
 
     public function adapt(PrismStreamEvent $event): ?StreamEventImpl
@@ -46,6 +45,7 @@ final class PrismStreamAdapter
 
         $occurredAt = new \DateTimeImmutable('@'.$event->timestamp);
         $seq = ++$this->session->seq;
+        $nodeSeq = $this->resolveNodeSeq();
 
         return new StreamEventImpl(
             $this->session->streamId,
@@ -56,9 +56,26 @@ final class PrismStreamAdapter
             $type,
             $payload,
             $seq,
-            $this->nodeSeq,
+            $nodeSeq,
             $occurredAt
         );
+    }
+
+    private function resolveNodeSeq(): ?int
+    {
+        if ($this->nodeName === null || $this->nodeName === '') {
+            return null;
+        }
+
+        try {
+            if (! app()->bound(StreamContext::class)) {
+                return null;
+            }
+
+            return app(StreamContext::class)->nextNodeSeq($this->nodeName);
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     private function resolveType(PrismStreamEvent $event): ?string

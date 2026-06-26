@@ -80,7 +80,6 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
         $results = [];
         $traceContext = ($this->traceContextProvider)();
         $parentSpanId = $traceContext instanceof TraceContext ? $traceContext->getSpanId() : null;
-        $nodeSeqs = new \stdClass;
         $nodeCompletePayloadBuilder = StreamNodeCompletePayloadBuilder::fromConfig($this->stateManager);
         foreach ($parallelNodes as $nodeName) {
             $node = $graph->getNode($nodeName);
@@ -96,14 +95,14 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
                 $spanId,
                 $parentSpanId
             ));
+            $streamContext?->resetNodeSeq($nodeName);
             $this->emitStreamLifecycleIfActive(
                 $streamContext,
                 $nodeName,
                 $spanId,
                 $parentSpanId,
                 StreamLifecycleEventTypes::NODE_START,
-                ['node_name' => $nodeName],
-                $nodeSeqs
+                ['node_name' => $nodeName]
             );
             try {
                 $resultState = $this->runNodeWithMiddleware($state, $node, $executionId, $nodeName, $spanId);
@@ -128,8 +127,7 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
                 $spanId,
                 $parentSpanId,
                 StreamLifecycleEventTypes::NODE_COMPLETE,
-                $nodeCompletePayloadBuilder->build($nodeName, $nodeDuration * 1000, $inputState, $resultState),
-                $nodeSeqs
+                $nodeCompletePayloadBuilder->build($nodeName, $nodeDuration * 1000, $inputState, $resultState)
             );
             $results[] = $resultState;
         }
@@ -499,7 +497,6 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
         ?string $parentSpanId,
         string $type,
         array $payload,
-        \stdClass $nodeSeqs
     ): void {
         if ($streamContext === null || ! $streamContext->isStreamingActive()) {
             return;
@@ -518,16 +515,7 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
             $parentSpanId,
             $type,
             $payload,
-            $this->nextNodeSeq($nodeSeqs, $nodeName)
+            $streamContext->nextNodeSeq($nodeName)
         );
-    }
-
-    private function nextNodeSeq(\stdClass $nodeSeqs, string $nodeName): int
-    {
-        $current = property_exists($nodeSeqs, $nodeName) ? (int) $nodeSeqs->{$nodeName} : 0;
-        $next = $current + 1;
-        $nodeSeqs->{$nodeName} = $next;
-
-        return $next;
     }
 }

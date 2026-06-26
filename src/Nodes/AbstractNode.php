@@ -124,6 +124,7 @@ abstract class AbstractNode implements NodeInterface
 
         $session = $context->session();
         $seq = ++$session->seq;
+        $nodeSeq = $context->nextNodeSeq($this->getName());
 
         $sink->emit(new StreamEventImpl(
             $session->streamId,
@@ -134,7 +135,7 @@ abstract class AbstractNode implements NodeInterface
             $type,
             $payload,
             $seq,
-            null,
+            $nodeSeq,
             new \DateTimeImmutable
         ));
     }

@@ -12,6 +12,9 @@ final class StreamContext
 
     private bool $nodeAttemptHasContentEmission = false;
 
+    /** @var array<string, int> */
+    private array $nodeSeqByName = [];
+
     public function __construct(
         private readonly StreamSession $session,
         ?StreamSinkInterface $sink = null
@@ -52,5 +55,19 @@ final class StreamContext
     public function nodeAttemptHasContentEmission(): bool
     {
         return $this->nodeAttemptHasContentEmission;
+    }
+
+    public function resetNodeSeq(string $nodeName): void
+    {
+        unset($this->nodeSeqByName[$nodeName]);
+    }
+
+    public function nextNodeSeq(string $nodeName): int
+    {
+        $current = $this->nodeSeqByName[$nodeName] ?? 0;
+        $next = $current + 1;
+        $this->nodeSeqByName[$nodeName] = $next;
+
+        return $next;
     }
 }

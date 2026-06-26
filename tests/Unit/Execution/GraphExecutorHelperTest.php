@@ -26,6 +26,7 @@ use Shahzad\AgenticGraph\State\StateManager;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
 use Shahzad\AgenticGraph\Streaming\RetentionPolicyFactory;
 use Shahzad\AgenticGraph\Streaming\Sinks\MemorySink;
+use Shahzad\AgenticGraph\Streaming\StreamContext;
 use Shahzad\AgenticGraph\Streaming\StreamErrorHandler;
 use Shahzad\AgenticGraph\Streaming\StreamingExecutionCoordinator;
 use Shahzad\AgenticGraph\Streaming\StreamObserverFactory;
@@ -279,44 +280,20 @@ it('emits lifecycle events with stream metadata', function () {
         ->and($second->payload()['stream']['node_seq'])->toBe(2);
 });
 
-it('increments node sequence per node', function () {
-    $factory = new StreamSinkFactory(
-        Mockery::mock(Broadcaster::class),
-        Mockery::mock(StreamStoreInterface::class),
-        false,
-        100,
-        false,
-        new RetentionPolicyFactory,
-        new StreamObserverFactory,
-        new StreamErrorHandler
+it('increments node sequence per node via StreamContext', function () {
+    $session = new StreamSession(
+        streamId: 'stream-node-seq',
+        executionId: 'exec-node-seq',
+        options: new StreamOptions,
+        startedAtUnix: time()
     );
-    $executor = new StreamingExecutionCoordinator(
-        Mockery::mock(Dispatcher::class),
-        Mockery::mock(CacheManager::class),
-        Mockery::mock(LoggerInterface::class),
-        Mockery::mock(ExecutionRepository::class),
-        Mockery::mock(ParallelExecutorInterface::class),
-        Mockery::mock(RouterResolverInterface::class),
-        $factory,
-        Mockery::mock(Container::class),
-        null,
-        new ExecutionContextManager(
-            null,
-            null,
-            new TraceContextFactory,
-            new ExecutionClockFactory,
-            app(),
-            new NullLogger
-        )
-    );
-    $method = new ReflectionMethod(StreamingExecutionCoordinator::class, 'nextNodeSeq');
-    $method->setAccessible(true);
+    $context = new StreamContext($session);
 
-    $nodeSeqs = new stdClass;
-
-    $first = $method->invoke($executor, $nodeSeqs, 'node-a');
-    $second = $method->invoke($executor, $nodeSeqs, 'node-a');
-    $third = $method->invoke($executor, $nodeSeqs, 'node-b');
+    $context->resetNodeSeq('node-a');
+    $first = $context->nextNodeSeq('node-a');
+    $second = $context->nextNodeSeq('node-a');
+    $context->resetNodeSeq('node-b');
+    $third = $context->nextNodeSeq('node-b');
 
     expect($first)->toBe(1)
         ->and($second)->toBe(2)
