@@ -60,13 +60,18 @@ use Shahzad\AgenticGraph\Streaming\StreamErrorHandler;
 use Shahzad\AgenticGraph\Streaming\StreamingExecutionCoordinator;
 use Shahzad\AgenticGraph\Streaming\StreamObserverFactory;
 use Shahzad\AgenticGraph\Streaming\StreamSinkFactory;
+use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\ExecutionClockFactory;
+use Shahzad\AgenticGraph\Tracing\Exporters\LogExporter;
+use Shahzad\AgenticGraph\Tracing\Exporters\NullExporter;
 use Shahzad\AgenticGraph\Tracing\Instrumentation\DatabaseInstrumentation;
 use Shahzad\AgenticGraph\Tracing\Instrumentation\HttpClientInstrumentation;
 use Shahzad\AgenticGraph\Tracing\Listeners\TracingListener;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 use Shahzad\AgenticGraph\Tracing\TraceContextFactory;
+use Shahzad\AgenticGraph\Tracing\Tracer;
+use Shahzad\AgenticGraph\Tracing\TracerExporterFactory;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
 
@@ -116,10 +121,12 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
             return new GraphRegistry;
         });
 
-        // Register PulseExporter as singleton
-        $this->app->singleton(PulseExporter::class, function ($app) {
-            return new PulseExporter;
-        });
+        // Register tracer exporters (open-core: contract + pulse premium + OSS fallbacks)
+        $this->app->singleton(PulseExporter::class, fn () => new PulseExporter);
+        $this->app->singleton(LogExporter::class, fn () => new LogExporter);
+        $this->app->singleton(NullExporter::class, fn () => new NullExporter);
+        $this->app->singleton(TracerExporter::class, fn ($app) => TracerExporterFactory::make($app));
+        $this->app->singleton(Tracer::class, fn ($app) => new Tracer($app->make(TracerExporter::class)));
 
         // Register StateManager as singleton with dependencies
         $this->app->singleton(StateManager::class, function ($app) {
@@ -141,9 +148,7 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
                 $app,
                 $app->make(Dispatcher::class),
                 config('agenticgraph.middleware.global'),
-                static fn (): ?TraceContext => $app->bound(TraceContext::class)
-                    ? $app->make(TraceContext::class)
-                    : null,
+                static fn (): ?TraceContext => TraceContext::tryGet(),
             );
         });
 
@@ -166,7 +171,7 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
 
         $this->app->singleton(ExecutionContextManager::class, function ($app) {
             return new ExecutionContextManager(
-                $app->bound(PulseExporter::class) ? $app->make(PulseExporter::class) : null,
+                $app->bound(TracerExporter::class) ? $app->make(TracerExporter::class) : null,
                 $app->bound(HttpClientInstrumentation::class)
                     ? $app->make(HttpClientInstrumentation::class)
                     : null,
@@ -297,7 +302,7 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
                 (bool) config('agenticgraph.interrupts.broadcast_enabled', true),
                 (int) config('agenticgraph.interrupts.default_expiry_days', 7),
                 (bool) config('agenticgraph.logging.enabled', true),
-                $app->bound(PulseExporter::class) ? $app->make(PulseExporter::class) : null
+                $app->bound(TracerExporter::class) ? $app->make(TracerExporter::class) : null
             );
         });
 
@@ -354,7 +359,7 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
         // Register database instrumentation as singleton
         $this->app->singleton(DatabaseInstrumentation::class, function ($app) {
             return new DatabaseInstrumentation(
-                $app[PulseExporter::class],
+                $app->make(TracerExporter::class),
                 (float) config('agenticgraph.tracing.db.slow_threshold_ms', 1000)
             );
         });

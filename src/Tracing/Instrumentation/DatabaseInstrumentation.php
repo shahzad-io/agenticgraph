@@ -4,10 +4,9 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph\Tracing\Instrumentation;
 
-use Illuminate\Contracts\Container\BindingResolutionException;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Events\QueryExecuted;
-use Shahzad\AgenticGraph\Tracing\PulseExporter;
+use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 
 /**
@@ -17,7 +16,7 @@ use Shahzad\AgenticGraph\Tracing\TraceContext;
 class DatabaseInstrumentation
 {
     public function __construct(
-        private readonly PulseExporter $exporter,
+        private readonly TracerExporter $exporter,
         private readonly float $slowThresholdMs
     ) {}
 
@@ -38,12 +37,8 @@ class DatabaseInstrumentation
             return;
         }
 
-        // Only instrument if we're in an active trace
-        $traceContext = null;
-        try {
-            $traceContext = app(TraceContext::class);
-        } catch (BindingResolutionException $e) {
-            // TraceContext not bound, tracing not active
+        $traceContext = TraceContext::tryGet();
+        if ($traceContext === null) {
             return;
         }
 

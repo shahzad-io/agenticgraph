@@ -36,7 +36,7 @@ use Shahzad\AgenticGraph\Middleware\ValidationMiddleware;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\State\StateManager;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
-use Shahzad\AgenticGraph\Tracing\PulseExporter;
+use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 
 class StreamingExecutionCoordinator implements StreamingExecutorInterface
@@ -58,7 +58,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
         private readonly RouterResolverInterface $routerResolver,
         private readonly StreamSinkFactory $sinkFactory,
         private readonly Container $container,
-        private readonly ?PulseExporter $pulseExporter = null,
+        private readonly ?TracerExporter $tracerExporter = null,
         ?ExecutionContextManager $contextManager = null
     ) {
         $loopConfig = config('agenticgraph.execution.loop', []);
@@ -265,7 +265,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                 $this->repo->started($executionId, $graph->name, State::toStoragePayload($state), $session->streamId);
             }
 
-            if ($this->pulseExporter && $this->pulseExporter->isEnabled() && $this->pulseExporter->getTraceStartTime($executionId) === null) {
+            if ($this->tracerExporter && $this->tracerExporter->isEnabled() && $this->tracerExporter->getTraceStartTime($executionId) === null) {
                 $executionStartDt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', microtime(true))) ?: new \DateTimeImmutable;
                 $this->events->dispatch(new GraphExecutionStarted($executionId, $graph->name, $state, $executionStartDt, $traceContext->getRootSpanId()));
             }

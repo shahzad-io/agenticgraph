@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph\Events;
 
-use Illuminate\Contracts\Container\BindingResolutionException;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\SerializesModels;
 use Shahzad\AgenticGraph\Tracing\ExecutionClock;
@@ -52,11 +51,7 @@ class TokensUsed implements ShouldQueue
         ?string $response = null
     ): self {
         $clock = ExecutionClock::tryGet();
-        $traceContext = null;
-        try {
-            $traceContext = app(TraceContext::class);
-        } catch (BindingResolutionException $e) {
-        }
+        $traceContext = TraceContext::tryGet();
 
         $executionId = $traceContext?->getExecutionId() ?? $clock?->getExecutionId();
         $parentSpanId = $traceContext?->getSpanId();

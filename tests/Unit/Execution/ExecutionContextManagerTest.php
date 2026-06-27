@@ -7,10 +7,10 @@ use Shahzad\AgenticGraph\Execution\ExecutionContextManager;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
 use Shahzad\AgenticGraph\Execution\LoopMetadata;
 use Shahzad\AgenticGraph\State\State;
+use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\ExecutionClock;
 use Shahzad\AgenticGraph\Tracing\ExecutionClockFactory;
 use Shahzad\AgenticGraph\Tracing\Instrumentation\HttpClientInstrumentation;
-use Shahzad\AgenticGraph\Tracing\PulseExporter;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 use Shahzad\AgenticGraph\Tracing\TraceContextFactory;
 
@@ -141,7 +141,7 @@ it('leaves loop metadata unbound when not provided', function () {
 
 it('exits successfully and cleans up scope bindings', function () {
     $executionId = 'exec-5';
-    $exporter = Mockery::mock(PulseExporter::class);
+    $exporter = Mockery::mock(TracerExporter::class);
     $exporter->shouldReceive('isEnabled')->andReturn(true);
     $exporter->shouldReceive('completeTrace')
         ->once()
@@ -166,7 +166,7 @@ it('exits successfully and cleans up scope bindings', function () {
 
 it('continues cleanup when pulse export fails', function () {
     $executionId = 'exec-7';
-    $exporter = Mockery::mock(PulseExporter::class);
+    $exporter = Mockery::mock(TracerExporter::class);
     $exporter->shouldReceive('isEnabled')->andReturn(true);
     $exporter->shouldReceive('completeTrace')->andThrow(new RuntimeException('fail'));
     $instrumentation = Mockery::mock(HttpClientInstrumentation::class);
@@ -195,7 +195,7 @@ it('continues cleanup when pulse export fails', function () {
 
 it('exits with exception and cleans up scope bindings', function () {
     $executionId = 'exec-6';
-    $exporter = Mockery::mock(PulseExporter::class);
+    $exporter = Mockery::mock(TracerExporter::class);
     $exporter->shouldReceive('isEnabled')->andReturn(true);
     $exporter->shouldReceive('failTrace')
         ->once()

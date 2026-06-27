@@ -11,8 +11,8 @@ use Illuminate\Http\Client\Events\ResponseReceived;
 use Illuminate\Http\Client\Request;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Log;
+use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\ExecutionClock;
-use Shahzad\AgenticGraph\Tracing\PulseExporter;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 
 class HttpClientInstrumentation
@@ -26,7 +26,7 @@ class HttpClientInstrumentation
     private array $loggedMissingStarts = [];
 
     public function __construct(
-        protected PulseExporter $exporter
+        protected TracerExporter $exporter
     ) {}
 
     /**

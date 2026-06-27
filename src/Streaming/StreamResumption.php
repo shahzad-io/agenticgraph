@@ -12,7 +12,7 @@ use Shahzad\AgenticGraph\Execution\LoopMetadata;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Nodes\PrismNode;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
-use Shahzad\AgenticGraph\Tracing\PulseExporter;
+use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 
 final class StreamResumption
@@ -72,8 +72,8 @@ final class StreamResumption
             $traceContext = TraceContext::fromArray($checkpoint->metadata['trace_context']);
             app()->instance(TraceContext::class, $traceContext);
 
-            if (app()->bound(PulseExporter::class)) {
-                $exporter = app(PulseExporter::class);
+            if (app()->bound(TracerExporter::class)) {
+                $exporter = app(TracerExporter::class);
                 if ($exporter->isEnabled()) {
                     $exporter->resumeTrace($executionId);
                 }

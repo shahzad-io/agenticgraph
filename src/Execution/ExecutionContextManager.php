@@ -8,17 +8,17 @@ use Illuminate\Contracts\Container\Container;
 use Psr\Log\LoggerInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Graph\Graph;
+use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\ExecutionClock;
 use Shahzad\AgenticGraph\Tracing\ExecutionClockFactory;
 use Shahzad\AgenticGraph\Tracing\Instrumentation\HttpClientInstrumentation;
-use Shahzad\AgenticGraph\Tracing\PulseExporter;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 use Shahzad\AgenticGraph\Tracing\TraceContextFactory;
 
 final class ExecutionContextManager implements ExecutionScopeInterface
 {
     public function __construct(
-        private readonly ?PulseExporter $pulseExporter,
+        private readonly ?TracerExporter $tracerExporter,
         private readonly ?HttpClientInstrumentation $httpClientInstrumentation,
         private readonly TraceContextFactory $traceContextFactory,
         private readonly ExecutionClockFactory $executionClockFactory,
@@ -155,10 +155,10 @@ final class ExecutionContextManager implements ExecutionScopeInterface
         $durationMs = (microtime(true) - $scope->startTime) * 1000;
 
         try {
-            if ($finalState !== null && $this->pulseExporter && $this->pulseExporter->isEnabled()) {
+            if ($finalState !== null && $this->tracerExporter && $this->tracerExporter->isEnabled()) {
                 $finalStateData = $finalState->toArray();
                 $finalStateKeys = array_keys($finalStateData);
-                $this->pulseExporter->completeTrace(
+                $this->tracerExporter->completeTrace(
                     $scope->executionId,
                     $finalStateKeys,
                     $durationMs,
@@ -203,8 +203,8 @@ final class ExecutionContextManager implements ExecutionScopeInterface
         $durationMs = (microtime(true) - $scope->startTime) * 1000;
 
         try {
-            if ($this->pulseExporter && $this->pulseExporter->isEnabled()) {
-                $this->pulseExporter->failTrace($scope->executionId, $e, $durationMs, null);
+            if ($this->tracerExporter && $this->tracerExporter->isEnabled()) {
+                $this->tracerExporter->failTrace($scope->executionId, $e, $durationMs, null);
             }
         } catch (\Throwable $cleanupException) {
             $this->logger->warning('Execution cleanup failed', [

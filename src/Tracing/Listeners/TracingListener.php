@@ -16,16 +16,16 @@ use Shahzad\AgenticGraph\Events\NodeResumed;
 use Shahzad\AgenticGraph\Events\TokensUsed;
 use Shahzad\AgenticGraph\Events\ToolCallCaptured;
 use Shahzad\AgenticGraph\Execution\ExecutionContext;
-use Shahzad\AgenticGraph\Tracing\PulseExporter;
+use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 
 /**
- * Listens to graph execution events and forwards to PulseExporter.
+ * Listens to graph execution events and forwards to the configured TracerExporter.
  * Supports configurable capture settings for state, prompts, and responses.
  */
 class TracingListener
 {
-    protected PulseExporter $exporter;
+    protected TracerExporter $exporter;
 
     /** @var array<string, float> */
     protected array $spanStarts = [];
@@ -48,7 +48,7 @@ class TracingListener
 
     protected int $captureMaxLength;
 
-    public function __construct(PulseExporter $exporter)
+    public function __construct(TracerExporter $exporter)
     {
         $this->exporter = $exporter;
 

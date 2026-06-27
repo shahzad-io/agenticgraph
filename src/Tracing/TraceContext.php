@@ -104,6 +104,14 @@ final class TraceContext
     }
 
     /**
+     * Return the container-bound trace context for the current execution, if any.
+     */
+    public static function tryGet(): ?self
+    {
+        return app()->bound(self::class) ? app(self::class) : null;
+    }
+
+    /**
      * Convert TraceContext to array for serialization (e.g., checkpoint storage).
      *
      * @return array<string, mixed>

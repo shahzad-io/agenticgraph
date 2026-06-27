@@ -13,6 +13,7 @@ use Shahzad\AgenticGraph\Events\GraphExecutionStarted;
 use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
 use Shahzad\AgenticGraph\Events\TokensUsed;
 use Shahzad\AgenticGraph\State\State;
+use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\Instrumentation\DatabaseInstrumentation;
 use Shahzad\AgenticGraph\Tracing\Listeners\TracingListener;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
@@ -22,6 +23,7 @@ function enableTracingForBufferTests(): PulseExporter
 {
     config([
         'agenticgraph.tracing.enabled' => true,
+        'agenticgraph.tracing.exporter' => 'pulse',
         'agenticgraph.tracing.api_key' => 'pk_test_buffer',
         'agenticgraph.tracing.endpoint' => 'https://api.example.com',
     ]);
@@ -51,7 +53,7 @@ function registerDatabaseCacheForBufferTests(): void
     Cache::flush();
 }
 
-function registerDatabaseInstrumentation(PulseExporter $exporter): DatabaseInstrumentation
+function registerDatabaseInstrumentation(TracerExporter $exporter): DatabaseInstrumentation
 {
     $instrumentation = new DatabaseInstrumentation($exporter, 1000.0);
     $instrumentation->register(app('events'));
@@ -195,6 +197,7 @@ it('still captures graph node and llm spans through the listener stack', functio
 
     config([
         'agenticgraph.tracing.enabled' => true,
+        'agenticgraph.tracing.exporter' => 'pulse',
         'agenticgraph.tracing.api_key' => 'pk_test_listener',
         'agenticgraph.tracing.endpoint' => 'https://api.example.com',
         'agenticgraph.tracing.capture.state' => 'diff',
@@ -204,7 +207,7 @@ it('still captures graph node and llm spans through the listener stack', functio
 
     app()->forgetInstance('request');
 
-    $exporter = app(PulseExporter::class);
+    $exporter = app(TracerExporter::class);
     $listener = new TracingListener($exporter);
 
     $executionId = 'exec-listener';

@@ -8,13 +8,14 @@ use Illuminate\Http\Client\Response;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 
 /**
- * Exports traces to AgenticPulse SaaS.
+ * Premium tracer exporter for AgenticPulse SaaS.
  * Buffers spans in memory during execution and flushes once on completion.
  * Supports payload size management with automatic truncation.
  */
-class PulseExporter
+class PulseExporter implements TracerExporter
 {
     /** @var array<string, array<string, mixed>> */
     private array $traces = [];

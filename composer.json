@@ -83,7 +83,8 @@
                 "Shahzad\\AgenticGraph\\AgenticGraphServiceProvider"
             ],
             "aliases": {
-                "AgenticGraph": "Shahzad\\AgenticGraph\\Facades\\AgenticGraph"
+                "AgenticGraph": "Shahzad\\AgenticGraph\\Facades\\AgenticGraph",
+                "Trace": "Shahzad\\AgenticGraph\\Facades\\Trace"
             }
         }
     },

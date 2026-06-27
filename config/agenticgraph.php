@@ -173,7 +173,10 @@ return [
     'tracing' => [
         'enabled' => env('AGENTICGRAPH_TRACING', false),
 
-        // AgenticPulse API credentials
+        // Exporter driver: auto (pulse when api_key set, else log), pulse, log, null
+        'exporter' => env('AGENTICGRAPH_TRACING_EXPORTER', 'auto'),
+
+        // AgenticPulse API credentials (required only for exporter=pulse or auto with key)
         'api_key' => env('AGENTICPULSE_API_KEY'),
         'endpoint' => env('AGENTICPULSE_ENDPOINT', 'https://api.agenticpulse.io'),
 

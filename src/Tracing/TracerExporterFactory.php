@@ -1,0 +1,32 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Shahzad\AgenticGraph\Tracing;
+
+use Illuminate\Contracts\Container\Container;
+use InvalidArgumentException;
+use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
+use Shahzad\AgenticGraph\Tracing\Exporters\LogExporter;
+use Shahzad\AgenticGraph\Tracing\Exporters\NullExporter;
+
+final class TracerExporterFactory
+{
+    public static function make(Container $container): TracerExporter
+    {
+        $driver = (string) config('agenticgraph.tracing.exporter', 'auto');
+
+        if ($driver === 'auto') {
+            $driver = filled(config('agenticgraph.tracing.api_key'))
+                ? 'pulse'
+                : 'log';
+        }
+
+        return match ($driver) {
+            'pulse' => $container->make(PulseExporter::class),
+            'log' => $container->make(LogExporter::class),
+            'null' => $container->make(NullExporter::class),
+            default => throw new InvalidArgumentException("Unknown agenticgraph tracing exporter [{$driver}]. Supported: auto, pulse, log, null."),
+        };
+    }
+}

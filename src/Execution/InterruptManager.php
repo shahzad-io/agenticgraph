@@ -23,7 +23,7 @@ use Shahzad\AgenticGraph\Streaming\StreamLifecycleEventEmitter;
 use Shahzad\AgenticGraph\Streaming\StreamLifecycleEventTypes;
 use Shahzad\AgenticGraph\Streaming\StreamSession;
 use Shahzad\AgenticGraph\Streaming\StreamStatus;
-use Shahzad\AgenticGraph\Tracing\PulseExporter;
+use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 
 final class InterruptManager implements InterruptServiceInterface
@@ -43,7 +43,7 @@ final class InterruptManager implements InterruptServiceInterface
         private readonly bool $interruptBroadcastEnabled,
         private readonly int $interruptDefaultExpiryDays,
         private readonly bool $loggingEnabled,
-        private readonly ?PulseExporter $pulseExporter = null
+        private readonly ?TracerExporter $tracerExporter = null
     ) {}
 
     public function shouldInterrupt(NodeInterface $node, StateContract $state): bool
@@ -220,8 +220,8 @@ final class InterruptManager implements InterruptServiceInterface
             }
         }
 
-        if ($this->pulseExporter && $this->pulseExporter->isEnabled()) {
-            $this->pulseExporter->interruptTrace($executionId, $reason);
+        if ($this->tracerExporter && $this->tracerExporter->isEnabled()) {
+            $this->tracerExporter->interruptTrace($executionId, $reason);
         }
 
         if ($this->loggingEnabled) {
@@ -259,8 +259,8 @@ final class InterruptManager implements InterruptServiceInterface
             $traceContext = TraceContext::fromArray($checkpoint->metadata['trace_context']);
             $this->container->instance(TraceContext::class, $traceContext);
 
-            if ($this->pulseExporter && $this->pulseExporter->isEnabled()) {
-                $this->pulseExporter->resumeTrace($executionId);
+            if ($this->tracerExporter && $this->tracerExporter->isEnabled()) {
+                $this->tracerExporter->resumeTrace($executionId);
             }
         }
 
@@ -339,8 +339,8 @@ final class InterruptManager implements InterruptServiceInterface
             $traceContext = TraceContext::fromArray($checkpoint->metadata['trace_context']);
             $this->container->instance(TraceContext::class, $traceContext);
 
-            if ($this->pulseExporter && $this->pulseExporter->isEnabled()) {
-                $this->pulseExporter->resumeTrace($executionId);
+            if ($this->tracerExporter && $this->tracerExporter->isEnabled()) {
+                $this->tracerExporter->resumeTrace($executionId);
             }
         }
 

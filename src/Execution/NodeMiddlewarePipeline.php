@@ -125,8 +125,6 @@ final class NodeMiddlewarePipeline
             return ($this->traceContextProvider)();
         }
 
-        return $this->container->bound(TraceContext::class)
-            ? $this->container->make(TraceContext::class)
-            : null;
+        return TraceContext::tryGet();
     }
 }
