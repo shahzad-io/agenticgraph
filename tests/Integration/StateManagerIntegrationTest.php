@@ -100,9 +100,7 @@ describe('state manager integration', function () {
                 'execution_id' => $executionId,
                 'current_node' => 'node-a',
                 'state' => json_encode(['key' => 'value1']),
-                'completed_nodes' => json_encode([]),
-                'pending_nodes' => json_encode([]),
-                'metadata' => json_encode([]),
+                'metadata' => json_encode(['checkpoint_sequence' => 1]),
                 'created_at' => $now,
             ],
             [
@@ -111,9 +109,7 @@ describe('state manager integration', function () {
                 'execution_id' => $executionId,
                 'current_node' => 'node-b',
                 'state' => json_encode(['key' => 'value2']),
-                'completed_nodes' => json_encode(['node-a']),
-                'pending_nodes' => json_encode([]),
-                'metadata' => json_encode([]),
+                'metadata' => json_encode(['checkpoint_sequence' => 2]),
                 'created_at' => $now->copy()->addMinute(),
             ],
         ]);
@@ -139,8 +135,6 @@ describe('state manager integration', function () {
         $checkpoint->graphName = 'test-graph';
         $checkpoint->currentNode = 'node-a';
         $checkpoint->state = new State(['rolled' => 'back']);
-        $checkpoint->completedNodes = [];
-        $checkpoint->pendingNodes = [];
         $checkpoint->metadata = [];
         $checkpoint->createdAt = new DateTimeImmutable;
 
@@ -171,8 +165,6 @@ describe('state manager integration', function () {
         $checkpoint->graphName = 'test-graph';
         $checkpoint->currentNode = 'node-a';
         $checkpoint->state = new State(['data' => 'test']);
-        $checkpoint->completedNodes = [];
-        $checkpoint->pendingNodes = [];
         $checkpoint->metadata = [];
         $checkpoint->createdAt = new DateTimeImmutable;
 

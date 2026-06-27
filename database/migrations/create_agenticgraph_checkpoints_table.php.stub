@@ -13,10 +13,7 @@ return new class extends Migration {
             $table->string('execution_id');
             $table->string('current_node');
             $table->json('state');
-            $table->json('completed_nodes')->nullable();
-            $table->json('pending_nodes')->nullable();
             $table->json('metadata')->nullable();
-            $table->string('parent_checkpoint_id')->nullable();
             $table->timestamp('created_at');
 
             // Add critical indexes for performance
@@ -30,11 +27,6 @@ return new class extends Migration {
                 ->references('id')
                 ->on('agenticgraph_executions')
                 ->cascadeOnDelete();
-
-            $table->foreign('parent_checkpoint_id')
-                ->references('id')
-                ->on('agenticgraph_checkpoints')
-                ->nullOnDelete();
         });
 
     }
@@ -43,7 +35,6 @@ return new class extends Migration {
     {
         Schema::table('agenticgraph_checkpoints', function (Blueprint $table) {
             $table->dropForeign(['execution_id']);
-            $table->dropForeign(['parent_checkpoint_id']);
         });
         Schema::dropIfExists('agenticgraph_checkpoints');
     }

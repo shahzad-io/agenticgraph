@@ -62,19 +62,7 @@ class StateManager
      */
     public function getVersions(string $executionId): array
     {
-        // Get all checkpoints for this execution
-        $checkpoints = $this->db->table('agenticgraph_checkpoints')
-            ->where('execution_id', $executionId)
-            ->orderBy('created_at')
-            ->get()
-            ->map(fn ($row) => [
-                'id' => $row->id,
-                'node' => $row->current_node,
-                'created_at' => $row->created_at,
-            ])
-            ->toArray();
-
-        return $checkpoints;
+        return $this->storage->listForExecution($executionId);
     }
 
     /**

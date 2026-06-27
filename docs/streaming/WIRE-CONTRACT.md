@@ -80,7 +80,7 @@ Enumeratable constants in `StreamLifecycleEventTypes` and `StreamEventEnvelope`.
 | `node_start` | node | `1` | `{ node_name: string }` |
 | `node_complete` | node | increments | `{ node_name: string, duration_ms: number }` + optional state capture |
 | `node_error` | node | increments | `{ node_name: string, error_type: string, message: string }` |
-| `node_interrupt` | node | `null` | `{ node_name: string, reason: string, checkpoint_id: string }` |
+| `node_interrupt` | node | `null` | `{ node_name: string, reason: string, checkpoint_id: string }` + optional review payload |
 | `stream_resume` | resume node | `null` | `{ from_seq, resumed_at_seq, gap_events, checkpoint_id }` |
 | `execution_terminal` | `null` | `null` | `{ status: 'completed'\|'interrupted'\|'failed', final_state: object, meta?: object }` |
 | `stream_close` | — | — | **Not a 9-field body** — see [Terminals](#terminals-two-vocabularies) |
@@ -117,6 +117,18 @@ Controlled by `agenticgraph.streaming.capture.state` (default `none`).
 
 Model these as **presence-conditional** in client types.
 
+#### `node_interrupt` optional review payload
+
+Present when the interrupting node implements `getInterruptPayload()` and returns non-null content (default on `PrismNode` is `null` — no key emitted). Author-defined review content for the UI (forms, drafts, structured decisions).
+
+| Condition | Extra payload key |
+|-----------|-------------------|
+| `getInterruptPayload()` returns non-null | `interrupt_payload: mixed` (author-defined shape) |
+
+The baseline trio (`node_name`, `reason`, `checkpoint_id`) is **always** present. Model `interrupt_payload` as **presence-conditional** in client types.
+
+**Client visibility and author responsibility:** `interrupt_payload` is emitted on broadcast and SSE — it is **client-visible by design** (the human must review it). The package does not filter or redact this content. Authors control what `getInterruptPayload()` returns and must not place secrets or sensitive data in it unless they accept that exposure on the wire. Same responsibility model as tracing payloads: capability + sane default (`null` / off); the author owns the content.
+
 #### `stream_resume.gap_events`
 
 When store replay is enabled, each gap item includes `type` inline (exception to external-type rule):
@@ -150,23 +162,69 @@ When store replay is enabled, each gap item includes `type` inline (exception to
 
 ### Semi-closed Prism content set (version-pinned)
 
-Mapped by `PrismStreamAdapter`. **Pinned to Prism `>=0.99.20 <0.100.0`.** A future Prism upgrade may add types — clients should handle unknown content `type` strings gracefully.
+Mapped by `PrismStreamAdapter` (`src/Streaming/PrismStreamAdapter.php::resolvePayload`). **Pinned to Prism `>=0.99.20 <0.100.0`.** A future Prism upgrade may add types — clients should handle unknown content `type` strings gracefully.
+
+Field types below reflect **what the adapter actually emits** (JSON types after `json_encode`), not Prism's internal `toArray()` shapes.
 
 | `type` | Payload shape |
 |--------|---------------|
-| `text_start` | `{ message_id, timestamp }` |
-| `text_delta` | `{ delta, message_id, timestamp }` |
-| `text_complete` | `{ message_id, timestamp }` |
-| `tool_call` | `{ tool_id, tool_name, arguments, message_id, reasoning_id, timestamp }` |
-| `tool_result` | `{ tool_id, tool_name, result, message_id, success, error, timestamp }` |
-| `thinking_start` | `{ id, timestamp }` |
-| `thinking_delta` | `{ id, delta, summary, timestamp }` |
-| `thinking_complete` | `{ id, summary, timestamp }` |
-| `step_start` | `{ id, timestamp }` (+ `model`, `provider`, `metadata` for legacy stream start) |
-| `step_finish` | `{ id, timestamp }` (+ `finish_reason`, `usage`, `citations`, `additional_content` for stream end) |
-| `provider_tool_event` | `{ event_key, tool_type, status, item_id, data, timestamp }` |
-| `artifact` | `{ tool_call_id, tool_name, message_id, artifact, block_index, metadata, timestamp }` |
-| `error` | `{ error_type, message, recoverable, metadata, timestamp }` |
+| `text_start` | `{ message_id: string, timestamp: integer }` |
+| `text_delta` | `{ delta: string, message_id: string, timestamp: integer }` |
+| `text_complete` | `{ message_id: string, timestamp: integer }` |
+| `tool_call` | `{ tool_id: string, tool_name: string, arguments: object, message_id: string, reasoning_id: string \| null, timestamp: integer }` — `arguments` is `Record<string, mixed>` from `ToolCall::arguments()` |
+| `tool_result` | `{ tool_id: string, tool_name: string, result: number \| string \| array \| null, message_id: string, success: boolean, error: string \| null, timestamp: integer }` — `result` matches `ToolResult::$result` (`int\|float\|string\|array\|null`) |
+| `thinking_start` | `{ id: string, timestamp: integer }` |
+| `thinking_delta` | `{ id: string, delta: string, summary: object \| null, timestamp: integer }` — `summary` is `array<string, mixed> \| null` (`ThinkingEvent::$summary`) |
+| `thinking_complete` | `{ id: string, summary: object \| null, timestamp: integer }` — `summary` is `array<string, mixed> \| null` |
+| `step_start` | `{ id: string, timestamp: integer }` plus optional legacy fields when mapped from `StreamStartEvent` (see below) |
+| `step_finish` | `{ id: string, timestamp: integer }` plus optional legacy fields when mapped from `StreamEndEvent` (see below) |
+| `provider_tool_event` | `{ event_key: string, tool_type: string, status: string, item_id: string, data: object, timestamp: integer }` — `data` is `array<string, mixed>` |
+| `artifact` | `{ tool_call_id: null, tool_name: null, message_id: string, artifact: object, block_index: integer \| null, metadata: object \| null, timestamp: integer }` — mapped from `CitationEvent` only; adapter hardcodes `tool_call_id`/`tool_name` as `null` (lines 189–190); `artifact` is the `Citation` value object JSON-encoded (camelCase keys, see below) |
+| `error` | `{ error_type: string, message: string, recoverable: boolean, metadata: object \| null, timestamp: integer }` — `metadata` is `array<string, mixed> \| null` |
+
+#### `artifact.artifact` (Citation object on the wire)
+
+Emitted as JSON from `Citation` public properties (`PrismStreamAdapter.php:192`):
+
+```json
+{
+  "sourceType": "url",
+  "source": "https://example.com",
+  "sourceText": "string|null",
+  "sourceTitle": "string|null",
+  "sourcePositionType": "string|null",
+  "sourceStartIndex": "integer|null",
+  "sourceEndIndex": "integer|null",
+  "additionalContent": {}
+}
+```
+
+`sourceType` / `sourcePositionType` are backed enum **values** (strings). `source` is `string|integer`.
+
+#### Legacy `step_start` fields (`StreamStartEvent` mapping only)
+
+Present only when `step_start` is produced from Prism `StreamStartEvent` (not from `StepStartEvent`):
+
+| Field | Type |
+|-------|------|
+| `model` | `string` |
+| `provider` | `string` |
+| `metadata` | `object \| null` (`array<string, mixed> \| null`) |
+
+`StepStartEvent` mapping emits only `{ id, timestamp }`.
+
+#### Legacy `step_finish` fields (`StreamEndEvent` mapping only)
+
+Present only when `step_finish` is produced from Prism `StreamEndEvent` (not from `StepFinishEvent`):
+
+| Field | Type |
+|-------|------|
+| `finish_reason` | `string` (enum name, e.g. `"Stop"`) |
+| `usage` | `object \| null` — `{ prompt_tokens, completion_tokens, cache_write_input_tokens, cache_read_input_tokens, thought_tokens }` (integers; cache/thought fields nullable) |
+| `citations` | `array \| null` — provider-specific citation parts; shape varies (loose; do not build logic against the inner structure) |
+| `additional_content` | `object` (`array<string, mixed>`; defaults to `{}`) |
+
+`StepFinishEvent` mapping emits only `{ id, timestamp }`.
 
 Prism content events: **no** `payload.stream` nesting; `node_seq` continues the per-node sequence.
 

@@ -7,6 +7,7 @@ namespace Shahzad\AgenticGraph\Storage;
 use Shahzad\AgenticGraph\Contracts\StorageInterface;
 use Shahzad\AgenticGraph\Execution\Checkpoint;
 use Shahzad\AgenticGraph\State\State;
+use Shahzad\AgenticGraph\Support\CheckpointVersionOrdering;
 
 class FileStorage implements StorageInterface
 {
@@ -48,11 +49,8 @@ class FileStorage implements StorageInterface
             'execution_id' => $checkpoint->executionId,
             'state' => $statePayload,
             'current_node' => $checkpoint->currentNode,
-            'completed_nodes' => $checkpoint->completedNodes,
-            'pending_nodes' => $checkpoint->pendingNodes,
             'metadata' => $checkpoint->metadata,
             'created_at' => $checkpoint->createdAt->format('c'),
-            'parent_checkpoint_id' => $checkpoint->parentCheckpointId,
         ]), LOCK_EX);
 
         // Update index for fast listing
@@ -74,20 +72,38 @@ class FileStorage implements StorageInterface
 
     public function loadLatestForExecution(string $executionId): ?Checkpoint
     {
-        $index = $this->loadIndex();
-        $filtered = array_filter($index, fn ($item) => $item['execution_id'] === $executionId);
-        if ($filtered === []) {
+        $versions = $this->listForExecution($executionId);
+        if ($versions === []) {
             return null;
         }
-        usort($filtered, fn ($a, $b) => $b['created_at'] <=> $a['created_at']);
-        $latest = $filtered[0];
-        $path = $this->path($latest['id']);
-        if (! file_exists($path)) {
-            return null;
-        }
-        $data = json_decode(file_get_contents($path), true) ?? [];
 
-        return $this->hydrateCheckpoint($data);
+        $latest = $versions[array_key_last($versions)];
+
+        return $this->load($latest['id']);
+    }
+
+    /**
+     * @return array<int, array{id: string, node: string, created_at: string}>
+     */
+    public function listForExecution(string $executionId): array
+    {
+        $index = $this->loadIndex();
+        $filtered = array_values(array_filter(
+            $index,
+            fn (array $item): bool => $item['execution_id'] === $executionId
+        ));
+
+        $rows = array_map(
+            static fn (array $item): array => [
+                'id' => $item['id'],
+                'node' => $item['current_node'],
+                'created_at' => $item['created_at'],
+                'sequence' => (int) ($item['checkpoint_sequence'] ?? 0),
+            ],
+            $filtered
+        );
+
+        return CheckpointVersionOrdering::sortAscending($rows);
     }
 
     /**
@@ -154,7 +170,7 @@ class FileStorage implements StorageInterface
     }
 
     /**
-     * @return array<int, array{id: string, graph_name: string, execution_id: string, current_node: string, created_at: string}>
+     * @return array<int, array{id: string, graph_name: string, execution_id: string, current_node: string, created_at: string, checkpoint_sequence?: int}>
      */
     private function loadIndex(): array
     {
@@ -181,6 +197,7 @@ class FileStorage implements StorageInterface
             'execution_id' => $checkpoint->executionId,
             'current_node' => $checkpoint->currentNode,
             'created_at' => $checkpoint->createdAt->format('c'),
+            'checkpoint_sequence' => (int) ($checkpoint->metadata['checkpoint_sequence'] ?? 0),
         ];
 
         // Write atomically
@@ -195,7 +212,7 @@ class FileStorage implements StorageInterface
     }
 
     /**
-     * @param  array<int, array{id: string, graph_name: string, execution_id: string, current_node: string, created_at: string}>  $index
+     * @param  array<int, array{id: string, graph_name: string, execution_id: string, current_node: string, created_at: string, checkpoint_sequence?: int}>  $index
      */
     private function writeIndex(array $index): void
     {
@@ -215,11 +232,8 @@ class FileStorage implements StorageInterface
         $c->executionId = $data['execution_id'] ?? '';
         $c->state = State::fromArray($data['state'] ?? []);
         $c->currentNode = $data['current_node'] ?? '';
-        $c->completedNodes = $data['completed_nodes'] ?? [];
-        $c->pendingNodes = $data['pending_nodes'] ?? [];
         $c->metadata = $data['metadata'] ?? [];
         $c->createdAt = new \DateTimeImmutable($data['created_at'] ?? 'now');
-        $c->parentCheckpointId = $data['parent_checkpoint_id'] ?? null;
 
         return $c;
     }

@@ -57,12 +57,9 @@ class CheckpointManager
 
     public function saveInterrupt(string $executionId, Checkpoint $checkpoint): string
     {
-        $id = $this->saveWithOptions($executionId, $checkpoint, true);
-        if ($id === null) {
-            throw new \RuntimeException('Interrupt checkpoint was not saved.');
-        }
+        $checkpoint->metadata['checkpoint_sequence'] = $this->nextCheckpointSequence($executionId);
 
-        return $id;
+        return $this->persistCheckpoint($executionId, $checkpoint);
     }
 
     private function saveWithOptions(string $executionId, Checkpoint $checkpoint, bool $force): ?string
@@ -77,6 +74,8 @@ class CheckpointManager
         if ($this->checkpointFrequency > 1 && $nodeCount % $this->checkpointFrequency !== 0) {
             return null;
         }
+
+        $checkpoint->metadata['checkpoint_sequence'] = $nodeCount;
 
         return $this->persistCheckpoint($executionId, $checkpoint);
     }
@@ -203,6 +202,22 @@ class CheckpointManager
         if ($this->executions !== null) {
             $this->executions->setCheckpointNodeCount($executionId, $count);
         }
+    }
+
+    private function nextCheckpointSequence(string $executionId): int
+    {
+        $maxSequence = 0;
+
+        foreach ($this->storage->listForExecution($executionId) as $version) {
+            $loaded = $this->storage->load($version['id']);
+            if ($loaded === null) {
+                continue;
+            }
+
+            $maxSequence = max($maxSequence, (int) ($loaded->metadata['checkpoint_sequence'] ?? 0));
+        }
+
+        return $maxSequence + 1;
     }
 
     /**

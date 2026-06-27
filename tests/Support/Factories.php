@@ -53,8 +53,6 @@ function createCheckpoint(string $graph = 'g', string $exec = 'e'): Checkpoint
     $c->executionId = $exec;
     $c->state = createTestState();
     $c->currentNode = 'node1';
-    $c->completedNodes = [];
-    $c->pendingNodes = [];
     $c->metadata = [];
     $c->createdAt = new DateTimeImmutable;
 

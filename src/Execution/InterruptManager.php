@@ -108,7 +108,8 @@ final class InterruptManager implements InterruptServiceInterface
             reason: $reason,
             checkpointId: $checkpointId,
             stateSnapshot: $state->toArray(),
-            interruptedAt: new \DateTimeImmutable
+            interruptedAt: new \DateTimeImmutable,
+            interruptPayload: $interruptPayload,
         ));
 
         $metadata = $state->getMetadata();
@@ -179,6 +180,16 @@ final class InterruptManager implements InterruptServiceInterface
 
         $sink = $streamContext?->sink();
         if ($sink && $session) {
+            $nodeInterruptPayload = [
+                'node_name' => $nodeName,
+                'reason' => $reason,
+                'checkpoint_id' => $checkpointId,
+            ];
+
+            if ($interruptPayload !== null) {
+                $nodeInterruptPayload['interrupt_payload'] = $interruptPayload;
+            }
+
             $this->emitLifecycleEvent(
                 $sink,
                 $session,
@@ -186,11 +197,7 @@ final class InterruptManager implements InterruptServiceInterface
                 $traceContext?->getSpanId(),
                 $traceContext?->getParentSpanId(),
                 StreamLifecycleEventTypes::NODE_INTERRUPT,
-                [
-                    'node_name' => $nodeName,
-                    'reason' => $reason,
-                    'checkpoint_id' => $checkpointId,
-                ]
+                $nodeInterruptPayload
             );
 
             if ($session->options->interrupts) {

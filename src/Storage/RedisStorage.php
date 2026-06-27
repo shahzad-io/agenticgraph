@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Redis;
 use Shahzad\AgenticGraph\Contracts\StorageInterface;
 use Shahzad\AgenticGraph\Execution\Checkpoint;
 use Shahzad\AgenticGraph\State\State;
+use Shahzad\AgenticGraph\Support\CheckpointVersionOrdering;
 
 class RedisStorage implements StorageInterface
 {
@@ -22,16 +23,20 @@ class RedisStorage implements StorageInterface
             'execution_id' => $checkpoint->executionId,
             'state' => $checkpoint->state->toArray(),
             'current_node' => $checkpoint->currentNode,
-            'completed_nodes' => $checkpoint->completedNodes,
-            'pending_nodes' => $checkpoint->pendingNodes,
             'metadata' => $checkpoint->metadata,
             'created_at' => $checkpoint->createdAt->format('c'),
-            'parent_checkpoint_id' => $checkpoint->parentCheckpointId,
         ]);
         Redis::set($key, $payload);
         $ttl = (int) config('agenticgraph.checkpoint.ttl', 7) * 86400;
         if ($ttl > 0) {
             Redis::expire($key, $ttl);
+        }
+
+        $sequence = (int) ($checkpoint->metadata['checkpoint_sequence'] ?? 0);
+        $score = $sequence > 0 ? $sequence : microtime(true);
+        Redis::zadd($this->executionIndexKey($checkpoint->executionId), $score, $checkpoint->id);
+        if ($ttl > 0) {
+            Redis::expire($this->executionIndexKey($checkpoint->executionId), $ttl);
         }
 
         return $checkpoint->id;
@@ -50,18 +55,50 @@ class RedisStorage implements StorageInterface
         $c->executionId = $data['execution_id'] ?? '';
         $c->state = State::fromArray($data['state'] ?? []);
         $c->currentNode = $data['current_node'] ?? '';
-        $c->completedNodes = $data['completed_nodes'] ?? [];
-        $c->pendingNodes = $data['pending_nodes'] ?? [];
         $c->metadata = $data['metadata'] ?? [];
         $c->createdAt = new \DateTimeImmutable($data['created_at'] ?? 'now');
-        $c->parentCheckpointId = $data['parent_checkpoint_id'] ?? null;
 
         return $c;
     }
 
     public function loadLatestForExecution(string $executionId): ?Checkpoint
     {
-        return null;
+        $versions = $this->listForExecution($executionId);
+        if ($versions === []) {
+            return null;
+        }
+
+        $latest = $versions[array_key_last($versions)];
+
+        return $this->load($latest['id']);
+    }
+
+    /**
+     * @return array<int, array{id: string, node: string, created_at: string}>
+     */
+    public function listForExecution(string $executionId): array
+    {
+        $ids = Redis::zrange($this->executionIndexKey($executionId), 0, -1);
+        if ($ids === [] || $ids === false) {
+            return [];
+        }
+
+        $rows = [];
+        foreach ($ids as $id) {
+            $checkpoint = $this->load((string) $id);
+            if ($checkpoint === null) {
+                continue;
+            }
+
+            $rows[] = [
+                'id' => $checkpoint->id,
+                'node' => $checkpoint->currentNode,
+                'created_at' => $checkpoint->createdAt->format('c'),
+                'sequence' => (int) ($checkpoint->metadata['checkpoint_sequence'] ?? 0),
+            ];
+        }
+
+        return CheckpointVersionOrdering::sortAscending($rows);
     }
 
     /**
@@ -74,11 +111,21 @@ class RedisStorage implements StorageInterface
 
     public function delete(string $id): bool
     {
+        $checkpoint = $this->load($id);
+        if ($checkpoint !== null) {
+            Redis::zrem($this->executionIndexKey($checkpoint->executionId), $id);
+        }
+
         return Redis::del($this->prefix.$id) > 0;
     }
 
     public function cleanup(int $olderThanDays = 30): int
     {
         return 0;
+    }
+
+    private function executionIndexKey(string $executionId): string
+    {
+        return $this->prefix.'exec:'.$executionId;
     }
 }

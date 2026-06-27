@@ -49,25 +49,20 @@ describe('instance methods', function () {
         expect($decompressed->get('payload'))->toBe(str_repeat('a', 100));
     });
 
-    it('gets versions from database', function () {
+    it('gets versions from storage driver', function () {
         $executionId = 'exec-123';
-        $checkpoints = [
-            (object) ['id' => 'chk-1', 'current_node' => 'node-a', 'created_at' => '2024-01-01 10:00:00'],
-            (object) ['id' => 'chk-2', 'current_node' => 'node-b', 'created_at' => '2024-01-01 10:01:00'],
+        $versions = [
+            ['id' => 'chk-1', 'node' => 'node-a', 'created_at' => '2024-01-01 10:00:00'],
+            ['id' => 'chk-2', 'node' => 'node-b', 'created_at' => '2024-01-01 10:01:00'],
         ];
 
-        $query = Mockery::mock();
-        $query->shouldReceive('where')->with('execution_id', $executionId)->andReturnSelf();
-        $query->shouldReceive('orderBy')->with('created_at')->andReturnSelf();
-        $query->shouldReceive('get')->andReturn(collect($checkpoints));
+        $this->storage->shouldReceive('listForExecution')
+            ->with($executionId)
+            ->andReturn($versions);
 
-        $this->db->shouldReceive('table')->with('agenticgraph_checkpoints')->andReturn($query);
+        $result = $this->stateManager->getVersions($executionId);
 
-        $versions = $this->stateManager->getVersions($executionId);
-
-        expect($versions)->toHaveCount(2)
-            ->and($versions[0]['id'])->toBe('chk-1')
-            ->and($versions[0]['node'])->toBe('node-a');
+        expect($result)->toBe($versions);
     });
 
     it('rolls back to checkpoint', function () {

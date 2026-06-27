@@ -136,6 +136,26 @@ it('prism node processes human input on resume', function () {
     expect($result->get('approval_comments'))->toBe('LGTM');
 });
 
+it('node interrupted event includes interrupt payload when provided', function () {
+    Event::fake([NodeInterrupted::class]);
+
+    $graph = GraphBuilder::create('payload-interrupt-graph')
+        ->addNode('approve', PayloadInterruptNode::class)
+        ->setEntryPoint('approve')
+        ->addExitPoint('approve')
+        ->build();
+
+    $executor = new GraphExecutor;
+    app(GraphRegistry::class)->register('payload-interrupt-graph', $graph);
+
+    $executor->execute($graph, new State(['topic' => 'Payload test']));
+
+    Event::assertDispatched(NodeInterrupted::class, function (NodeInterrupted $event): bool {
+        return $event->interruptPayload !== null
+            && ($event->interruptPayload['title'] ?? null) === 'Needs review';
+    });
+});
+
 it('node interrupted event is dispatched correctly', function () {
     $event = new NodeInterrupted(
         executionId: 'exec-123',

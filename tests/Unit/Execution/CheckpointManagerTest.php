@@ -11,6 +11,7 @@ use Shahzad\AgenticGraph\State\State;
 
 beforeEach(function () {
     $this->storage = Mockery::mock(StorageInterface::class);
+    $this->storage->shouldReceive('listForExecution')->byDefault()->andReturn([]);
     $this->db = Mockery::mock(DatabaseManager::class);
     $this->events = Mockery::mock(Dispatcher::class);
 });

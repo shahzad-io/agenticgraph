@@ -104,14 +104,6 @@ return [
         'half_open_requests' => env('AGENTICGRAPH_CIRCUIT_BREAKER_HALF_OPEN', 3), // Requests to test in half-open state
     ],
 
-    'events' => [
-        'batching' => [
-            'enabled' => env('AGENTICGRAPH_EVENT_BATCHING_ENABLED', false),
-            'batch_size' => env('AGENTICGRAPH_EVENT_BATCH_SIZE', 100),
-            'flush_interval_seconds' => env('AGENTICGRAPH_EVENT_FLUSH_INTERVAL', 5),
-        ],
-    ],
-
     'streaming' => [
         'sse' => [
             'enabled' => env('AGENTICGRAPH_STREAM_SSE_ENABLED', true),

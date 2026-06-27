@@ -52,10 +52,7 @@ function createTestCheckpoint(string $node = 'test-node', array $stateData = [])
     $checkpoint->graphName = 'integration-test-graph';
     $checkpoint->currentNode = $node;
     $checkpoint->state = new State($stateData);
-    $checkpoint->completedNodes = [];
-    $checkpoint->pendingNodes = [];
     $checkpoint->metadata = ['test' => true];
-    $checkpoint->parentCheckpointId = null;
 
     return $checkpoint;
 }

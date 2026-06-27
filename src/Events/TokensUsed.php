@@ -12,11 +12,8 @@ use Shahzad\AgenticGraph\Tracing\TraceContext;
 
 /**
  * Event dispatched when tokens are used during an API call.
- *
- * This event implements BatchableEventInterface to allow efficient
- * batching of high-frequency token usage events.
  */
-class TokensUsed implements BatchableEventInterface, ShouldQueue
+class TokensUsed implements ShouldQueue
 {
     use SerializesModels;
 
@@ -128,63 +125,5 @@ class TokensUsed implements BatchableEventInterface, ShouldQueue
 
         // Final fallback: hard truncate
         return substr($text, 0, $maxLength - 15).' [...truncated]';
-    }
-
-    /**
-     * Get the batch key for grouping token usage events.
-     *
-     * Groups events by node and call type for efficient aggregation.
-     */
-    public function getBatchKey(): string
-    {
-        $executionId = $this->executionId ?? 'unknown';
-
-        return "tokens:{$executionId}:{$this->node}:{$this->callType}";
-    }
-
-    /**
-     * Merge another TokensUsed event into this one.
-     *
-     * Aggregates token counts and uses the latest timestamp.
-     * Note: Prompt and response text are NOT merged (keeps first event's text only).
-     */
-    public function merge(BatchableEventInterface $other): BatchableEventInterface
-    {
-        if (! $other instanceof self) {
-            throw new \InvalidArgumentException('Cannot merge with different event type');
-        }
-
-        if ($this->executionId !== $other->executionId) {
-            throw new \InvalidArgumentException('Cannot merge events from different executions');
-        }
-
-        $latestEndedAt = $this->endedAt;
-        if ($other->endedAt !== null && ($this->endedAt === null || $other->endedAt > $this->endedAt)) {
-            $latestEndedAt = $other->endedAt;
-        }
-
-        $earliestStartedAt = $this->startedAt;
-        if ($other->startedAt !== null && ($this->startedAt === null || $other->startedAt < $this->startedAt)) {
-            $earliestStartedAt = $other->startedAt;
-        }
-
-        // When merging, keep the first event's prompt/response text
-        // (merging text content doesn't make sense)
-        return new self(
-            node: $this->node,
-            promptTokens: $this->promptTokens + $other->promptTokens,
-            completionTokens: $this->completionTokens + $other->completionTokens,
-            totalTokens: $this->totalTokens + $other->totalTokens,
-            executionId: $this->executionId,
-            parentSpanId: $this->parentSpanId ?? $other->parentSpanId,
-            spanId: $this->spanId ?? $other->spanId,
-            callType: $this->callType,
-            model: $this->model ?? $other->model,
-            durationMs: ($this->durationMs ?? 0) + ($other->durationMs ?? 0),
-            startedAt: $earliestStartedAt,
-            endedAt: $latestEndedAt,
-            prompt: $this->prompt,
-            response: $this->response,
-        );
     }
 }

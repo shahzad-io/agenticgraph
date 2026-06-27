@@ -13,6 +13,7 @@ class NodeInterrupted implements ShouldQueue
 
     /**
      * @param  array<string, mixed>  $stateSnapshot
+     * @param  array<string, mixed>|null  $interruptPayload
      */
     public function __construct(
         public readonly string $executionId,
@@ -21,5 +22,6 @@ class NodeInterrupted implements ShouldQueue
         public readonly string $checkpointId,
         public readonly array $stateSnapshot,
         public readonly \DateTimeImmutable $interruptedAt,
+        public readonly ?array $interruptPayload = null,
     ) {}
 }

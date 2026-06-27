@@ -18,16 +18,8 @@ class Checkpoint
 
     public string $currentNode;
 
-    /** @var array<int, string> */
-    public array $completedNodes = [];
-
-    /** @var array<int, string> */
-    public array $pendingNodes = [];
-
     /** @var array<string, mixed> */
     public array $metadata = [];
 
     public \DateTimeImmutable $createdAt;
-
-    public ?string $parentCheckpointId = null;
 }

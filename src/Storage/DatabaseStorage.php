@@ -8,6 +8,7 @@ use Illuminate\Database\DatabaseManager;
 use Shahzad\AgenticGraph\Contracts\StorageInterface;
 use Shahzad\AgenticGraph\Execution\Checkpoint;
 use Shahzad\AgenticGraph\State\State;
+use Shahzad\AgenticGraph\Support\CheckpointVersionOrdering;
 
 class DatabaseStorage implements StorageInterface
 {
@@ -29,11 +30,8 @@ class DatabaseStorage implements StorageInterface
             'execution_id' => $checkpoint->executionId,
             'state' => json_encode($statePayload),
             'current_node' => $checkpoint->currentNode,
-            'completed_nodes' => json_encode($checkpoint->completedNodes),
-            'pending_nodes' => json_encode($checkpoint->pendingNodes),
             'metadata' => json_encode($checkpoint->metadata),
-            'created_at' => $checkpoint->createdAt->format('Y-m-d H:i:s'),
-            'parent_checkpoint_id' => $checkpoint->parentCheckpointId,
+            'created_at' => $checkpoint->createdAt->format('Y-m-d H:i:s.u'),
         ];
         $this->db->table($this->table)->updateOrInsert(['id' => $checkpoint->id], $payload);
 
@@ -46,43 +44,43 @@ class DatabaseStorage implements StorageInterface
         if (! $row) {
             return null;
         }
-        $c = new Checkpoint;
-        $c->id = $row->id;
-        $c->graphName = $row->graph_name;
-        $c->executionId = $row->execution_id;
-        $c->state = State::fromArray(json_decode($row->state, true) ?? []);
-        $c->currentNode = $row->current_node;
-        $c->completedNodes = json_decode($row->completed_nodes, true) ?? [];
-        $c->pendingNodes = json_decode($row->pending_nodes, true) ?? [];
-        $c->metadata = json_decode($row->metadata, true) ?? [];
-        $c->createdAt = new \DateTimeImmutable($row->created_at);
-        $c->parentCheckpointId = $row->parent_checkpoint_id;
 
-        return $c;
+        return $this->hydrateFromRow($row);
     }
 
     public function loadLatestForExecution(string $executionId): ?Checkpoint
     {
-        $row = $this->db->table($this->table)
-            ->where('execution_id', $executionId)
-            ->orderByDesc('created_at')
-            ->first();
-        if (! $row) {
+        $versions = $this->listForExecution($executionId);
+        if ($versions === []) {
             return null;
         }
-        $c = new Checkpoint;
-        $c->id = $row->id;
-        $c->graphName = $row->graph_name;
-        $c->executionId = $row->execution_id;
-        $c->state = State::fromArray(json_decode($row->state, true) ?? []);
-        $c->currentNode = $row->current_node;
-        $c->completedNodes = json_decode($row->completed_nodes, true) ?? [];
-        $c->pendingNodes = json_decode($row->pending_nodes, true) ?? [];
-        $c->metadata = json_decode($row->metadata, true) ?? [];
-        $c->createdAt = new \DateTimeImmutable($row->created_at);
-        $c->parentCheckpointId = $row->parent_checkpoint_id;
 
-        return $c;
+        $latest = $versions[array_key_last($versions)];
+
+        return $this->load($latest['id']);
+    }
+
+    /**
+     * @return array<int, array{id: string, node: string, created_at: string}>
+     */
+    public function listForExecution(string $executionId): array
+    {
+        $rows = $this->db->table($this->table)
+            ->where('execution_id', $executionId)
+            ->get()
+            ->map(function ($row): array {
+                $metadata = json_decode($row->metadata, true) ?? [];
+
+                return [
+                    'id' => $row->id,
+                    'node' => $row->current_node,
+                    'created_at' => (string) $row->created_at,
+                    'sequence' => (int) ($metadata['checkpoint_sequence'] ?? 0),
+                ];
+            })
+            ->all();
+
+        return CheckpointVersionOrdering::sortAscending($rows);
     }
 
     /**
@@ -117,5 +115,19 @@ class DatabaseStorage implements StorageInterface
         $threshold = now()->subDays($olderThanDays)->format('Y-m-d H:i:s');
 
         return $this->db->table($this->table)->where('created_at', '<', $threshold)->delete();
+    }
+
+    private function hydrateFromRow(object $row): Checkpoint
+    {
+        $c = new Checkpoint;
+        $c->id = $row->id;
+        $c->graphName = $row->graph_name;
+        $c->executionId = $row->execution_id;
+        $c->state = State::fromArray(json_decode($row->state, true) ?? []);
+        $c->currentNode = $row->current_node;
+        $c->metadata = json_decode($row->metadata, true) ?? [];
+        $c->createdAt = new \DateTimeImmutable($row->created_at);
+
+        return $c;
     }
 }
