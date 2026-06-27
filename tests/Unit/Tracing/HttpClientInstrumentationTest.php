@@ -38,6 +38,7 @@ class HttpMockPulseExporter extends PulseExporter
 function bindHttpInstrumentationContext(string $executionId = 'exec_http_1'): array
 {
     config()->set('agenticgraph.tracing.enabled', true);
+    config()->set('agenticgraph.tracing.capture.http', true);
 
     $exporter = new HttpMockPulseExporter;
     $instrumentation = new HttpClientInstrumentation($exporter);

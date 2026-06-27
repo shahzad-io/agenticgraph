@@ -406,7 +406,7 @@ class TracingListener
 
     public function onToolCallCaptured(ToolCallCaptured $event): void
     {
-        if (! $this->exporter->isEnabled()) {
+        if (! $this->exporter->isEnabled() || $event->spanAlreadyExported) {
             return;
         }
 

@@ -33,7 +33,7 @@ final class Tracer
         }
 
         $parentSpanId = $context->getSpanId();
-        $spanId = $context->startSpan($name);
+        $spanId = $context->startSpan($name, $spanType);
         if ($spanId === null) {
             return $callback();
         }
@@ -135,6 +135,16 @@ final class Tracer
         ];
 
         $sanitizedAttributes = $this->sanitizeAttributes($attributes);
+
+        if ($spanType === 'tool') {
+            foreach (['tool_type', 'tool_provider', 'tool_call_id', 'input_size', 'output_size'] as $toolKey) {
+                if (array_key_exists($toolKey, $sanitizedAttributes)) {
+                    $span[$toolKey] = $sanitizedAttributes[$toolKey];
+                    unset($sanitizedAttributes[$toolKey]);
+                }
+            }
+        }
+
         if ($sanitizedAttributes !== []) {
             $span['attributes'] = $sanitizedAttributes;
         }

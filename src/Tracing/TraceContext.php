@@ -15,8 +15,13 @@ final class TraceContext
 {
     private ?string $currentSpanId = null;
 
+    private ?string $currentSpanType = null;
+
     /** @var array<int, string> */
     private array $spanStack = [];
+
+    /** @var array<int, string> */
+    private array $spanTypeStack = [];
 
     private readonly bool $enabled;
 
@@ -32,7 +37,7 @@ final class TraceContext
      * Start a new span within the current trace.
      * Returns the span ID for use in events.
      */
-    public function startSpan(string $nodeName): ?string
+    public function startSpan(string $nodeName, string $spanType = 'custom'): ?string
     {
         if (! $this->enabled) {
             return null;
@@ -43,9 +48,11 @@ final class TraceContext
         // Push current span onto stack (becomes parent)
         if ($this->currentSpanId !== null) {
             $this->spanStack[] = $this->currentSpanId;
+            $this->spanTypeStack[] = $this->currentSpanType ?? 'custom';
         }
 
         $this->currentSpanId = $spanId;
+        $this->currentSpanType = $spanType;
 
         return $spanId;
     }
@@ -60,6 +67,17 @@ final class TraceContext
         }
 
         $this->currentSpanId = array_pop($this->spanStack);
+        $this->currentSpanType = array_pop($this->spanTypeStack);
+    }
+
+    public function getCurrentSpanType(): ?string
+    {
+        return $this->currentSpanType;
+    }
+
+    public function isInsideToolSpan(): bool
+    {
+        return $this->currentSpanType === 'tool';
     }
 
     /**
@@ -122,7 +140,9 @@ final class TraceContext
             'execution_id' => $this->executionId,
             'root_span_id' => $this->rootSpanId,
             'current_span_id' => $this->currentSpanId,
+            'current_span_type' => $this->currentSpanType,
             'span_stack' => $this->spanStack,
+            'span_type_stack' => $this->spanTypeStack,
             'enabled' => $this->enabled,
         ];
     }
@@ -144,8 +164,16 @@ final class TraceContext
             $context->spanStack = $data['span_stack'];
         }
 
+        if (isset($data['span_type_stack']) && is_array($data['span_type_stack'])) {
+            $context->spanTypeStack = $data['span_type_stack'];
+        }
+
         if (isset($data['current_span_id']) && is_string($data['current_span_id'])) {
             $context->currentSpanId = $data['current_span_id'];
+        }
+
+        if (isset($data['current_span_type']) && is_string($data['current_span_type'])) {
+            $context->currentSpanType = $data['current_span_type'];
         }
 
         return $context;

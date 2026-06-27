@@ -31,6 +31,7 @@ use Shahzad\AgenticGraph\Contracts\PrismClient;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\TokensUsed;
 use Shahzad\AgenticGraph\Events\ToolCallCaptured;
+use Shahzad\AgenticGraph\Facades\Trace;
 use Shahzad\AgenticGraph\Mcp\McpRequest;
 use Shahzad\AgenticGraph\Prompts\ChatPromptMessages;
 use Shahzad\AgenticGraph\Prompts\ChatPromptTemplate;
@@ -54,8 +55,8 @@ use Shahzad\AgenticGraph\Tracing\TraceContext;
  * @method AudioTextResponse audioToText(AudioMedia $audio, array<string, mixed> $providerOptions = []) Transcribe audio to text
  * @method AudioResponse textToAudio(string $text, ?string $voice = null, array<string, mixed> $providerOptions = []) Convert text to audio
  * @method mixed structured(string $prompt, mixed $schema) Generate structured output using a schema
- * @method array<int, \Prism\Prism\ValueObjects\ToolCall> tools(string $prompt, array<int, \Prism\Prism\Tool> $tools) Execute with tool calling
- * @method McpRequest withMcp(string $serverName, array<string, mixed> $options = []) Create MCP tool request
+ * @method array<int, \Prism\Prism\ValueObjects\ToolCall> tools(string $prompt, array<int, \Prism\Prism\Tool> $tools) Execute with tool calling (tools are tracing-wrapped)
+ * @method McpRequest withMcp(string $serverName, array<string, mixed> $options = []) Create MCP tool request (tools are tracing-wrapped)
  * @method static withModel(string $model) Set the model for this node
  * @method static withCache(int $ttlMinutes) Enable caching with TTL
  * @method static withoutCache() Disable caching
@@ -81,7 +82,7 @@ abstract class PrismNode extends AbstractNode
 
     protected bool $trackTokens = true;
 
-    private bool $wrappedMcpTools = false;
+    private bool $toolsTracingWrapped = false;
 
     protected function prism(): PendingTextRequest
     {
@@ -119,7 +120,7 @@ abstract class PrismNode extends AbstractNode
 
         $tools = $state->get('tools');
         if (is_array($tools) && $tools !== []) {
-            $request->withTools($tools);
+            $request->withTools($this->wrapToolsForTracing($tools, 'prism'));
         }
 
         return $request;
@@ -465,6 +466,7 @@ abstract class PrismNode extends AbstractNode
      */
     protected function tools(string $prompt, array $tools): array
     {
+        $tools = $this->wrapToolsForTracing($tools, 'prism');
         $startTime = microtime(true);
         $config = $this->model ?? (string) config('agenticgraph.prism.model');
         [$provider, $model] = $this->parseModel($config);
@@ -545,8 +547,8 @@ abstract class PrismNode extends AbstractNode
             $tools = [];
         }
 
-        $tools = $this->wrapMcpTools($tools);
-        $captureToolCalls = ! $this->wrappedMcpTools;
+        $tools = $this->wrapToolsForTracing($tools, 'mcp');
+        $captureToolCalls = ! $this->toolsTracingWrapped;
         // Do not use $this->prism() here as it attaches a tracking hook,
         // and McpRequest handles tracking itself.
         $request = $this->prismClient()->text()->using($provider, $model)->withTools($tools);
@@ -900,15 +902,12 @@ abstract class PrismNode extends AbstractNode
      */
     private function dispatchToolCalls(array $toolCalls, string $toolType): void
     {
-        if ($toolCalls === []) {
+        if ($toolCalls === [] || $this->toolsTracingWrapped) {
             return;
         }
 
-        $traceContext = null;
-        try {
-            $traceContext = app(TraceContext::class);
-        } catch (BindingResolutionException $e) {
-            // TraceContext not bound, tracing not active
+        $traceContext = TraceContext::tryGet();
+        if ($traceContext === null) {
             return;
         }
 
@@ -958,10 +957,16 @@ abstract class PrismNode extends AbstractNode
     }
 
     /**
+     * Wrap each Prism tool closure with Trace::span so tool-internal HTTP/DB nests
+     * under the tool span. Applied to tools(), withMcp(), and streaming tool paths.
+     *
+     * Raw Prism tool usage (bypassing these paths) is not wrapped — use agenticgraph's
+     * tools()/withMcp() to get tool-scoped tracing.
+     *
      * @param  array<int, mixed>  $tools
      * @return array<int, Tool>
      */
-    private function wrapMcpTools(array $tools): array
+    private function wrapToolsForTracing(array $tools, string $toolType): array
     {
         $wrapped = [];
         $wrappedTools = false;
@@ -973,41 +978,157 @@ abstract class PrismNode extends AbstractNode
                 continue;
             }
 
-            $wrappedTool = new Tool;
+            $wrappedTool = $this->cloneToolDefinition($tool);
             $toolName = $tool->name();
-            $wrappedTool->as($toolName);
-            $wrappedTool->for($tool->description());
 
-            foreach ($tool->parameters() as $name => $schema) {
-                $required = in_array($name, $tool->requiredParameters(), true);
-                $wrappedTool->withParameter($schema, $required);
-            }
-
-            $wrappedTool->using(function (...$args) use ($tool, $toolName): string {
-                $startedAt = new \DateTimeImmutable;
-                $start = microtime(true);
-                try {
-                    $result = $tool->handle(...$args);
-                } catch (\Throwable $e) {
-                    $durationMs = (microtime(true) - $start) * 1000;
-                    $this->dispatchMcpToolSpan($toolName, $args, null, $durationMs, 'failed', get_class($e), $e->getMessage(), $startedAt);
-                    throw $e;
-                }
-
-                $durationMs = (microtime(true) - $start) * 1000;
-                [$status, $errorType, $errorMessage] = $this->detectToolError($result);
-                $this->dispatchMcpToolSpan($toolName, $args, $result, $durationMs, $status, $errorType, $errorMessage, $startedAt);
-
-                return $result;
+            $wrappedTool->using(function (...$args) use ($tool, $toolName, $toolType): string {
+                return $this->executeToolWithTracing($tool, $toolName, $args, $toolType);
             });
 
             $wrapped[] = $wrappedTool;
             $wrappedTools = true;
         }
 
-        $this->wrappedMcpTools = $wrappedTools;
+        if ($wrappedTools) {
+            $this->toolsTracingWrapped = true;
+        }
 
         return $wrapped;
+    }
+
+    private function cloneToolDefinition(Tool $tool): Tool
+    {
+        $wrappedTool = new Tool;
+        $wrappedTool->as($tool->name());
+        $wrappedTool->for($tool->description());
+
+        foreach ($tool->parameters() as $name => $schema) {
+            $required = in_array($name, $tool->requiredParameters(), true);
+            $wrappedTool->withParameter($schema, $required);
+        }
+
+        if ($tool->isConcurrent()) {
+            $wrappedTool->concurrent(true);
+        }
+
+        return $wrappedTool;
+    }
+
+    /**
+     * @param  array<int, mixed>  $args
+     */
+    private function executeToolWithTracing(Tool $tool, string $toolName, array $args, string $toolType): string
+    {
+        $startedAt = new \DateTimeImmutable;
+        $start = microtime(true);
+        $inputSize = $this->payloadSize($args);
+        $toolSpanId = null;
+        $argSummary = $this->summarizeToolArguments($args);
+
+        $attributes = [
+            'tool_type' => $toolType,
+            'tool_provider' => $this->toolProviderFromName($toolName),
+            'input_size' => $inputSize,
+            'arg_keys' => $argSummary['keys'],
+        ];
+
+        try {
+            $result = Trace::span($toolName, function () use ($tool, $args, &$toolSpanId): string {
+                $toolSpanId = TraceContext::tryGet()?->getSpanId();
+
+                return $tool->handle(...$args);
+            }, $attributes, 'tool');
+        } catch (\Throwable $e) {
+            $durationMs = (microtime(true) - $start) * 1000;
+            $this->dispatchWrappedToolCallEvent(
+                toolName: $toolName,
+                toolType: $toolType,
+                args: $args,
+                result: null,
+                durationMs: $durationMs,
+                startedAt: $startedAt,
+                status: 'failed',
+                errorType: get_class($e),
+                errorMessage: $e->getMessage(),
+                toolSpanId: $toolSpanId,
+            );
+            throw $e;
+        }
+
+        $durationMs = (microtime(true) - $start) * 1000;
+        [$status, $errorType, $errorMessage] = $this->detectToolError($result);
+        $this->dispatchWrappedToolCallEvent(
+            toolName: $toolName,
+            toolType: $toolType,
+            args: $args,
+            result: $result,
+            durationMs: $durationMs,
+            startedAt: $startedAt,
+            status: $status,
+            errorType: $errorType,
+            errorMessage: $errorMessage,
+            toolSpanId: $toolSpanId,
+        );
+
+        return $result;
+    }
+
+    /**
+     * @param  array<int, mixed>  $args
+     * @return array{keys: list<string>}
+     */
+    private function summarizeToolArguments(array $args): array
+    {
+        if ($args === []) {
+            return ['keys' => []];
+        }
+
+        $first = $args[0];
+        if (is_array($first)) {
+            return ['keys' => array_map(strval(...), array_keys($first))];
+        }
+
+        return ['keys' => array_map(fn (int $index): string => (string) $index, array_keys($args))];
+    }
+
+    /**
+     * @param  array<int, mixed>  $args
+     */
+    private function dispatchWrappedToolCallEvent(
+        string $toolName,
+        string $toolType,
+        array $args,
+        ?string $result,
+        float $durationMs,
+        \DateTimeImmutable $startedAt,
+        string $status,
+        ?string $errorType,
+        ?string $errorMessage,
+        ?string $toolSpanId,
+    ): void {
+        $traceContext = TraceContext::tryGet();
+        if ($traceContext === null) {
+            return;
+        }
+
+        $this->events()->dispatch(new ToolCallCaptured(
+            executionId: $traceContext->getExecutionId(),
+            spanId: $traceContext->getSpanId(),
+            toolName: $toolName,
+            toolCallId: null,
+            toolType: $toolType,
+            toolProvider: $this->toolProviderFromName($toolName),
+            inputSize: $this->payloadSize($args),
+            outputSize: $this->payloadSize($result),
+            durationMs: $durationMs,
+            startedAt: $startedAt,
+            toolRequestId: null,
+            status: $status,
+            errorType: $errorType,
+            errorMessage: $errorMessage,
+            toolSpanId: $toolSpanId,
+            spanAlreadyExported: true,
+        ));
     }
 
     /**
@@ -1027,45 +1148,6 @@ abstract class PrismNode extends AbstractNode
         }
 
         return ['failed', $type, $message];
-    }
-
-    /**
-     * @param  array<string, mixed>  $args
-     */
-    private function dispatchMcpToolSpan(
-        string $toolName,
-        array $args,
-        ?string $result,
-        float $durationMs,
-        string $status,
-        ?string $errorType,
-        ?string $errorMessage,
-        \DateTimeImmutable $startedAt
-    ): void {
-        $traceContext = null;
-        try {
-            $traceContext = app(TraceContext::class);
-        } catch (BindingResolutionException $e) {
-            // TraceContext not bound, tracing not active
-            return;
-        }
-
-        $this->events()->dispatch(new ToolCallCaptured(
-            executionId: $traceContext->getExecutionId(),
-            spanId: $traceContext->getSpanId(),
-            toolName: $toolName,
-            toolCallId: null,
-            toolType: 'mcp',
-            inputSize: $this->payloadSize($args),
-            outputSize: $this->payloadSize($result),
-            durationMs: $durationMs,
-            startedAt: $startedAt,
-            toolProvider: $this->toolProviderFromName($toolName),
-            toolRequestId: null,
-            status: $status,
-            errorType: $errorType,
-            errorMessage: $errorMessage
-        ));
     }
 
     private function toolProviderFromName(string $toolName): ?string

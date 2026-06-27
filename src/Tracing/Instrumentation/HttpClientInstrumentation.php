@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph\Tracing\Instrumentation;
 
-use Illuminate\Contracts\Container\BindingResolutionException;
 use Illuminate\Http\Client\Events\ConnectionFailed;
 use Illuminate\Http\Client\Events\RequestSending;
 use Illuminate\Http\Client\Events\ResponseReceived;
@@ -13,6 +12,7 @@ use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\ExecutionClock;
+use Shahzad\AgenticGraph\Tracing\InstrumentationGate;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 
 class HttpClientInstrumentation
@@ -57,6 +57,10 @@ class HttpClientInstrumentation
             return;
         }
 
+        if (! InstrumentationGate::shouldCaptureHttp()) {
+            return;
+        }
+
         $executionId = $clock->getExecutionId();
         $requestId = spl_object_id($event->request);
 
@@ -87,11 +91,11 @@ class HttpClientInstrumentation
             return;
         }
 
-        $traceContext = null;
-        try {
-            $traceContext = app(TraceContext::class);
-        } catch (BindingResolutionException $e) {
+        if (! InstrumentationGate::shouldCaptureHttp()) {
+            return;
         }
+
+        $traceContext = TraceContext::tryGet();
 
         $executionId = $clock->getExecutionId();
         $parentId = $traceContext?->getSpanId() ?? $traceContext?->getRootSpanId();
@@ -185,11 +189,11 @@ class HttpClientInstrumentation
             return;
         }
 
-        $traceContext = null;
-        try {
-            $traceContext = app(TraceContext::class);
-        } catch (BindingResolutionException $e) {
+        if (! InstrumentationGate::shouldCaptureHttp()) {
+            return;
         }
+
+        $traceContext = TraceContext::tryGet();
 
         $executionId = $clock->getExecutionId();
         $parentId = $traceContext?->getSpanId() ?? $traceContext?->getRootSpanId();

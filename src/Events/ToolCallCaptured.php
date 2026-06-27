@@ -26,5 +26,7 @@ class ToolCallCaptured implements ShouldQueue
         public readonly string $status = 'success',
         public readonly ?string $errorType = null,
         public readonly ?string $errorMessage = null,
+        public readonly ?string $toolSpanId = null,
+        public readonly bool $spanAlreadyExported = false,
     ) {}
 }

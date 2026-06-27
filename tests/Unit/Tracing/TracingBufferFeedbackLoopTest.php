@@ -171,6 +171,7 @@ it('does not capture database queries while the exporter is capturing', function
     expect($exporter->getBuffer()['spans'])->toBeEmpty();
 
     $property->setValue($exporter, 0);
+    config(['agenticgraph.tracing.capture.db' => true]);
     $instrumentation->handleQuery(makeQueryExecutedEvent('select * from users where id = ?'));
 
     expect($exporter->getBuffer()['spans'])->toHaveCount(1)

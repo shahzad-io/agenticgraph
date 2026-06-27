@@ -197,6 +197,11 @@ return [
             'prompts' => env('AGENTICGRAPH_CAPTURE_PROMPTS', false),
             'responses' => env('AGENTICGRAPH_CAPTURE_RESPONSES', false),
             'max_length' => env('AGENTICGRAPH_CAPTURE_MAX_LENGTH', 2000),
+
+            // Broad HTTP/DB auto-capture (default off). Tool-internal HTTP/DB still nests
+            // under tool spans via the tool wrap without enabling these flags.
+            'http' => env('AGENTICGRAPH_CAPTURE_HTTP', false),
+            'db' => env('AGENTICGRAPH_CAPTURE_DB', false),
         ],
 
         // Sampling configuration

@@ -7,6 +7,7 @@ namespace Shahzad\AgenticGraph\Tracing\Instrumentation;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Events\QueryExecuted;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
+use Shahzad\AgenticGraph\Tracing\InstrumentationGate;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 
 /**
@@ -43,6 +44,10 @@ class DatabaseInstrumentation
         }
 
         if (! $this->exporter->isEnabled()) {
+            return;
+        }
+
+        if (! InstrumentationGate::shouldCaptureDb()) {
             return;
         }
 
