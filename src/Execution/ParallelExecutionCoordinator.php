@@ -15,7 +15,6 @@ use Shahzad\AgenticGraph\Contracts\NodeInterface;
 use Shahzad\AgenticGraph\Contracts\ParallelExecutorInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
-use Shahzad\AgenticGraph\Events\NodeExecutionFailed;
 use Shahzad\AgenticGraph\Events\NodeExecutionStarted;
 use Shahzad\AgenticGraph\Graph\Graph;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
@@ -423,68 +422,18 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
         string $nodeName,
         ?string $spanId
     ): StateContract {
-        $stack = [];
-        foreach ($this->globalMiddleware as $mw) {
-            $stack[] = is_string($mw) ? $this->container->make($mw) : $mw;
-        }
-        $pipeline = array_reduce(
-            array_reverse($stack),
-            function ($next, $mw) use ($node) {
-                return function (StateContract $state) use ($mw, $node, $next) {
-                    return $mw->handle($state, $node, $next);
-                };
-            },
-            function (StateContract $state) use ($node, $executionId, $nodeName, $spanId) {
-                $attempts = 0;
-                $max = $node->getRetryAttempts();
-                $delay = $node->getRetryDelay();
-                while (true) {
-                    $attemptStart = microtime(true);
-                    if (app()->bound(StreamContext::class)) {
-                        app(StreamContext::class)->resetNodeAttemptEmission();
-                    }
-                    try {
-                        $node->onBefore($state);
-                        $result = $node->execute($state);
-                        $node->onAfter($state, $result);
-
-                        return $result;
-                    } catch (\Throwable $e) {
-                        $attempts++;
-                        $durationMs = (microtime(true) - $attemptStart) * 1000;
-                        $willRetry = $attempts <= $max && $node->shouldRetry($e);
-                        if (app()->bound(StreamContext::class)) {
-                            $streamContext = app(StreamContext::class);
-                            if ($streamContext->isStreamingActive() && $streamContext->nodeAttemptHasContentEmission()) {
-                                $willRetry = false;
-                            }
-                        }
-                        $startedAt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $attemptStart)) ?: new \DateTimeImmutable;
-                        $traceContext = ($this->traceContextProvider)();
-                        $parentSpanId = $traceContext instanceof TraceContext ? $traceContext->getParentSpanId() : null;
-                        $this->events->dispatch(new NodeExecutionFailed(
-                            $executionId,
-                            $spanId,
-                            $nodeName,
-                            $state,
-                            $e,
-                            $durationMs,
-                            $attempts,
-                            $willRetry,
-                            $startedAt,
-                            $parentSpanId
-                        ));
-                        $node->onError($e, $state);
-                        if (! $willRetry) {
-                            throw $e;
-                        }
-                        usleep($delay * 1000);
-                    }
-                }
-            }
+        return (new NodeMiddlewarePipeline(
+            $this->container,
+            $this->events,
+            $this->globalMiddleware,
+            $this->traceContextProvider,
+        ))->execute(
+            $state,
+            $node,
+            $executionId,
+            $nodeName,
+            $spanId
         );
-
-        return $pipeline($state);
     }
 
     /**

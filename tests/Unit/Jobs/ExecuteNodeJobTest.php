@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Cache;
 use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Execution\NodeMiddlewarePipeline;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Jobs\ExecuteNodeJob;
@@ -24,7 +25,7 @@ it('caches node job output', function () {
         ->build();
     app(GraphRegistry::class)->register('test-graph', $graph);
     $job = new ExecuteNodeJob('exec-1', 'n', (new State)->toArray(), 'test-graph');
-    $job->handle(app(GraphRegistry::class));
+    $job->handle(app(GraphRegistry::class), app(NodeMiddlewarePipeline::class));
     $cached = Cache::get('agenticgraph:batch:exec-1:n');
     expect($cached)->toBeArray()->and($cached['ok'])->toBeTrue();
 });

@@ -1,6 +1,5 @@
 <?php
 
-use Mockery;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use Shahzad\AgenticGraph\Execution\ExecutionContext;

@@ -8,6 +8,7 @@ use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
 use Shahzad\AgenticGraph\Execution\ExecutionMode;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
+use Shahzad\AgenticGraph\Execution\NodeMiddlewarePipeline;
 use Shahzad\AgenticGraph\Execution\ParallelExecutionCoordinator;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
 use Shahzad\AgenticGraph\Facades\AgenticGraph;
@@ -326,7 +327,7 @@ it('defers stream lifecycle for batch parallel while Laravel NodeExecutionComple
         'parallel-lifecycle-batch-deferred',
         'parent-span'
     );
-    $job->handle(app(GraphRegistry::class));
+    $job->handle(app(GraphRegistry::class), app(NodeMiddlewarePipeline::class));
 
     Event::assertDispatched(NodeExecutionCompleted::class);
 });

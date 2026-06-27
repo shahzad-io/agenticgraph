@@ -6,7 +6,6 @@ use Illuminate\Contracts\Broadcasting\Broadcaster;
 use Illuminate\Contracts\Bus\Dispatcher as BusDispatcher;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Events\Dispatcher;
-use Mockery;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use Shahzad\AgenticGraph\Contracts\ParallelExecutorInterface;

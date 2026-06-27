@@ -41,6 +41,7 @@ use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Execution\InterruptHandlerResolver;
 use Shahzad\AgenticGraph\Execution\InterruptManager;
 use Shahzad\AgenticGraph\Execution\LoopMetadata;
+use Shahzad\AgenticGraph\Execution\NodeMiddlewarePipeline;
 use Shahzad\AgenticGraph\Execution\ParallelExecutionCoordinator;
 use Shahzad\AgenticGraph\Execution\RoutingEngine;
 use Shahzad\AgenticGraph\Execution\TraceContextProvider;
@@ -135,7 +136,17 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
             );
         });
 
-        // Register CheckpointManager as singleton with dependencies
+        $this->app->bind(NodeMiddlewarePipeline::class, function ($app) {
+            return new NodeMiddlewarePipeline(
+                $app,
+                $app->make(Dispatcher::class),
+                config('agenticgraph.middleware.global'),
+                static fn (): ?TraceContext => $app->bound(TraceContext::class)
+                    ? $app->make(TraceContext::class)
+                    : null,
+            );
+        });
+
         $this->app->singleton(CheckpointManager::class, function ($app) {
             $storage = match (config('agenticgraph.storage')) {
                 'redis' => $app->make(RedisStorage::class),

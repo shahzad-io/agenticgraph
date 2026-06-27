@@ -13,6 +13,7 @@ use Shahzad\AgenticGraph\Execution\ExecutionMode;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
 use Shahzad\AgenticGraph\Execution\ExecutionRepository;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
+use Shahzad\AgenticGraph\Execution\NodeMiddlewarePipeline;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
 use Shahzad\AgenticGraph\Facades\AgenticGraph;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
@@ -159,7 +160,7 @@ function runCadenceGraphAcrossBatchBoundary(string $graphName, string $execution
     Bus::assertBatched(function ($batch) use ($graphName, $executionId, $registry): bool {
         foreach ($batch->jobs as $nodeJob) {
             expect($nodeJob)->toBeInstanceOf(ExecuteNodeJob::class);
-            $nodeJob->handle($registry);
+            $nodeJob->handle($registry, app(NodeMiddlewarePipeline::class));
         }
 
         $coordinator = app(ParallelExecutorInterface::class);

@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
 use Shahzad\AgenticGraph\Events\NodeExecutionFailed;
 use Shahzad\AgenticGraph\Events\NodeExecutionStarted;
+use Shahzad\AgenticGraph\Execution\NodeMiddlewarePipeline;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Tracing\ExecutionClock;
@@ -41,7 +42,7 @@ class ExecuteNodeJob implements ShouldQueue
         $this->onQueue(config('agenticgraph.execution.queue_name'));
     }
 
-    public function handle(GraphRegistry $registry): void
+    public function handle(GraphRegistry $registry, NodeMiddlewarePipeline $pipeline): void
     {
         if ($this->batch()?->cancelled()) {
             return;
@@ -84,6 +85,7 @@ class ExecuteNodeJob implements ShouldQueue
         ]);
 
         $node = $graph->getNode($this->nodeName);
+        $inputState = $state;
 
         try {
             Event::dispatch(new NodeExecutionStarted(
@@ -94,14 +96,14 @@ class ExecuteNodeJob implements ShouldQueue
                 $spanId,
                 $this->parentSpanId
             ));
-            $node->onBefore($state);
-            $result = $node->execute($state);
-            $node->onAfter($state, $result);
+
+            $result = $pipeline->execute($state, $node, $this->executionId, $this->nodeName, $spanId);
             $duration = microtime(true) - $attemptStart;
+
             Event::dispatch(new NodeExecutionCompleted(
                 $this->executionId,
                 $this->nodeName,
-                $state,
+                $inputState,
                 $result,
                 $duration,
                 ['node_type' => $node::class],
