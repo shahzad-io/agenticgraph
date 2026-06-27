@@ -1,0 +1,40 @@
+{
+  "data": [
+    {
+      "id": "openai/gpt-4o",
+      "name": "GPT-4o",
+      "pricing": {
+        "prompt": "0.0000025",
+        "completion": "0.00001",
+        "request": "0"
+      }
+    },
+    {
+      "id": "openai/gpt-4o-mini",
+      "name": "GPT-4o Mini",
+      "pricing": {
+        "prompt": "0.00000015",
+        "completion": "0.0000006",
+        "request": "0"
+      }
+    },
+    {
+      "id": "anthropic/claude-3.5-sonnet",
+      "name": "Claude 3.5 Sonnet",
+      "pricing": {
+        "prompt": "0.000003",
+        "completion": "0.000015",
+        "request": "0"
+      }
+    },
+    {
+      "id": "unknown-vendor/obscure-model",
+      "name": "Obscure",
+      "pricing": {
+        "prompt": "0",
+        "completion": "0",
+        "request": "0"
+      }
+    }
+  ]
+}

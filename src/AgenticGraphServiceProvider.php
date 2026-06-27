@@ -21,6 +21,7 @@ use Shahzad\AgenticGraph\Console\CheckpointResumeCommand;
 use Shahzad\AgenticGraph\Console\ExecuteGraphCommand;
 use Shahzad\AgenticGraph\Console\ExecutionsListCommand;
 use Shahzad\AgenticGraph\Console\ListGraphsCommand;
+use Shahzad\AgenticGraph\Console\SyncModelPricingCommand;
 use Shahzad\AgenticGraph\Console\VisualizeGraphCommand;
 use Shahzad\AgenticGraph\Contracts\InterruptHandlerInterface;
 use Shahzad\AgenticGraph\Contracts\InterruptServiceInterface;
@@ -67,6 +68,7 @@ use Shahzad\AgenticGraph\Tracing\Exporters\NullExporter;
 use Shahzad\AgenticGraph\Tracing\Instrumentation\DatabaseInstrumentation;
 use Shahzad\AgenticGraph\Tracing\Instrumentation\HttpClientInstrumentation;
 use Shahzad\AgenticGraph\Tracing\Listeners\TracingListener;
+use Shahzad\AgenticGraph\Tracing\ModelPricingCalculator;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 use Shahzad\AgenticGraph\Tracing\TraceContextFactory;
@@ -86,7 +88,7 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
          */
         $package
             ->name('agenticgraph')
-            ->hasConfigFile()
+            ->hasConfigFile(['agenticgraph', 'model_pricing'])
             ->hasViews()
             ->hasMigration('create_agenticgraph_executions_table')
             ->hasMigration('create_agenticgraph_checkpoints_table')
@@ -100,7 +102,8 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
             ->hasCommand(CheckpointResumeCommand::class)
             ->hasCommand(CheckpointDeleteCommand::class)
             ->hasCommand(CheckpointCleanupCommand::class)
-            ->hasCommand(ExecutionsListCommand::class);
+            ->hasCommand(ExecutionsListCommand::class)
+            ->hasCommand(SyncModelPricingCommand::class);
     }
 
     public function packageBooted(): void
@@ -127,6 +130,7 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
         $this->app->singleton(NullExporter::class, fn () => new NullExporter);
         $this->app->singleton(TracerExporter::class, fn ($app) => TracerExporterFactory::make($app));
         $this->app->singleton(Tracer::class, fn ($app) => new Tracer($app->make(TracerExporter::class)));
+        $this->app->singleton(ModelPricingCalculator::class);
 
         // Register StateManager as singleton with dependencies
         $this->app->singleton(StateManager::class, function ($app) {

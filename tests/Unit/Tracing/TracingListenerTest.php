@@ -7,51 +7,8 @@ use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
 use Shahzad\AgenticGraph\Events\TokensUsed;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Tracing\Listeners\TracingListener;
-use Shahzad\AgenticGraph\Tracing\PulseExporter;
 
-// Mock PulseExporter
-class MockPulseExporter extends PulseExporter
-{
-    public array $spans = [];
-
-    public array $llmCalls = [];
-
-    public array $traces = [];
-
-    public bool $enabled = true;
-
-    public function isEnabled(): bool
-    {
-        return $this->enabled;
-    }
-
-    public function addSpan(array $span): void
-    {
-        $this->spans[] = $span;
-    }
-
-    public function addLlmCall(array $call): void
-    {
-        $this->llmCalls[] = $call;
-    }
-
-    public function startTrace(
-        string $traceId,
-        string $graphName,
-        array $initialStateKeys = [],
-        ?\DateTimeImmutable $startedAt = null,
-        ?array $initialStateData = null
-    ): void {
-        $this->traces[$traceId] = [
-            'graph_name' => $graphName,
-            'initial_state_keys' => $initialStateKeys,
-            'started_at' => $startedAt?->format(DATE_ATOM),
-            'initial_state' => $initialStateData,
-        ];
-    }
-}
-
-it('calculates duration correctly mixed with queued delays', function () {
+it('calculates duration correctly mixed with queued delays', function (): void {
     $exporter = new MockPulseExporter;
     $listener = new TracingListener($exporter);
 

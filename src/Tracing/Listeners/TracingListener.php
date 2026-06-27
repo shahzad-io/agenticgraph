@@ -17,6 +17,7 @@ use Shahzad\AgenticGraph\Events\TokensUsed;
 use Shahzad\AgenticGraph\Events\ToolCallCaptured;
 use Shahzad\AgenticGraph\Execution\ExecutionContext;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
+use Shahzad\AgenticGraph\Tracing\ModelPricingCalculator;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 
 /**
@@ -48,9 +49,12 @@ class TracingListener
 
     protected int $captureMaxLength;
 
-    public function __construct(TracerExporter $exporter)
+    protected ModelPricingCalculator $pricingCalculator;
+
+    public function __construct(TracerExporter $exporter, ?ModelPricingCalculator $pricingCalculator = null)
     {
         $this->exporter = $exporter;
+        $this->pricingCalculator = $pricingCalculator ?? new ModelPricingCalculator;
 
         // Load capture configuration
         $this->captureState = config('agenticgraph.tracing.capture.state', 'diff');
@@ -340,7 +344,8 @@ class TracingListener
         $executionId = $event->executionId ?? $traceContext?->getExecutionId();
         $spanId = $event->spanId ?? $traceContext?->getSpanId();
 
-        $cost = $this->calculateCost($event->model, $event->promptTokens, $event->completionTokens);
+        $pricing = $this->pricingCalculator->calculate($event->model, $event->promptTokens, $event->completionTokens);
+        $cost = $pricing['cost_usd'];
 
         $durationMs = $event->durationMs ?? 0.0;
 
@@ -667,33 +672,5 @@ class TracingListener
         }
 
         return $dt->add($interval);
-    }
-
-    private function calculateCost(string $model, int $promptTokens, int $completionTokens): float
-    {
-        // Simple rate table (approximate)
-        $rates = [
-            'gpt-4o' => ['input' => 2.50, 'output' => 10.00],
-            'gpt-4o-mini' => ['input' => 0.15, 'output' => 0.60],
-            'claude-3-5-sonnet' => ['input' => 3.00, 'output' => 15.00],
-        ];
-
-        // Normalize model name
-        $modelKey = null;
-        foreach (array_keys($rates) as $key) {
-            if (str_contains($model, $key)) {
-                $modelKey = $key;
-                break;
-            }
-        }
-
-        if (! $modelKey) {
-            return 0.0;
-        }
-
-        $inputCost = ($promptTokens / 1_000_000) * $rates[$modelKey]['input'];
-        $outputCost = ($completionTokens / 1_000_000) * $rates[$modelKey]['output'];
-
-        return round($inputCost + $outputCost, 6);
     }
 }
