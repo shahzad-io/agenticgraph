@@ -173,7 +173,7 @@ return [
     'tracing' => [
         'enabled' => env('AGENTICGRAPH_TRACING', false),
 
-        // Exporter driver: auto (pulse when api_key set, else log), pulse, log, null
+        // Exporter driver: auto (pulse when api_key set, else log), pulse, log, null, otlp
         'exporter' => env('AGENTICGRAPH_TRACING_EXPORTER', 'auto'),
 
         // AgenticPulse API credentials (required only for exporter=pulse or auto with key)
@@ -212,6 +212,19 @@ return [
 
         'db' => [
             'slow_threshold_ms' => env('AGENTICGRAPH_DB_SLOW_THRESHOLD_MS', 1000),
+        ],
+
+        // OTLP exporter (OSS reach — Jaeger, Tempo, Honeycomb, Datadog, etc.)
+        // Set AGENTICGRAPH_TRACING_EXPORTER=otlp and point at your collector.
+        'otlp' => [
+            'endpoint' => env('AGENTICGRAPH_OTLP_ENDPOINT', 'http://localhost:4318/v1/traces'),
+            'protocol' => env('AGENTICGRAPH_OTLP_PROTOCOL', 'http/json'), // http/json only for now
+            'headers' => array_filter([
+                'x-honeycomb-team' => env('AGENTICGRAPH_OTLP_HONEYCOMB_API_KEY'),
+                'dd-api-key' => env('AGENTICGRAPH_OTLP_DATADOG_API_KEY'),
+            ]),
+            // Additional headers as JSON object, e.g. {"Authorization":"Bearer token"}
+            'headers_json' => env('AGENTICGRAPH_OTLP_HEADERS_JSON'),
         ],
 
         // Sampling configuration

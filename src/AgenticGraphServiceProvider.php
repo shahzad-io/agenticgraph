@@ -65,6 +65,7 @@ use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\ExecutionClockFactory;
 use Shahzad\AgenticGraph\Tracing\Exporters\LogExporter;
 use Shahzad\AgenticGraph\Tracing\Exporters\NullExporter;
+use Shahzad\AgenticGraph\Tracing\Exporters\OtlpExporter;
 use Shahzad\AgenticGraph\Tracing\Instrumentation\DatabaseInstrumentation;
 use Shahzad\AgenticGraph\Tracing\Instrumentation\HttpClientInstrumentation;
 use Shahzad\AgenticGraph\Tracing\Listeners\TracingListener;
@@ -127,6 +128,7 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
         // Register tracer exporters (open-core: contract + pulse premium + OSS fallbacks)
         $this->app->singleton(PulseExporter::class, fn () => new PulseExporter);
         $this->app->singleton(LogExporter::class, fn () => new LogExporter);
+        $this->app->singleton(OtlpExporter::class, fn () => new OtlpExporter);
         $this->app->singleton(NullExporter::class, fn () => new NullExporter);
         $this->app->singleton(TracerExporter::class, fn ($app) => TracerExporterFactory::make($app));
         $this->app->singleton(Tracer::class, fn ($app) => new Tracer($app->make(TracerExporter::class)));

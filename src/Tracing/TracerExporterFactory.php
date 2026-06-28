@@ -9,6 +9,7 @@ use InvalidArgumentException;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\Exporters\LogExporter;
 use Shahzad\AgenticGraph\Tracing\Exporters\NullExporter;
+use Shahzad\AgenticGraph\Tracing\Exporters\OtlpExporter;
 
 final class TracerExporterFactory
 {
@@ -26,7 +27,8 @@ final class TracerExporterFactory
             'pulse' => $container->make(PulseExporter::class),
             'log' => $container->make(LogExporter::class),
             'null' => $container->make(NullExporter::class),
-            default => throw new InvalidArgumentException("Unknown agenticgraph tracing exporter [{$driver}]. Supported: auto, pulse, log, null."),
+            'otlp' => $container->make(OtlpExporter::class),
+            default => throw new InvalidArgumentException("Unknown agenticgraph tracing exporter [{$driver}]. Supported: auto, pulse, log, null, otlp."),
         };
     }
 }

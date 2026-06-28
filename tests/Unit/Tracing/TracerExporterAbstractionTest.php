@@ -9,6 +9,7 @@ use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\Exporters\LogExporter;
 use Shahzad\AgenticGraph\Tracing\Exporters\NullExporter;
+use Shahzad\AgenticGraph\Tracing\Exporters\OtlpExporter;
 use Shahzad\AgenticGraph\Tracing\Listeners\TracingListener;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
 use Shahzad\AgenticGraph\Tracing\TracerExporterFactory;
@@ -48,6 +49,19 @@ it('resolves null exporter when configured', function () {
     $exporter = TracerExporterFactory::make(app());
 
     expect($exporter)->toBeInstanceOf(NullExporter::class)
+        ->and($exporter->isEnabled())->toBeTrue();
+});
+
+it('resolves otlp exporter when configured with endpoint', function () {
+    config([
+        'agenticgraph.tracing.enabled' => true,
+        'agenticgraph.tracing.exporter' => 'otlp',
+        'agenticgraph.tracing.otlp.endpoint' => 'http://localhost:4318/v1/traces',
+    ]);
+
+    $exporter = TracerExporterFactory::make(app());
+
+    expect($exporter)->toBeInstanceOf(OtlpExporter::class)
         ->and($exporter->isEnabled())->toBeTrue();
 });
 
