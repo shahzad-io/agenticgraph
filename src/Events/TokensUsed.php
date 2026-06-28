@@ -6,6 +6,7 @@ namespace Shahzad\AgenticGraph\Events;
 
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\SerializesModels;
+use Shahzad\AgenticGraph\Tracing\CaptureDepth;
 use Shahzad\AgenticGraph\Tracing\ExecutionClock;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 
@@ -90,9 +91,27 @@ class TokensUsed implements ShouldQueue
             durationMs: $callDurationMs,
             startedAt: $startedAt,
             endedAt: $endedAt,
-            prompt: $prompt !== null ? self::truncateText($prompt, self::MAX_TEXT_LENGTH) : null,
-            response: $response !== null ? self::truncateText($response, self::MAX_TEXT_LENGTH) : null,
+            prompt: self::promptForEvent($prompt),
+            response: self::responseForEvent($response),
         );
+    }
+
+    public static function promptForEvent(?string $prompt): ?string
+    {
+        if (! CaptureDepth::shouldCarryPromptInEvent() || $prompt === null) {
+            return null;
+        }
+
+        return self::truncateText($prompt, self::MAX_TEXT_LENGTH);
+    }
+
+    public static function responseForEvent(?string $response): ?string
+    {
+        if (! CaptureDepth::shouldCarryResponseInEvent() || $response === null) {
+            return null;
+        }
+
+        return self::truncateText($response, self::MAX_TEXT_LENGTH);
     }
 
     /**

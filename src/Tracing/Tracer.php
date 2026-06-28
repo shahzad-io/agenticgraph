@@ -59,6 +59,10 @@ final class Tracer
             $durationMs = (microtime(true) - $startMicrotime) * 1000;
 
             if ($this->exporter->isEnabled()) {
+                if ($spanType === 'tool') {
+                    $attributes = array_merge($attributes, CaptureDepth::toolResultForSpan($result));
+                }
+
                 $this->exportSpan(
                     context: $context,
                     spanId: $spanId,
@@ -164,12 +168,11 @@ final class Tracer
      */
     private function sanitizeAttributes(array $attributes): array
     {
-        $maxLength = (int) config('agenticgraph.tracing.capture.max_length', 2000);
         $sanitized = [];
 
         foreach ($attributes as $key => $value) {
-            if (is_string($value) && strlen($value) > $maxLength) {
-                $sanitized[$key] = substr($value, 0, max($maxLength - 15, 0)).' [...truncated]';
+            if (is_string($value)) {
+                $sanitized[$key] = CaptureDepth::truncate($value);
 
                 continue;
             }

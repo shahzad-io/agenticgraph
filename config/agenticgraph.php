@@ -202,6 +202,16 @@ return [
             // under tool spans via the tool wrap without enabling these flags.
             'http' => env('AGENTICGRAPH_CAPTURE_HTTP', false),
             'db' => env('AGENTICGRAPH_CAPTURE_DB', false),
+
+            // Capture depth when HTTP/DB/tool spans are emitted (PII-safe defaults).
+            'tool_args' => env('AGENTICGRAPH_CAPTURE_TOOL_ARGS', 'summary'), // none|summary|full
+            'tool_results' => env('AGENTICGRAPH_CAPTURE_TOOL_RESULTS', 'none'), // none|summary|full
+            'http_urls' => env('AGENTICGRAPH_CAPTURE_HTTP_URLS', 'summary'), // none|summary|full
+            'db_sql' => env('AGENTICGRAPH_CAPTURE_DB_SQL', 'summary'), // none|summary|full
+        ],
+
+        'db' => [
+            'slow_threshold_ms' => env('AGENTICGRAPH_DB_SLOW_THRESHOLD_MS', 1000),
         ],
 
         // Sampling configuration

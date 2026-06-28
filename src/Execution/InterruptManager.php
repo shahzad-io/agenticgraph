@@ -110,6 +110,7 @@ final class InterruptManager implements InterruptServiceInterface
             stateSnapshot: $state->toArray(),
             interruptedAt: new \DateTimeImmutable,
             interruptPayload: $interruptPayload,
+            parentSpanId: $traceContext?->getSpanId(),
         ));
 
         $metadata = $state->getMetadata();
@@ -314,12 +315,18 @@ final class InterruptManager implements InterruptServiceInterface
 
         $state = $state->clearInterrupt();
 
+        $parentSpanId = null;
+        if (isset($checkpoint->metadata['trace_context']) && is_array($checkpoint->metadata['trace_context'])) {
+            $parentSpanId = $checkpoint->metadata['trace_context']['span_id'] ?? null;
+        }
+
         $this->events->dispatch(new NodeResumed(
             executionId: $executionId,
             nodeName: $checkpoint->currentNode,
             checkpointId: $checkpointId,
             stateSnapshot: $state->toArray(),
-            resumedAt: new \DateTimeImmutable
+            resumedAt: new \DateTimeImmutable,
+            parentSpanId: is_string($parentSpanId) ? $parentSpanId : null,
         ));
 
         if ($this->loggingEnabled) {

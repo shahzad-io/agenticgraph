@@ -39,6 +39,7 @@ use Shahzad\AgenticGraph\Prompts\PromptTemplate;
 use Shahzad\AgenticGraph\Prompts\TemplateInterpolator;
 use Shahzad\AgenticGraph\Streaming\PrismStreamAdapter;
 use Shahzad\AgenticGraph\Streaming\StreamContext;
+use Shahzad\AgenticGraph\Tracing\CaptureDepth;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 
 /**
@@ -1023,14 +1024,12 @@ abstract class PrismNode extends AbstractNode
         $start = microtime(true);
         $inputSize = $this->payloadSize($args);
         $toolSpanId = null;
-        $argSummary = $this->summarizeToolArguments($args);
 
-        $attributes = [
+        $attributes = array_merge([
             'tool_type' => $toolType,
             'tool_provider' => $this->toolProviderFromName($toolName),
             'input_size' => $inputSize,
-            'arg_keys' => $argSummary['keys'],
-        ];
+        ], CaptureDepth::toolArgsForSpan($args));
 
         try {
             $result = Trace::span($toolName, function () use ($tool, $args, &$toolSpanId): string {
@@ -1071,24 +1070,6 @@ abstract class PrismNode extends AbstractNode
         );
 
         return $result;
-    }
-
-    /**
-     * @param  array<int, mixed>  $args
-     * @return array{keys: list<string>}
-     */
-    private function summarizeToolArguments(array $args): array
-    {
-        if ($args === []) {
-            return ['keys' => []];
-        }
-
-        $first = $args[0];
-        if (is_array($first)) {
-            return ['keys' => array_map(strval(...), array_keys($first))];
-        }
-
-        return ['keys' => array_map(fn (int $index): string => (string) $index, array_keys($args))];
     }
 
     /**

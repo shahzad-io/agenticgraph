@@ -10,6 +10,7 @@ use Illuminate\Http\Client\Events\ResponseReceived;
 use Illuminate\Http\Client\Request;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Log;
+use Shahzad\AgenticGraph\Tracing\CaptureDepth;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\ExecutionClock;
 use Shahzad\AgenticGraph\Tracing\InstrumentationGate;
@@ -141,15 +142,15 @@ class HttpClientInstrumentation
         $durationMs = $durationMs > 0 ? $durationMs : (microtime(true) - $requestStart) * 1000;
         $startedAt = $clock->spanStartedAt($requestStart);
         $endedAt = $clock->spanEndedAt($requestStart, $durationMs);
-        $http = [
-            'method' => $event->request->method(),
-            'url' => $event->request->url(),
-            'status_code' => $event->response->status(),
-        ];
+        $http = CaptureDepth::httpRequestFields(
+            $event->request->method(),
+            (string) $event->request->url()
+        );
         $responseSize = $this->resolveResponseSize($event->response);
         if ($responseSize !== null) {
             $http['response_size'] = $responseSize;
         }
+        $http['status_code'] = $event->response->status();
         $this->exporter->addSpan([
             'id' => $spanId,
             'trace_id' => $executionId,
@@ -245,13 +246,14 @@ class HttpClientInstrumentation
             'started_at' => $startedAt->format(DATE_ATOM),
             'ended_at' => $endedAt->format(DATE_ATOM),
             'duration_ms' => $durationMs,
-            'http' => [
-                'method' => $event->request->method(),
-                'url' => $event->request->url(),
-                'status_code' => null,
-                'response_size' => 0,
-                'error' => $event->exception->getMessage(),
-            ],
+            'http' => array_merge(
+                CaptureDepth::httpRequestFields($event->request->method(), (string) $event->request->url()),
+                [
+                    'status_code' => null,
+                    'response_size' => 0,
+                    'error' => $event->exception->getMessage(),
+                ]
+            ),
         ]);
 
         if ($this->shouldLog()) {
@@ -310,11 +312,8 @@ class HttpClientInstrumentation
         $startedAt = $clock->spanStartedAt($startMicrotime);
         $endedAt = $clock->spanEndedAt($startMicrotime, $durationMs);
 
-        $http = [
-            'method' => $request->method(),
-            'url' => $request->url(),
-            'status_code' => $httpStatusCode,
-        ];
+        $http = CaptureDepth::httpRequestFields($request->method(), (string) $request->url());
+        $http['status_code'] = $httpStatusCode;
         if ($responseSize !== null) {
             $http['response_size'] = $responseSize;
         }

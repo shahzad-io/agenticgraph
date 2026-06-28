@@ -23,5 +23,6 @@ class NodeInterrupted implements ShouldQueue
         public readonly array $stateSnapshot,
         public readonly \DateTimeImmutable $interruptedAt,
         public readonly ?array $interruptPayload = null,
+        public readonly ?string $parentSpanId = null,
     ) {}
 }

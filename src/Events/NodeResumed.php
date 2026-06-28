@@ -20,5 +20,6 @@ class NodeResumed implements ShouldQueue
         public readonly string $checkpointId,
         public readonly array $stateSnapshot,
         public readonly \DateTimeImmutable $resumedAt,
+        public readonly ?string $parentSpanId = null,
     ) {}
 }

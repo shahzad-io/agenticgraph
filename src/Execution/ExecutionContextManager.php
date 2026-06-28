@@ -150,29 +150,14 @@ final class ExecutionContextManager implements ExecutionScopeInterface
         $bindings->{Graph::class} = true;
     }
 
+    /**
+     * Tear down execution scope bindings. Trace completion is handled by
+     * {@see TracingListener::onGraphCompleted()} so queued span listeners can
+     * finish before flush (see T5 queue-ordering fix). Interrupt paths use
+     * {@see TracerExporter::interruptTrace()} instead.
+     */
     public function exit(ExecutionScope $scope, ?StateContract $finalState = null): void
     {
-        $durationMs = (microtime(true) - $scope->startTime) * 1000;
-
-        try {
-            if ($finalState !== null && $this->tracerExporter && $this->tracerExporter->isEnabled()) {
-                $finalStateData = $finalState->toArray();
-                $finalStateKeys = array_keys($finalStateData);
-                $this->tracerExporter->completeTrace(
-                    $scope->executionId,
-                    $finalStateKeys,
-                    $durationMs,
-                    $finalStateData
-                );
-            }
-        } catch (\Throwable $cleanupException) {
-            $this->logger->warning('Execution cleanup failed', [
-                'execution_id' => $scope->executionId,
-                'step' => 'pulse_complete',
-                'error' => $cleanupException->getMessage(),
-            ]);
-        }
-
         try {
             if ($this->httpClientInstrumentation) {
                 $this->httpClientInstrumentation->cleanupExecution($scope->executionId);

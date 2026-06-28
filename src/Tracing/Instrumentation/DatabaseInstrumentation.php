@@ -6,6 +6,7 @@ namespace Shahzad\AgenticGraph\Tracing\Instrumentation;
 
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Events\QueryExecuted;
+use Shahzad\AgenticGraph\Tracing\CaptureDepth;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\InstrumentationGate;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
@@ -55,10 +56,10 @@ class DatabaseInstrumentation
         $spanId = $traceContext->getSpanId();
         $durationMs = (float) $event->time;
         $status = $durationMs > $this->slowThresholdMs ? 'slow' : 'success';
-        $sql = trim(preg_replace('/\s+/', ' ', $event->sql));
+        $sql = trim(preg_replace('/\s+/', ' ', $event->sql) ?? $event->sql);
         $startedAt = now()->subMilliseconds((int) $durationMs);
 
-        $this->exporter->addSpan([
+        $span = [
             'id' => uniqid('span_', true),
             'trace_id' => $executionId,
             'parent_id' => $spanId,
@@ -73,9 +74,15 @@ class DatabaseInstrumentation
             'duration_ms' => $durationMs,
             'db.connection' => $event->connectionName,
             'db.type' => $event->readWriteType ?? null,
-            'db.sql' => $sql,
             'db.bindings_count' => count($event->bindings),
             'db.rows_affected' => null,
-        ]);
+        ];
+
+        $capturedSql = CaptureDepth::dbSqlForSpan($sql);
+        if ($capturedSql !== null) {
+            $span['db.sql'] = $capturedSql;
+        }
+
+        $this->exporter->addSpan($span);
     }
 }

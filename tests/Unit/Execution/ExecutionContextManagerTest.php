@@ -139,13 +139,11 @@ it('leaves loop metadata unbound when not provided', function () {
         ->and($scope->context)->toBeInstanceOf(ExecutionContext::class);
 });
 
-it('exits successfully and cleans up scope bindings', function () {
+it('exits successfully and cleans up scope bindings without flushing trace', function () {
     $executionId = 'exec-5';
     $exporter = Mockery::mock(TracerExporter::class);
     $exporter->shouldReceive('isEnabled')->andReturn(true);
-    $exporter->shouldReceive('completeTrace')
-        ->once()
-        ->with($executionId, ['foo'], Mockery::type('float'), ['foo' => 'bar']);
+    $exporter->shouldNotReceive('completeTrace');
 
     $manager = new ExecutionContextManager(
         $exporter,
@@ -164,17 +162,16 @@ it('exits successfully and cleans up scope bindings', function () {
         ->and($this->container->bound(ExecutionContext::class))->toBeFalse();
 });
 
-it('continues cleanup when pulse export fails', function () {
+it('continues cleanup when http instrumentation cleanup fails', function () {
     $executionId = 'exec-7';
     $exporter = Mockery::mock(TracerExporter::class);
-    $exporter->shouldReceive('isEnabled')->andReturn(true);
-    $exporter->shouldReceive('completeTrace')->andThrow(new RuntimeException('fail'));
+    $exporter->shouldNotReceive('completeTrace');
     $instrumentation = Mockery::mock(HttpClientInstrumentation::class);
-    $instrumentation->shouldReceive('cleanupExecution')->once()->with($executionId);
+    $instrumentation->shouldReceive('cleanupExecution')->once()->with($executionId)->andThrow(new RuntimeException('fail'));
     $logger = Mockery::mock(LoggerInterface::class);
     $logger->shouldReceive('warning')
         ->once()
-        ->with('Execution cleanup failed', Mockery::type('array'));
+        ->with('Execution cleanup failed', Mockery::on(fn (array $context): bool => ($context['step'] ?? '') === 'http_client_cleanup'));
 
     $manager = new ExecutionContextManager(
         $exporter,

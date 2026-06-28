@@ -10,7 +10,6 @@ use Shahzad\AgenticGraph\Events\GraphExecutionFailed;
 use Shahzad\AgenticGraph\Events\GraphExecutionStarted;
 use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
 use Shahzad\AgenticGraph\Events\NodeExecutionFailed;
-use Shahzad\AgenticGraph\Events\NodeExecutionStarted;
 use Shahzad\AgenticGraph\Events\NodeInterrupted;
 use Shahzad\AgenticGraph\Events\NodeResumed;
 use Shahzad\AgenticGraph\Events\TokensUsed;
@@ -27,18 +26,6 @@ use Shahzad\AgenticGraph\Tracing\TraceContext;
 class TracingListener
 {
     protected TracerExporter $exporter;
-
-    /** @var array<string, float> */
-    protected array $spanStarts = [];
-
-    /** @var array<string, string|null> */
-    protected array $spanParents = [];
-
-    /** @var array<string, float> */
-    protected array $graphSpanStarts = [];
-
-    /** @var array<string, string> */
-    protected array $graphSpanIds = [];
 
     /** Capture configuration */
     protected string $captureState;
@@ -92,6 +79,9 @@ class TracingListener
 
     /**
      * Handle graph execution completed.
+     *
+     * Terminal trace flush for successful runs. {@see ExecutionContextManager::exit()}
+     * intentionally does not call completeTrace so queued span listeners can finish first.
      */
     public function onGraphCompleted(GraphExecutionCompleted $event): void
     {
@@ -205,15 +195,6 @@ class TracingListener
             $event->durationMs,
             $finalState
         );
-    }
-
-    /**
-     * Handle node execution started.
-     */
-    public function onNodeStarted(NodeExecutionStarted $event): void
-    {
-        // No-op for exporter as we export on completion.
-        // Removing in-memory state tracking to fixes async issues.
     }
 
     /**
@@ -358,7 +339,7 @@ class TracingListener
         $traceStartDt = $traceStart ? new \DateTimeImmutable($traceStart->toIso8601String()) : null;
         $this->calculateSpanTimestamps($eventStartedAt, $eventEndedAt, $durationMs, $traceStartDt, $startedAt, $endedAt);
 
-        $parentId = $event->parentSpanId ?? $spanId ?? ($executionId ? ($this->graphSpanIds[$executionId] ?? null) : null);
+        $parentId = $event->parentSpanId;
 
         $this->exporter->addSpan([
             'id' => $spanId ?? uniqid('span_', true),
@@ -464,7 +445,7 @@ class TracingListener
         $this->exporter->addSpan([
             'id' => uniqid('span_', true),
             'trace_id' => $event->executionId,
-            'parent_id' => null, // Top-level interrupt span
+            'parent_id' => $event->parentSpanId,
             'node_name' => $event->nodeName.' (interrupted)',
             'node_type' => 'interrupt',
             'span_type' => 'interrupt',
@@ -493,7 +474,7 @@ class TracingListener
         $this->exporter->addSpan([
             'id' => uniqid('span_', true),
             'trace_id' => $event->executionId,
-            'parent_id' => null, // Top-level resume span
+            'parent_id' => $event->parentSpanId,
             'node_name' => $event->nodeName.' (resumed)',
             'node_type' => 'resume',
             'span_type' => 'resume',
@@ -520,7 +501,6 @@ class TracingListener
             GraphExecutionStarted::class => 'onGraphStarted',
             GraphExecutionCompleted::class => 'onGraphCompleted',
             GraphExecutionFailed::class => 'onGraphFailed',
-            NodeExecutionStarted::class => 'onNodeStarted',
             NodeExecutionCompleted::class => 'onNodeCompleted',
             NodeExecutionFailed::class => 'onNodeFailed',
             TokensUsed::class => 'onTokensUsed',
