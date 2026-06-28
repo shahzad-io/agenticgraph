@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Facade;
 use Shahzad\AgenticGraph\Tracing\Tracer;
 
 /**
- * @method static mixed span(string $name, callable(): mixed $callback, array<string, mixed> $attributes = [], string $spanType = 'custom')
+ * @method static mixed span(string $name, callable(): mixed $callback, array<string, mixed> &$attributes = [], string $spanType = 'custom')
  *
  * @see Tracer
  */
