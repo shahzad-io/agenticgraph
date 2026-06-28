@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Illuminate\Support\Carbon;
 use Shahzad\AgenticGraph\Facades\Trace;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\ExecutionClock;
@@ -28,7 +29,7 @@ final class CapturingTracerExporter implements TracerExporter
         return false;
     }
 
-    public function getTraceStartTime(string $traceId): ?\Illuminate\Support\Carbon
+    public function getTraceStartTime(string $traceId): ?Carbon
     {
         return null;
     }
@@ -37,7 +38,7 @@ final class CapturingTracerExporter implements TracerExporter
         string $traceId,
         string $graphName,
         array $initialStateKeys = [],
-        ?\DateTimeImmutable $startedAt = null,
+        ?DateTimeImmutable $startedAt = null,
         ?array $initialStateData = null
     ): void {}
 
@@ -57,7 +58,7 @@ final class CapturingTracerExporter implements TracerExporter
 
     public function failTrace(
         string $traceId,
-        \Throwable $exception,
+        Throwable $exception,
         float $durationMs = 0,
         ?array $finalStateData = null
     ): void {}
@@ -151,8 +152,8 @@ it('balances the span stack and exports a failed span when the callback throws',
     $nodeSpanId = $context->startSpan('demo-node');
 
     try {
-        Trace::span('test.op', fn (): never => throw new \RuntimeException('boom'));
-    } catch (\RuntimeException $e) {
+        Trace::span('test.op', fn (): never => throw new RuntimeException('boom'));
+    } catch (RuntimeException $e) {
         expect($e->getMessage())->toBe('boom');
     }
 
