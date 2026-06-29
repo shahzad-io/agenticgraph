@@ -134,6 +134,14 @@ it('redacts http url and db sql by default capture depth', function (): void {
         ->and($sql)->toBe('SELECT users');
 });
 
+it('summarizes associative prism tool args by parameter name', function (): void {
+    config(['agenticgraph.tracing.capture.tool_args' => 'summary']);
+
+    $fields = CaptureDepth::toolArgsForSpan(['city' => 'Reykjavik']);
+
+    expect($fields)->toBe(['arg_keys' => ['city']]);
+});
+
 it('execution exit does not call completeTrace before queued listeners flush', function (): void {
     $exporter = new QueuedTracingRecordingExporter;
     app()->instance(TracerExporter::class, $exporter);

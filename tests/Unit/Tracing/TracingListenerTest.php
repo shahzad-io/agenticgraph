@@ -75,7 +75,9 @@ it('records span attributes for node completion', function () {
         ->and($span['status_code'])->toBe('OK')
         ->and($span['state_diff'])->toHaveKey('added')
         ->and($span['state_diff'])->toHaveKey('removed')
-        ->and($span['state_diff'])->toHaveKey('values');
+        ->and($span['state_diff'])->toHaveKey('values')
+        ->and($span['state_diff']['added'])->toBe(['b'])
+        ->and($span['state_diff']['removed'])->toBe([]);
 });
 
 it('uses token event timestamps and ids', function () {

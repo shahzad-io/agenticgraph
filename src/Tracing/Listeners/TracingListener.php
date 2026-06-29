@@ -261,8 +261,8 @@ class TracingListener
             'ended_at' => $resolvedEndedAt->format(DATE_ATOM),
             'duration_ms' => $durationMs,
             'state_diff' => [
-                'added' => array_diff($outputKeys, $inputKeys),
-                'removed' => array_diff($inputKeys, $outputKeys),
+                'added' => array_values(array_diff($outputKeys, $inputKeys)),
+                'removed' => array_values(array_diff($inputKeys, $outputKeys)),
                 'values' => $stateDiff,
             ],
             'loop_context' => $loopContext,
@@ -359,6 +359,7 @@ class TracingListener
             'completion_tokens' => $event->completionTokens,
             'total_tokens' => $event->totalTokens,
             'cost_usd' => $cost,
+            'cached' => $event->cached,
         ]);
 
         // Build LLM call data with optional prompt/response capture
@@ -385,6 +386,14 @@ class TracingListener
         // Add response if capture is enabled
         if ($this->captureResponses && $event->response !== null) {
             $llmCallData['response'] = $this->truncateText($event->response, $this->captureMaxLength);
+        }
+
+        if ($event->cached) {
+            $llmCallData['cached'] = true;
+        }
+
+        if ($event->cacheKey !== null) {
+            $llmCallData['cache_key'] = $event->cacheKey;
         }
 
         $this->exporter->addLlmCall($llmCallData);

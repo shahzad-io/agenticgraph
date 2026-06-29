@@ -362,8 +362,8 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                         );
                     }
 
-                    $executionContext = $executionContext->pushNode($current);
                     [$executionContext, $cycle] = $executionContext->detectAndRecordCycle($current);
+                    $executionContext = $executionContext->pushNode($current);
 
                     try {
                         $this->loopGuard->check($executionContext, $cycle);

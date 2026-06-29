@@ -1,5 +1,6 @@
 <?php
 
+use Illuminate\Support\Facades\Http;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
 
 beforeEach(function () {
@@ -115,4 +116,46 @@ it('flags spans outside the trace window', function () {
 
     expect($invalid)->toHaveCount(1);
     expect($invalid[0]['id'])->toBe('span_bad');
+});
+
+it('persists and restores interrupted trace buffers across resume', function () {
+    config()->set('agenticgraph.tracing.enabled', true);
+    config()->set('agenticgraph.tracing.api_key', 'pk_test_xxx');
+    config()->set('agenticgraph.tracing.endpoint', 'https://api.test.io');
+
+    Http::fake(['*' => Http::response(['status' => 'captured'], 202)]);
+
+    $exporter = new PulseExporter;
+    $traceId = 'exec_interrupt_resume';
+
+    $exporter->startTrace($traceId, 'refund', ['email']);
+    $exporter->addSpan([
+        'id' => 'span_before',
+        'trace_id' => $traceId,
+        'span_type' => 'node',
+        'node_name' => 'assess_refund',
+    ]);
+
+    $exporter->interruptTrace($traceId, 'human approval required');
+
+    expect($exporter->getBuffer()['traces'])->toBeEmpty();
+
+    $exporter->resumeTrace($traceId);
+
+    $buffer = $exporter->getBuffer();
+    expect($buffer['traces'][$traceId]['status'] ?? null)->toBe('running')
+        ->and($buffer['spans'])->toHaveCount(1)
+        ->and($buffer['spans'][0]['id'])->toBe('span_before');
+
+    $exporter->addSpan([
+        'id' => 'span_after',
+        'trace_id' => $traceId,
+        'span_type' => 'resume',
+        'node_name' => 'await_approval (resumed)',
+    ]);
+
+    $exporter->completeTrace($traceId, ['final_decision'], 1500.0);
+
+    $buffer = $exporter->getBuffer();
+    expect($buffer['traces'])->toBeEmpty();
 });

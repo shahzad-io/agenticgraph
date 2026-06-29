@@ -147,7 +147,8 @@ Use these helpers inside any `PrismNode`:
 - `promptTemplate(PromptTemplate $template, array $variables = [], array $additionalContent = [])`
 - `chatPrompt(ChatPromptTemplate $template, array $variables = [], array $additionalContent = [])`
 - `structured(string $prompt, mixed $schema)`
-- `tools(string $prompt, array $tools)`
+- `tools(string $prompt, array $tools)` — returns `ToolCall[]` (single-step; no toolChoice/maxSteps)
+- `agent(string $prompt, array $tools, array $options = [])` — traced multi-step agent with local tools
 - `embeddingsFromInput(string|array $inputs, array $providerOptions = [])`
 - `embeddings()`, `image()`, `audio()`
 - `generateImage(string $prompt, array $additionalContent = [], array $providerOptions = [])`
@@ -266,12 +267,14 @@ final class CurrencyToolNode extends PrismNode
                 }),
         ];
 
-        $response = $this->prism()
-            ->withSystemPrompt('You are a Currency Conversion Agent.')
-            ->withTools($tools)
-            ->withMaxSteps(5)
-            ->withPrompt((string) $state->get('message'))
-            ->asText();
+        $response = $this->agent(
+            (string) $state->get('message'),
+            $tools,
+            [
+                'systemPrompt' => 'You are a Currency Conversion Agent.',
+                'maxSteps' => 5,
+            ],
+        );
 
         return $state->set('response', $response->text);
     }

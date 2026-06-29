@@ -5,7 +5,6 @@ declare(strict_types=1);
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Prism\Prism\Tool;
-use ReflectionMethod;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\ToolCallCaptured;
 use Shahzad\AgenticGraph\Execution\ExecutionMode;
@@ -41,18 +40,6 @@ final class ToolWrapProbeNode extends PrismNode
         $result = $wrapped[0]->handle();
 
         return $state->set('result', $result);
-    }
-
-    /**
-     * @param  array<int, Tool>  $tools
-     * @return array<int, Tool>
-     */
-    public function wrapToolsForTracing(array $tools, string $toolType): array
-    {
-        $method = new ReflectionMethod(PrismNode::class, 'wrapToolsForTracing');
-
-        /** @var array<int, Tool> */
-        return $method->invoke($this, $tools, $toolType);
     }
 }
 
@@ -242,8 +229,25 @@ it('runs concurrent-marked tools without error under the sync concurrency driver
         ->concurrent(true)
         ->using(fn (): string => (string) Http::get('https://api.exchangerate.test/latest')->body());
 
-    $node = new ToolWrapProbeNode;
-    $wrapped = $node->wrapToolsForTracing([$tool], 'prism');
+    $node = new class extends PrismNode
+    {
+        protected ?string $name = 'probe';
+
+        public function execute(StateContract $state): StateContract
+        {
+            return $state;
+        }
+
+        /**
+         * @param  array<int, Tool>  $tools
+         * @return array<int, Tool>
+         */
+        public function wrapTools(array $tools): array
+        {
+            return $this->wrapToolsForTracing($tools, 'prism');
+        }
+    };
+    $wrapped = $node->wrapTools([$tool]);
     $result = $wrapped[0]->handle();
 
     expect($result)->toContain('rate');

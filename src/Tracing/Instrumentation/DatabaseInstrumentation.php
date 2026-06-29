@@ -8,6 +8,7 @@ use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\Events\QueryExecuted;
 use Shahzad\AgenticGraph\Tracing\CaptureDepth;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
+use Shahzad\AgenticGraph\Tracing\DbQueryType;
 use Shahzad\AgenticGraph\Tracing\InstrumentationGate;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 
@@ -73,8 +74,11 @@ class DatabaseInstrumentation
             'ended_at' => $startedAt->copy()->addMilliseconds((int) $durationMs)->toAtomString(),
             'duration_ms' => $durationMs,
             'db.connection' => $event->connectionName,
-            'db.type' => $event->readWriteType ?? null,
+            'db.type' => DbQueryType::fromSql($sql),
             'db.bindings_count' => count($event->bindings),
+            // QueryExecuted does not expose row counts; PDO rowCount() is unreliable for SELECT
+            // (especially MySQL). Populating this requires upstream Laravel support or invasive
+            // connection wrapping — leave null so the dashboard does not show misleading zeros.
             'db.rows_affected' => null,
         ];
 

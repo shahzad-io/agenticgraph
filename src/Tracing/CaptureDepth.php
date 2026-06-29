@@ -115,6 +115,10 @@ final class CaptureDepth
             return [];
         }
 
+        if (! array_is_list($args)) {
+            return array_map(strval(...), array_keys($args));
+        }
+
         $first = $args[0];
         if (is_array($first)) {
             return array_map(strval(...), array_keys($first));

@@ -1,8 +1,11 @@
 <?php
 
 use Illuminate\Contracts\Container\BindingResolutionException;
+use Illuminate\Support\Facades\Event;
 use Prism\Prism\Audio\TextResponse;
+use Prism\Prism\Enums\FinishReason;
 use Prism\Prism\Facades\Prism;
+use Prism\Prism\Streaming\Events\StreamEndEvent;
 use Prism\Prism\Streaming\Events\TextCompleteEvent;
 use Prism\Prism\Streaming\Events\TextDeltaEvent;
 use Prism\Prism\Streaming\Events\TextStartEvent;
@@ -18,6 +21,7 @@ use Prism\Prism\ValueObjects\Media\Video;
 use Prism\Prism\ValueObjects\Messages\UserMessage;
 use Prism\Prism\ValueObjects\Usage;
 use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Events\TokensUsed;
 use Shahzad\AgenticGraph\Nodes\PrismNode;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
@@ -107,6 +111,40 @@ class FakeStreamingRequest extends PendingTextRequest
         foreach ($this->events as $event) {
             yield $event;
         }
+    }
+}
+
+class FakeStreamingPromptRequest extends PendingTextRequest
+{
+    public function __construct(private array $events) {}
+
+    public function withPrompt(\Illuminate\Contracts\View\View|string $prompt, array $additionalContent = []): PendingTextRequest
+    {
+        return $this;
+    }
+
+    public function asStream(): Generator
+    {
+        foreach ($this->events as $event) {
+            yield $event;
+        }
+    }
+}
+
+class StreamingPromptTokensNode extends PrismNode
+{
+    public function __construct(private PendingTextRequest $streamingRequest) {}
+
+    protected function prism(): PendingTextRequest
+    {
+        return $this->streamingRequest;
+    }
+
+    public function execute(StateContract $state): StateContract
+    {
+        $text = $this->prompt('Hello {name}', ['name' => 'stream']);
+
+        return $state->set('text', $text);
     }
 }
 
@@ -364,4 +402,32 @@ it('streams output matches non-streaming output', function () {
     $nonStreamed = $node->execute($state);
 
     expect($streamed->get('text'))->toBe($nonStreamed->get('text'));
+});
+
+it('dispatches TokensUsed when streaming text completes with usage', function () {
+    Event::fake([TokensUsed::class]);
+    config()->set('agenticgraph.prism.track_tokens', true);
+    config()->set('agenticgraph.prism.cache_enabled', false);
+
+    $sink = new MemorySink;
+    bindStreamContextWithSink($sink);
+
+    $node = new StreamingPromptTokensNode(new FakeStreamingPromptRequest([
+        new TextDeltaEvent('evt-1', time(), 'Hello ', 'msg-1'),
+        new TextDeltaEvent('evt-2', time(), 'stream', 'msg-1'),
+        new StreamEndEvent('evt-3', time(), FinishReason::Stop, new Usage(11, 22)),
+    ]));
+
+    $result = $node->execute(new State);
+
+    expect($result->get('text'))->toBe('Hello stream');
+
+    Event::assertDispatched(TokensUsed::class, function (TokensUsed $event): bool {
+        return $event->promptTokens === 11
+            && $event->completionTokens === 22
+            && $event->totalTokens === 33
+            && $event->callType === 'text';
+    });
+
+    app()->forgetInstance(StreamContext::class);
 });

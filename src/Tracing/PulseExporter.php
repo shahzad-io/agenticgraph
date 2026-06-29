@@ -6,6 +6,7 @@ namespace Shahzad\AgenticGraph\Tracing;
 
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
@@ -227,6 +228,12 @@ class PulseExporter implements TracerExporter
             return;
         }
 
+        if (isset($this->traces[$traceId])) {
+            $this->traces[$traceId]['status'] = 'running';
+
+            return;
+        }
+
         $sampled = $this->shouldSampleTrace();
         $this->sampledTraces[$traceId] = $sampled;
         $startTime = $startedAt ? Carbon::instance($startedAt) : now();
@@ -342,6 +349,8 @@ class PulseExporter implements TracerExporter
             return;
         }
 
+        $this->forgetInterruptedBuffer($traceId);
+
         $this->flush($traceId);
     }
 
@@ -413,7 +422,7 @@ class PulseExporter implements TracerExporter
         }
 
         // Flush current progress so it's not lost during the interrupt
-        $this->flush($traceId);
+        $this->flush($traceId, persistForResume: true);
     }
 
     /**
@@ -426,20 +435,24 @@ class PulseExporter implements TracerExporter
             return;
         }
 
-        // Mark trace as running again
-        if (isset($this->traces[$traceId])) {
-            $this->traces[$traceId]['status'] = 'running';
-            $this->traces[$traceId]['resumed_at'] = now()->toIso8601String();
-            unset($this->traces[$traceId]['interrupt_reason']);
-            unset($this->traces[$traceId]['interrupted_at']);
-            unset($this->flushedTraceIds[$traceId]);
+        if (! isset($this->traces[$traceId])) {
+            $this->restoreInterruptedBuffer($traceId);
         }
+
+        if (! isset($this->traces[$traceId])) {
+            return;
+        }
+
+        $this->traces[$traceId]['status'] = 'running';
+        $this->traces[$traceId]['resumed_at'] = now()->toIso8601String();
+        unset($this->traces[$traceId]['interrupt_reason'], $this->traces[$traceId]['interrupted_at']);
+        unset($this->flushedTraceIds[$traceId]);
     }
 
     /**
      * Flush buffered data to AgenticPulse API.
      */
-    public function flush(string $traceId): void
+    public function flush(string $traceId, bool $persistForResume = false): void
     {
         if (! $this->enabled || empty($this->traces[$traceId])) {
             $this->reset();
@@ -483,7 +496,79 @@ class PulseExporter implements TracerExporter
             });
         }
 
+        if ($persistForResume) {
+            $this->persistInterruptedBuffer($traceId);
+        } else {
+            $this->forgetInterruptedBuffer($traceId);
+        }
+
         $this->reset();
+    }
+
+    private function bufferCacheKey(string $traceId): string
+    {
+        $version = (string) config('agenticgraph.cache.version', 'v1');
+
+        return "agenticgraph:trace_buffer:{$version}:{$traceId}";
+    }
+
+    private function persistInterruptedBuffer(string $traceId): void
+    {
+        if (! isset($this->traces[$traceId])) {
+            return;
+        }
+
+        $payload = [
+            'trace' => $this->traces[$traceId],
+            'spans' => array_values(array_filter(
+                $this->spans,
+                fn (array $span): bool => ($span['trace_id'] ?? '') === $traceId
+            )),
+            'llm_calls' => array_values(array_filter(
+                $this->llmCalls,
+                fn (array $call): bool => ($call['trace_id'] ?? '') === $traceId
+            )),
+            'trace_start' => isset($this->traceStarts[$traceId])
+                ? $this->traceStarts[$traceId]->toIso8601String()
+                : null,
+            'sampled' => $this->sampledTraces[$traceId] ?? false,
+        ];
+
+        $ttl = (int) config('agenticgraph.tracing.buffer.ttl_seconds', 3600);
+        Cache::put($this->bufferCacheKey($traceId), $payload, $ttl);
+    }
+
+    private function restoreInterruptedBuffer(string $traceId): void
+    {
+        $payload = Cache::get($this->bufferCacheKey($traceId));
+        if (! is_array($payload) || ! is_array($payload['trace'] ?? null)) {
+            return;
+        }
+
+        $this->traces[$traceId] = $payload['trace'];
+
+        foreach ($payload['spans'] ?? [] as $span) {
+            if (is_array($span)) {
+                $this->spans[] = $span;
+            }
+        }
+
+        foreach ($payload['llm_calls'] ?? [] as $call) {
+            if (is_array($call)) {
+                $this->llmCalls[] = $call;
+            }
+        }
+
+        if (is_string($payload['trace_start'] ?? null) && $payload['trace_start'] !== '') {
+            $this->traceStarts[$traceId] = Carbon::parse($payload['trace_start']);
+        }
+
+        $this->sampledTraces[$traceId] = (bool) ($payload['sampled'] ?? true);
+    }
+
+    private function forgetInterruptedBuffer(string $traceId): void
+    {
+        Cache::forget($this->bufferCacheKey($traceId));
     }
 
     /**

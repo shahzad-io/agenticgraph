@@ -38,6 +38,8 @@ class TokensUsed implements ShouldQueue
         public readonly ?\DateTimeImmutable $endedAt = null,
         public readonly ?string $prompt = null,
         public readonly ?string $response = null,
+        public readonly bool $cached = false,
+        public readonly ?string $cacheKey = null,
     ) {}
 
     public static function fromLlmCall(
@@ -93,6 +95,62 @@ class TokensUsed implements ShouldQueue
             endedAt: $endedAt,
             prompt: self::promptForEvent($prompt),
             response: self::responseForEvent($response),
+            cached: false,
+            cacheKey: null,
+        );
+    }
+
+    public static function fromCacheHit(
+        string $node,
+        float $callStartMicrotime,
+        float $callDurationMs,
+        ?string $model = null,
+        ?string $prompt = null,
+        ?string $response = null,
+        ?string $cacheKey = null,
+    ): self {
+        $clock = ExecutionClock::tryGet();
+        $traceContext = TraceContext::tryGet();
+
+        $executionId = $traceContext?->getExecutionId() ?? $clock?->getExecutionId();
+        $parentSpanId = $traceContext?->getSpanId();
+        $spanId = uniqid('span_', true);
+        $startedAt = $clock
+            ? $clock->spanStartedAt($callStartMicrotime)
+            : (\DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $callStartMicrotime)) ?: new \DateTimeImmutable);
+
+        if ($clock) {
+            $endedAt = $clock->spanEndedAt($callStartMicrotime, $callDurationMs);
+        } else {
+            $durationSeconds = $callDurationMs / 1000;
+            $wholeSeconds = intval($durationSeconds);
+            $fractionalSeconds = $durationSeconds - $wholeSeconds;
+
+            $interval = new \DateInterval("PT{$wholeSeconds}S");
+            if ($fractionalSeconds > 0) {
+                $interval->f = $fractionalSeconds;
+            }
+
+            $endedAt = $startedAt->add($interval);
+        }
+
+        return new self(
+            node: $node,
+            promptTokens: 0,
+            completionTokens: 0,
+            totalTokens: 0,
+            executionId: $executionId,
+            parentSpanId: $parentSpanId,
+            spanId: $spanId,
+            callType: 'cached',
+            model: $model,
+            durationMs: $callDurationMs,
+            startedAt: $startedAt,
+            endedAt: $endedAt,
+            prompt: self::promptForEvent($prompt),
+            response: self::responseForEvent($response),
+            cached: true,
+            cacheKey: $cacheKey,
         );
     }
 

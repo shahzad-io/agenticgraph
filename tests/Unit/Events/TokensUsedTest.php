@@ -1,5 +1,6 @@
 <?php
 
+use Illuminate\Contracts\Cache\Repository;
 use Illuminate\Support\Facades\Event;
 use Prism\Prism\Facades\Prism;
 use Prism\Prism\Testing\TextResponseFake;
@@ -54,4 +55,29 @@ it('creates tokens event with execution clock when trace context missing', funct
     expect($event->endedAt->getTimestamp())->toBeGreaterThanOrEqual($event->startedAt->getTimestamp());
 
     app()->forgetInstance(ExecutionClock::class);
+});
+
+it('emits TokensUsed with cached marker on prism cache hit', function () {
+    Event::fake([TokensUsed::class]);
+    config()->set('agenticgraph.prism.track_tokens', true);
+    config()->set('agenticgraph.prism.cache_enabled', true);
+    config()->set('agenticgraph.prism.cache_ttl', 60);
+
+    $cache = Mockery::mock(Repository::class);
+    $cache->shouldReceive('has')->once()->andReturn(true);
+    $cache->shouldReceive('get')->once()->andReturn('cached response');
+    app()->instance(Repository::class, $cache);
+
+    $node = new TokensNode;
+    $result = $node->execute(new State);
+
+    expect($result->get('t'))->toBe('cached response');
+
+    Event::assertDispatched(TokensUsed::class, function (TokensUsed $event): bool {
+        return $event->cached === true
+            && $event->callType === 'cached'
+            && $event->promptTokens === 0
+            && $event->completionTokens === 0
+            && $event->totalTokens === 0;
+    });
 });

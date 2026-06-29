@@ -42,6 +42,19 @@ class ToolsTestNode extends PrismNode
     }
 }
 
+// Test node using agent() method
+class AgentTestNode extends PrismNode
+{
+    public function execute(StateContract $state): StateContract
+    {
+        $tools = [];
+
+        $response = $this->agent('Use a tool', $tools, ['maxSteps' => 5]);
+
+        return $state->set('text', $response->text);
+    }
+}
+
 class EmbeddingsTokenNode extends PrismNode
 {
     public function execute(StateContract $state): StateContract
@@ -117,6 +130,28 @@ it('emits TokensUsed event from tools() with callType', function () {
             && $e->promptTokens === 25
             && $e->completionTokens === 15
             && $e->totalTokens === 40;
+    });
+});
+
+it('emits TokensUsed event from agent() with callType tools', function () {
+    Event::fake();
+    config()->set('agenticgraph.prism.cache_enabled', false);
+
+    $fake = TextResponseFake::make()
+        ->withText('Agent answer')
+        ->withUsage(new Usage(40, 60))
+        ->withMeta(new Meta('id', 'model'));
+
+    Prism::fake([$fake]);
+
+    $node = new AgentTestNode;
+    $node->execute(new State);
+
+    Event::assertDispatched(TokensUsed::class, function (TokensUsed $e) {
+        return $e->callType === 'tools'
+            && $e->promptTokens === 40
+            && $e->completionTokens === 60
+            && $e->totalTokens === 100;
     });
 });
 
