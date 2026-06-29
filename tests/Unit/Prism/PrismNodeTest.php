@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Contracts\Container\BindingResolutionException;
+use Illuminate\Contracts\View\View;
 use Illuminate\Support\Facades\Event;
 use Prism\Prism\Audio\TextResponse;
 use Prism\Prism\Enums\FinishReason;
@@ -118,7 +119,7 @@ class FakeStreamingPromptRequest extends PendingTextRequest
 {
     public function __construct(private array $events) {}
 
-    public function withPrompt(\Illuminate\Contracts\View\View|string $prompt, array $additionalContent = []): PendingTextRequest
+    public function withPrompt(View|string $prompt, array $additionalContent = []): PendingTextRequest
     {
         return $this;
     }
