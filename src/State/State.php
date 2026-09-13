@@ -45,7 +45,7 @@ final class State implements Arrayable, JsonSerializable, StateContract
 
     public function merge(StateContract $other): static
     {
-        return new static(
+        return new self(
             $this->mergeArrays($this->data, $other->toArray()),
             $this->mergeArrays($this->metadata, $other->getMetadata())
         );
@@ -132,7 +132,7 @@ final class State implements Arrayable, JsonSerializable, StateContract
         $data = $this->data;
         Arr::forget($data, $key);
 
-        return new static($data, $this->metadata);
+        return new self($data, $this->metadata);
     }
 
     /**
@@ -168,10 +168,10 @@ final class State implements Arrayable, JsonSerializable, StateContract
     {
         $payload = $data['__agenticgraph_state'] ?? null;
         if (is_array($payload)) {
-            return new static($payload['data'] ?? [], $payload['metadata'] ?? []);
+            return new self($payload['data'] ?? [], $payload['metadata'] ?? []);
         }
 
-        return new static($data);
+        return new self($data);
     }
 
     public function jsonSerialize(): mixed
