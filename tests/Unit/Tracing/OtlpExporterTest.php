@@ -283,3 +283,23 @@ it('keeps microsecond precision in otlp unix nanos', function (): void {
         ->and($span['endTimeUnixNano'])->toBe('1782554401654321000')
         ->and((int) $span['startTimeUnixNano'] % 1_000_000_000)->toBe(123_456_000);
 });
+
+it('maps a paused interrupted span to otlp unset status', function (): void {
+    $payload = (new OtlpPayloadBuilder)->build(
+        trace: ['id' => 'exec_paused', 'graph_name' => 'demo-graph', 'status' => 'interrupted'],
+        spans: [[
+            'id' => 'span_graph',
+            'trace_id' => 'exec_paused',
+            'parent_id' => null,
+            'node_name' => 'demo-graph',
+            'span_type' => 'graph',
+            'status' => 'interrupted',
+            'status_code' => 'PAUSED',
+            'started_at' => '2026-06-27T10:00:00.000000+00:00',
+            'ended_at' => '2026-06-27T10:00:01.000000+00:00',
+            'duration_ms' => 1000,
+        ]],
+    );
+
+    expect($payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['status'])->toBe(['code' => 0]);
+});

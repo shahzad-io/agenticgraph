@@ -554,6 +554,14 @@ class PulseExporter implements TracerExporter
         $this->traces[$traceId]['ended_at'] = TraceTime::format($endedAt);
         $this->traces[$traceId]['duration_ms'] = $durationMs;
 
+        // active_ms sums the segments (start or resume, to interrupt or end), so human wait is
+        // excluded. The running total rides in the trace buffer across an interrupt.
+        $segmentStart = $this->parseDateTime($this->traces[$traceId]['resumed_at'] ?? null)
+            ?? $this->traceStarts[$traceId]
+            ?? null;
+        $segmentMs = $segmentStart ? max(TraceTime::diffMs($segmentStart, $endedAt), 0.0) : $durationMs;
+        $this->traces[$traceId]['active_ms'] = (float) ($this->traces[$traceId]['active_ms'] ?? 0.0) + $segmentMs;
+
         return $endedAt;
     }
 

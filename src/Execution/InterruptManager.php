@@ -25,6 +25,7 @@ use Shahzad\AgenticGraph\Streaming\StreamSession;
 use Shahzad\AgenticGraph\Streaming\StreamStatus;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
+use Shahzad\AgenticGraph\Tracing\TraceTime;
 
 final class InterruptManager implements InterruptServiceInterface
 {
@@ -108,9 +109,11 @@ final class InterruptManager implements InterruptServiceInterface
             reason: $reason,
             checkpointId: $checkpointId,
             stateSnapshot: $state->toArray(),
-            interruptedAt: new \DateTimeImmutable,
+            interruptedAt: TraceTime::now(),
             interruptPayload: $interruptPayload,
             parentSpanId: $traceContext?->getSpanId(),
+            graphName: $graph->name,
+            rootSpanId: $traceContext?->getRootSpanId(),
         ));
 
         $metadata = $state->getMetadata();
@@ -317,7 +320,8 @@ final class InterruptManager implements InterruptServiceInterface
 
         $parentSpanId = null;
         if (isset($checkpoint->metadata['trace_context']) && is_array($checkpoint->metadata['trace_context'])) {
-            $parentSpanId = $checkpoint->metadata['trace_context']['span_id'] ?? null;
+            $storedTrace = $checkpoint->metadata['trace_context'];
+            $parentSpanId = $storedTrace['current_span_id'] ?? $storedTrace['root_span_id'] ?? null;
         }
 
         $this->events->dispatch(new NodeResumed(
@@ -325,7 +329,7 @@ final class InterruptManager implements InterruptServiceInterface
             nodeName: $checkpoint->currentNode,
             checkpointId: $checkpointId,
             stateSnapshot: $state->toArray(),
-            resumedAt: new \DateTimeImmutable,
+            resumedAt: TraceTime::now(),
             parentSpanId: is_string($parentSpanId) ? $parentSpanId : null,
         ));
 

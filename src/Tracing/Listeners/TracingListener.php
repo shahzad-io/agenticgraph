@@ -92,9 +92,8 @@ class TracingListener
         }
 
         $spanId = $event->spanId ?? uniqid('span_', true);
-        $durationMs = $event->duration * 1000;
-
         $traceStartDt = $this->traceStart($event->executionId);
+        $durationMs = $this->graphDurationMs($traceStartDt, $event->completedAt, $event->duration * 1000);
         $startedAt = $traceStartDt ?? TraceTime::addMs($event->completedAt, -$durationMs);
         $endedAt = $startedAt;
         $this->calculateSpanTimestamps($startedAt, null, $durationMs, $traceStartDt, $startedAt, $endedAt);
@@ -138,10 +137,9 @@ class TracingListener
             return;
         }
 
-        $spanId = uniqid('span_', true);
-        $durationMs = $event->durationMs;
-
+        $spanId = $event->spanId ?? uniqid('span_', true);
         $traceStartDt = $this->traceStart($event->executionId);
+        $durationMs = $this->graphDurationMs($traceStartDt, TraceTime::now(), $event->durationMs);
         $startedAt = $traceStartDt;
         $endedAt = $startedAt ?? TraceTime::now();
         $resolvedStartedAt = $endedAt;
@@ -177,7 +175,7 @@ class TracingListener
         $this->exporter->failTrace(
             $event->executionId,
             $event->exception,
-            $event->durationMs,
+            $durationMs,
             $finalState
         );
     }
@@ -427,6 +425,26 @@ class TracingListener
             return;
         }
 
+        // The root graph span is sent now with status interrupted; completion or failure later
+        // re-sends the same id, and mergeById keeps the final one.
+        if ($event->rootSpanId !== null && $event->graphName !== null) {
+            $traceStartDt = $this->traceStart($event->executionId) ?? $event->interruptedAt;
+            $this->exporter->addSpan([
+                'id' => $event->rootSpanId,
+                'trace_id' => $event->executionId,
+                'parent_id' => null,
+                'node_name' => $event->graphName,
+                'node_type' => 'graph',
+                'span_type' => 'graph',
+                'status' => 'interrupted',
+                'span_kind' => 'internal',
+                'status_code' => 'PAUSED',
+                'started_at' => TraceTime::format($traceStartDt),
+                'ended_at' => TraceTime::format($event->interruptedAt),
+                'duration_ms' => max(TraceTime::diffMs($traceStartDt, $event->interruptedAt), 0.0),
+            ]);
+        }
+
         // Create a span for the interrupt
         $this->exporter->addSpan([
             'id' => uniqid('span_', true),
@@ -587,6 +605,15 @@ class TracingListener
 
         // Final fallback: hard truncate
         return substr($text, 0, $maxLength - 15).' [...truncated]';
+    }
+
+    /**
+     * Graph span duration is wall time from the trace start, so a resumed or queued segment
+     * still covers the whole trace. The measured segment is kept when no start is known.
+     */
+    private function graphDurationMs(?\DateTimeImmutable $traceStart, \DateTimeInterface $endedAt, float $measuredMs): float
+    {
+        return $traceStart ? max($measuredMs, TraceTime::diffMs($traceStart, $endedAt)) : $measuredMs;
     }
 
     private function traceStart(string $executionId): ?\DateTimeImmutable

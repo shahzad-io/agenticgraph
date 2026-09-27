@@ -14,6 +14,7 @@ use Shahzad\AgenticGraph\Nodes\PrismNode;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
+use Shahzad\AgenticGraph\Tracing\TraceTime;
 
 final class StreamResumption
 {
@@ -54,7 +55,8 @@ final class StreamResumption
 
         $parentSpanId = null;
         if (isset($checkpoint->metadata['trace_context']) && is_array($checkpoint->metadata['trace_context'])) {
-            $parentSpanId = $checkpoint->metadata['trace_context']['span_id'] ?? null;
+            $storedTrace = $checkpoint->metadata['trace_context'];
+            $parentSpanId = $storedTrace['current_span_id'] ?? $storedTrace['root_span_id'] ?? null;
         }
 
         app('events')->dispatch(new NodeResumed(
@@ -62,7 +64,7 @@ final class StreamResumption
             nodeName: $checkpoint->currentNode,
             checkpointId: $checkpointId,
             stateSnapshot: $state->toArray(),
-            resumedAt: new \DateTimeImmutable,
+            resumedAt: TraceTime::now(),
             parentSpanId: is_string($parentSpanId) ? $parentSpanId : null,
         ));
 

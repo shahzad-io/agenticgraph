@@ -35,6 +35,7 @@ use Shahzad\AgenticGraph\Streaming\StreamOptions;
 use Shahzad\AgenticGraph\Streaming\StreamResumePayload;
 use Shahzad\AgenticGraph\Tracing\Instrumentation\HttpClientInstrumentation;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
+use Shahzad\AgenticGraph\Tracing\TraceTime;
 
 class ExecutionCoordinator
 {
@@ -292,7 +293,7 @@ class ExecutionCoordinator
             return $state;
         } catch (\Throwable $e) {
             $duration = microtime(true) - $start;
-            $this->events->dispatch(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000));
+            $this->events->dispatch(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000, $traceContext->getRootSpanId()));
             $this->repo->failed($executionId, $e->getMessage());
             $this->contextManager->exitWithException($scope, $e);
             throw $e;
@@ -514,6 +515,7 @@ class ExecutionCoordinator
         bool $skipInterruptGateForEntry = false
     ): StateContract {
         $options = new ExecutionOptions;
+        $segmentStart = microtime(true);
         $scope = $this->enterScope($executionId, $graph, $options, $loopMetadata);
         $traceContext = $scope->traceContext;
 
@@ -619,9 +621,10 @@ class ExecutionCoordinator
             } while (true);
 
             if (! $interrupted && ! $state->hasInterrupt()) {
-                $this->repo->completed($executionId, State::toStoragePayload($state), 0.0);
-                $completedAt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', microtime(true))) ?: new \DateTimeImmutable;
-                $this->events->dispatch(new GraphExecutionCompleted($executionId, $graph->name, $state, $completedAt, 0.0, []));
+                $segmentEnd = microtime(true);
+                $duration = $segmentEnd - $segmentStart;
+                $this->repo->completed($executionId, State::toStoragePayload($state), $duration);
+                $this->events->dispatch(new GraphExecutionCompleted($executionId, $graph->name, $state, TraceTime::fromMicrotime($segmentEnd), $duration, [], $traceContext->getRootSpanId()));
             }
 
             $exitState = ($interrupted || $state->hasInterrupt()) ? null : $state;
@@ -629,6 +632,8 @@ class ExecutionCoordinator
 
             return $state;
         } catch (\Throwable $e) {
+            $duration = microtime(true) - $segmentStart;
+            $this->events->dispatch(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000, $traceContext->getRootSpanId()));
             $this->repo->failed($executionId, $e->getMessage());
             $this->contextManager->exitWithException($scope, $e);
             throw $e;

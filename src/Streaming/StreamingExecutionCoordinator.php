@@ -564,7 +564,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
             return new StreamHandle($session, $baseSink, $state);
         } catch (\Throwable $e) {
             $duration = microtime(true) - $start;
-            $this->events->dispatch(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000));
+            $this->events->dispatch(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000, $traceContext->getRootSpanId()));
 
             $this->emitLifecycleEvent(
                 $sink,
@@ -702,7 +702,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
         float $start
     ): void {
         $duration = microtime(true) - $start;
-        $this->events->dispatch(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000));
+        $this->events->dispatch(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000, $traceContext->getRootSpanId()));
 
         if ($sink !== null && $session !== null) {
             $this->emitLifecycleEvent(

@@ -20,6 +20,7 @@ use Shahzad\AgenticGraph\Streaming\StreamContext;
 use Shahzad\AgenticGraph\Streaming\StreamOptions;
 use Shahzad\AgenticGraph\Streaming\StreamResumePayload;
 use Shahzad\AgenticGraph\Streaming\StreamSession;
+use Shahzad\AgenticGraph\Tracing\TraceContext;
 
 class ContinueExecutionJob implements ShouldQueue
 {
@@ -39,6 +40,7 @@ class ContinueExecutionJob implements ShouldQueue
         public readonly ?string $streamId = null,
         public readonly ?int $streamSeq = null,
         public readonly ?StreamResumePayload $resumePayload = null,
+        public readonly ?string $rootSpanId = null,
     ) {
         $this->onConnection(config('agenticgraph.execution.queue_connection'));
         $this->onQueue(config('agenticgraph.execution.queue_name'));
@@ -63,6 +65,13 @@ class ContinueExecutionJob implements ShouldQueue
         $loopMeta = $this->loopMetadata !== null
             ? LoopMetadata::fromArray($this->loopMetadata)
             : null;
+
+        // Keep the trace's root graph span id. Jobs queued before this property existed leave it
+        // uninitialized; ?? reads that as null and a fresh root is minted as before.
+        $rootSpanId = $this->rootSpanId ?? null;
+        if ($rootSpanId !== null) {
+            app()->instance(TraceContext::class, new TraceContext($this->executionId, $rootSpanId));
+        }
 
         try {
             $options = $this->executionOptions ?? new ExecutionOptions(ExecutionMode::ASYNC, StreamingMode::NONE);
@@ -94,6 +103,7 @@ class ContinueExecutionJob implements ShouldQueue
                 $executor->executeFromNode($graph, $state, $this->startNode, $this->executionId, useBatch: true, loopMetadata: $loopMeta);
             }
         } finally {
+            app()->forgetInstance(TraceContext::class);
             app()->forgetInstance(StreamContext::class);
         }
     }

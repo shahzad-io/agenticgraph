@@ -30,6 +30,7 @@ use Shahzad\AgenticGraph\Streaming\StreamLifecycleEventEmitter;
 use Shahzad\AgenticGraph\Streaming\StreamLifecycleEventTypes;
 use Shahzad\AgenticGraph\Streaming\StreamNodeCompletePayloadBuilder;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
+use Shahzad\AgenticGraph\Tracing\TraceTime;
 
 final class ParallelExecutionCoordinator implements ParallelExecutorInterface
 {
@@ -78,14 +79,15 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
     ): ParallelResult {
         $results = [];
         $traceContext = ($this->traceContextProvider)();
-        $parentSpanId = $traceContext instanceof TraceContext ? $traceContext->getSpanId() : null;
+        // Every node span parents the root graph span; fan-out is shown by the route span, not nesting.
+        $parentSpanId = $traceContext instanceof TraceContext ? $traceContext->getRootSpanId() : null;
         $nodeCompletePayloadBuilder = StreamNodeCompletePayloadBuilder::fromConfig($this->stateManager);
         foreach ($parallelNodes as $nodeName) {
             $node = $graph->getNode($nodeName);
             $spanId = $traceContext instanceof TraceContext ? $traceContext->startSpan($nodeName) : null;
             $inputState = $state;
             $nodeStartTime = microtime(true);
-            $nodeStartDt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $nodeStartTime)) ?: new \DateTimeImmutable;
+            $nodeStartDt = TraceTime::fromMicrotime($nodeStartTime);
             $this->events->dispatch(new NodeExecutionStarted(
                 $executionId,
                 $nodeName,
@@ -118,7 +120,9 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
                 $resultState,
                 $nodeDuration,
                 ['node_type' => $node::class],
-                $spanId
+                $spanId,
+                $nodeStartDt,
+                $parentSpanId
             ));
             $this->emitStreamLifecycleIfActive(
                 $streamContext,
@@ -151,7 +155,7 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
     ): ParallelResult {
         $jobs = [];
         $traceContext = ($this->traceContextProvider)();
-        $parentSpanId = $traceContext instanceof TraceContext ? $traceContext->getSpanId() : null;
+        $parentSpanId = $traceContext instanceof TraceContext ? $traceContext->getRootSpanId() : null;
         foreach ($parallelNodes as $nodeName) {
             $jobs[] = new ExecuteNodeJob(
                 $executionId,
@@ -181,7 +185,8 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
             $executionId,
             $sourceNode,
             $parallelNodes,
-            $loopMetadataArray
+            $loopMetadataArray,
+            $parentSpanId
         );
 
         $this->bus->batch($jobs)
@@ -212,16 +217,18 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
         string $sourceNode,
         array $parallelNodes,
         ?array $loopMetadataArray = null,
+        ?string $rootSpanId = null,
     ): array {
         return [
-            'then' => static function (Batch $batch) use ($graphName, $executionId, $sourceNode, $parallelNodes, $loopMetadataArray): void {
+            'then' => static function (Batch $batch) use ($graphName, $executionId, $sourceNode, $parallelNodes, $loopMetadataArray, $rootSpanId): void {
                 app(ParallelExecutionCoordinator::class)->handleBatchCompletion(
                     $batch,
                     $graphName,
                     $executionId,
                     $sourceNode,
                     $parallelNodes,
-                    $loopMetadataArray
+                    $loopMetadataArray,
+                    $rootSpanId
                 );
             },
             'catch' => static function (Batch $batch, \Throwable $e) use ($executionId): void {
@@ -257,6 +264,7 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
         string $sourceNode,
         array $targets,
         ?array $loopMetadataArray = null,
+        ?string $rootSpanId = null,
     ): void {
         $graph = app(GraphRegistry::class)->get($graphName);
         if ($graph === null) {
@@ -325,7 +333,8 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
             $executionId,
             $merged->toArray(),
             $next ?? ($graph->exitPoints[0] ?? $sourceNode),
-            $loopMetadataArray
+            $loopMetadataArray,
+            rootSpanId: $rootSpanId
         );
 
         ($this->dispatchCallable)($job)

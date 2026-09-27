@@ -21,5 +21,6 @@ class GraphExecutionFailed implements ShouldQueue
         public readonly StateContract $state,
         public readonly \Throwable $exception,
         public readonly float $durationMs,
+        public readonly ?string $spanId = null,
     ) {}
 }
