@@ -131,9 +131,9 @@ it('redacts http url and db sql by default capture depth', function (): void {
     $http = CaptureDepth::httpRequestFields('GET', 'https://api.example.com/rates?apiKey=secret');
     $sql = CaptureDepth::dbSqlForSpan('select * from `users` where email = ?');
 
-    expect($http)->not->toHaveKey('url')
-        ->and($http['url_summary'])->toBe('https://api.example.com/rates')
-        ->and($sql)->toBe('SELECT users');
+    expect($http)->not->toHaveKey('url.full')
+        ->and($http['laravel.http.url_summary'])->toBe('https://api.example.com/rates')
+        ->and($sql)->toBe(['laravel.db.query_summary' => 'SELECT users']);
 });
 
 it('summarizes associative prism tool args by parameter name', function (): void {
@@ -141,7 +141,7 @@ it('summarizes associative prism tool args by parameter name', function (): void
 
     $fields = CaptureDepth::toolArgsForSpan(['city' => 'Reykjavik']);
 
-    expect($fields)->toBe(['arg_keys' => ['city']]);
+    expect($fields)->toBe(['tool.arg_keys' => ['city']]);
 });
 
 it('execution exit does not call completeTrace before queued listeners flush', function (): void {

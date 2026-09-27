@@ -34,4 +34,18 @@ final class DbQueryType
 
         return null;
     }
+
+    /**
+     * The SQL verb for db.operation.name, as written (OTel: no case normalization). Null for
+     * text with more than one statement, where OTel says not to parse the operation.
+     */
+    public static function operation(string $sql): ?string
+    {
+        $normalized = rtrim(trim($sql), ';');
+        if (self::fromSql($normalized) === null || str_contains($normalized, ';')) {
+            return null;
+        }
+
+        return strtok($normalized, " \t\n\r(") ?: null;
+    }
 }

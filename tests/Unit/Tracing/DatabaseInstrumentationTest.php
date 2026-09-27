@@ -89,8 +89,35 @@ it('maps SELECT db spans to read even when the connection readWriteType is write
 
     $span = $exporter->getBuffer()['spans'][0];
 
-    expect($span['db.type'])->toBe('read')
-        ->and($span['db.rows_affected'])->toBeNull();
+    expect($span['attributes'])->toBe([
+        'laravel.db.connection' => 'testing',
+        'laravel.db.statement_type' => 'read',
+        'db.operation.name' => 'select',
+        'laravel.db.bindings_count' => 1,
+        'laravel.db.query_summary' => 'SELECT users',
+    ])
+        ->and(array_filter(array_keys($span), fn (string $key): bool => str_starts_with($key, 'db.')))->toBe([]);
+});
+
+it('puts full sql in db.query.text and leaves db.operation.name out of multi-statement text', function (): void {
+    $exporter = enableDbInstrumentationTracingExporter();
+    registerDbInstrumentation($exporter);
+    bindDbInstrumentationTraceContext('exec-db-full-sql');
+
+    config(['agenticgraph.tracing.capture.db' => true, 'agenticgraph.tracing.capture.db_sql' => 'full']);
+
+    $instrumentation = new DatabaseInstrumentation($exporter, 1000.0);
+    $connection = DB::connection('testing');
+    $instrumentation->handleQuery(new QueryExecuted('UPDATE `users` SET `name` = ?', ['x'], 1.0, $connection));
+    $instrumentation->handleQuery(new QueryExecuted('DELETE FROM a; DELETE FROM b', [], 1.0, $connection));
+
+    [$single, $multi] = $exporter->getBuffer()['spans'];
+
+    expect($single['attributes']['db.query.text'])->toBe('UPDATE `users` SET `name` = ?')
+        ->and($single['attributes']['db.operation.name'])->toBe('UPDATE')
+        ->and($single['attributes'])->not->toHaveKey('laravel.db.query_summary')
+        ->and($multi['attributes'])->not->toHaveKey('db.operation.name')
+        ->and($multi['attributes']['laravel.db.statement_type'])->toBe('write');
 });
 
 it('captures read and write db span types from real queries inside a tool span', function (): void {
@@ -121,12 +148,12 @@ it('captures read and write db span types from real queries inside a tool span',
         fn (array $span): bool => ($span['span_type'] ?? '') === 'db',
     ));
 
-    $readSpans = array_values(array_filter($dbSpans, fn (array $span): bool => ($span['db.type'] ?? null) === 'read'));
-    $writeSpans = array_values(array_filter($dbSpans, fn (array $span): bool => ($span['db.type'] ?? null) === 'write'));
+    $readSpans = array_values(array_filter($dbSpans, fn (array $span): bool => ($span['attributes']['laravel.db.statement_type'] ?? null) === 'read'));
+    $writeSpans = array_values(array_filter($dbSpans, fn (array $span): bool => ($span['attributes']['laravel.db.statement_type'] ?? null) === 'write'));
 
     expect($readSpans)->not->toBeEmpty()
         ->and($writeSpans)->not->toBeEmpty()
-        ->and(collect($dbSpans)->every(fn (array $span): bool => array_key_exists('db.rows_affected', $span) && $span['db.rows_affected'] === null))->toBeTrue();
+        ->and(collect($dbSpans)->every(fn (array $span): bool => ! array_key_exists('db.rows_affected', $span) && ! array_key_exists('db.type', $span)))->toBeTrue();
 
     Schema::dropIfExists('tracing_db_probe');
 });

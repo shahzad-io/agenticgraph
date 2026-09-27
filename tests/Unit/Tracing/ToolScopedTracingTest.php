@@ -288,3 +288,58 @@ it('executes wrapped tools transparently through a real graph executor', functio
         ->and($httpSpan)->not->toBeNull()
         ->and($httpSpan['parent_id'])->toBe($toolSpan['id']);
 });
+
+const OLD_TOOL_SPAN_KEYS = ['tool_call_id', 'tool_type', 'tool_provider', 'tool_request_id', 'input_size', 'output_size'];
+
+it('puts wrapped tool fields in attributes under tool.* names', function (): void {
+    Http::fake(['api.exchangerate.test/*' => Http::response(['rate' => 1.5], 200)]);
+    config(['agenticgraph.tracing.capture.tool_results' => 'summary']);
+
+    $exporter = new CapturingToolTracerExporter;
+    app()->instance(TracerExporter::class, $exporter);
+
+    $context = new TraceContext('exec_tool_attrs', 'span_root');
+    $context->startSpan('conversion-node', 'node');
+    app()->instance(TraceContext::class, $context);
+    app()->instance(ExecutionClock::class, new ExecutionClock('exec_tool_attrs'));
+
+    (new ToolWrapProbeNode)->execute(new State);
+
+    $toolSpan = collect($exporter->spans)->firstWhere('span_type', 'tool');
+
+    expect($toolSpan['attributes'])->toBe([
+        'tool.type' => 'prism',
+        'tool.provider' => null,
+        'tool.input_size' => 2,
+        'tool.arg_keys' => [],
+        'tool.result_size' => strlen('{"rate":1.5}'),
+    ])
+        ->and(array_intersect(OLD_TOOL_SPAN_KEYS, array_keys($toolSpan)))->toBe([]);
+});
+
+it('puts ToolCallCaptured fields in attributes with the verified gen_ai.tool.call.id', function (): void {
+    $exporter = new CapturingToolTracerExporter;
+    (new TracingListener($exporter))->onToolCallCaptured(new ToolCallCaptured(
+        executionId: 'exec_captured',
+        spanId: 'span_node',
+        toolName: 'lookup_order',
+        toolCallId: 'call_abc',
+        toolType: 'prism',
+        inputSize: 12,
+        outputSize: null,
+        durationMs: null,
+        startedAt: new DateTimeImmutable,
+        toolProvider: 'local',
+        toolRequestId: 'call_abc',
+    ));
+
+    expect($exporter->spans[0]['attributes'])->toBe([
+        'gen_ai.tool.call.id' => 'call_abc',
+        'tool.type' => 'prism',
+        'tool.provider' => 'local',
+        'tool.request_id' => 'call_abc',
+        'tool.input_size' => 12,
+        'tool.output_size' => null,
+    ])
+        ->and(array_intersect(OLD_TOOL_SPAN_KEYS, array_keys($exporter->spans[0])))->toBe([]);
+});

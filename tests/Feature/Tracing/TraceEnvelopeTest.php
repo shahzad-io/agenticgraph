@@ -303,6 +303,8 @@ it('log exporter logs the shared envelope', function () {
             && $payload['schema_version'] === 'agenticgraph.trace.v1'
             && $payload['trace']['sampled'] === true
             && $payload['trace']['resource']['service.name'] !== ''
+            && array_key_exists('deployment.environment.name', $payload['trace']['resource'])
+            && ! array_key_exists('deployment.environment', $payload['trace']['resource'])
             && $payload['trace']['instrumentation_scope'] !== ''
             && $payload['trace']['active_ms'] === 250.0
             && ! array_key_exists('exporter', $payload['trace'])

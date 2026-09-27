@@ -207,8 +207,8 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
 
         $this->bus->batch($jobs)
             ->name("agenticgraph-parallel-{$executionId}")
-            ->onConnection(config('agenticgraph.execution.queue_connection'))
-            ->onQueue(config('agenticgraph.execution.queue_name'))
+            ->onConnection(config('agenticgraph.execution.queue_connection', 'redis'))
+            ->onQueue(config('agenticgraph.execution.queue_name', 'agenticgraph'))
             ->allowFailures(false)
             ->then($callbacks['then'])
             ->catch($callbacks['catch'])
@@ -363,8 +363,8 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
         );
 
         ($this->dispatchCallable)($job)
-            ->onConnection(config('agenticgraph.execution.queue_connection'))
-            ->onQueue(config('agenticgraph.execution.queue_name'));
+            ->onConnection(config('agenticgraph.execution.queue_connection', 'redis'))
+            ->onQueue(config('agenticgraph.execution.queue_name', 'agenticgraph'));
     }
 
     /**

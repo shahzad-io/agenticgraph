@@ -43,8 +43,8 @@ class ContinueExecutionJob implements ShouldQueue
         public readonly ?StreamResumePayload $resumePayload = null,
         public readonly ?string $rootSpanId = null,
     ) {
-        $this->onConnection(config('agenticgraph.execution.queue_connection'));
-        $this->onQueue(config('agenticgraph.execution.queue_name'));
+        $this->onConnection(config('agenticgraph.execution.queue_connection', 'redis'));
+        $this->onQueue(config('agenticgraph.execution.queue_name', 'agenticgraph'));
     }
 
     public function handle(GraphExecutor $executor, GraphRegistry $registry): void

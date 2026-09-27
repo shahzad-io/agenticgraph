@@ -140,10 +140,7 @@ class HttpClientInstrumentation
                 $parentId,
                 $event->request,
                 $durationMs,
-                $event->response->successful() ? 'success' : 'failed',
-                (string) $event->response->status(),
-                $event->response->status(),
-                $this->resolveResponseSize($event->response)
+                $event->response
             );
 
             return;
@@ -152,15 +149,6 @@ class HttpClientInstrumentation
         $durationMs = $durationMs > 0 ? $durationMs : (microtime(true) - $requestStart) * 1000;
         $startedAt = $clock->spanStartedAt($requestStart);
         $endedAt = $clock->spanEndedAt($requestStart, $durationMs);
-        $http = CaptureDepth::httpRequestFields(
-            $event->request->method(),
-            (string) $event->request->url()
-        );
-        $responseSize = $this->resolveResponseSize($event->response);
-        if ($responseSize !== null) {
-            $http['response_size'] = $responseSize;
-        }
-        $http['status_code'] = $event->response->status();
         $this->exporter()->addSpan([
             'id' => $spanId,
             'trace_id' => $executionId,
@@ -170,11 +158,11 @@ class HttpClientInstrumentation
             'span_type' => 'http',
             'status' => $event->response->successful() ? 'success' : 'failed',
             'span_kind' => 'client',
-            'status_code' => (string) $event->response->status(),
+            'status_code' => $event->response->successful() ? 'OK' : 'ERROR',
             'started_at' => TraceTime::format($startedAt),
             'ended_at' => TraceTime::format($endedAt),
             'duration_ms' => $durationMs,
-            'http' => $http,
+            'attributes' => $this->spanAttributes($event->request, $event->response),
         ]);
 
         if ($this->shouldLog()) {
@@ -230,11 +218,8 @@ class HttpClientInstrumentation
                 $parentId,
                 $event->request,
                 0,
-                'failed',
-                '0',
                 null,
-                0,
-                $event->exception->getMessage()
+                $event->exception
             );
 
             return;
@@ -252,18 +237,12 @@ class HttpClientInstrumentation
             'span_type' => 'http',
             'status' => 'failed',
             'span_kind' => 'client',
-            'status_code' => '0',
+            'status_code' => 'ERROR',
             'started_at' => TraceTime::format($startedAt),
             'ended_at' => TraceTime::format($endedAt),
             'duration_ms' => $durationMs,
-            'http' => array_merge(
-                CaptureDepth::httpRequestFields($event->request->method(), (string) $event->request->url()),
-                [
-                    'status_code' => null,
-                    'response_size' => 0,
-                    'error' => $event->exception->getMessage(),
-                ]
-            ),
+            'attributes' => $this->spanAttributes($event->request, null),
+            'error' => ['type' => $event->exception::class, 'message' => $event->exception->getMessage()],
         ]);
 
         if ($this->shouldLog()) {
@@ -310,11 +289,8 @@ class HttpClientInstrumentation
         ?string $parentId,
         Request $request,
         float $durationMs,
-        string $status,
-        string $statusCode,
-        ?int $httpStatusCode,
-        ?int $responseSize,
-        ?string $errorMessage = null
+        ?Response $response,
+        ?\Throwable $exception = null
     ): void {
         $durationMs = max($durationMs, 0);
         $endMicrotime = microtime(true);
@@ -322,30 +298,48 @@ class HttpClientInstrumentation
         $startedAt = $clock->spanStartedAt($startMicrotime);
         $endedAt = $clock->spanEndedAt($startMicrotime, $durationMs);
 
-        $http = CaptureDepth::httpRequestFields($request->method(), (string) $request->url());
-        $http['status_code'] = $httpStatusCode;
-        if ($responseSize !== null) {
-            $http['response_size'] = $responseSize;
-        }
-        if ($errorMessage !== null) {
-            $http['error'] = $errorMessage;
-        }
-
-        $this->exporter()->addSpan([
+        $span = [
             'id' => uniqid('span_', true),
             'trace_id' => $executionId,
             'parent_id' => $parentId,
             'node_name' => 'http_request',
             'node_type' => 'http',
             'span_type' => 'http',
-            'status' => $status,
+            'status' => $response?->successful() ? 'success' : 'failed',
             'span_kind' => 'client',
-            'status_code' => $statusCode,
+            'status_code' => $response?->successful() ? 'OK' : 'ERROR',
             'started_at' => TraceTime::format($startedAt),
             'ended_at' => TraceTime::format($endedAt),
             'duration_ms' => $durationMs,
-            'http' => $http,
-        ]);
+            'attributes' => $this->spanAttributes($request, $response),
+        ];
+        if ($exception !== null) {
+            $span['error'] = ['type' => $exception::class, 'message' => $exception->getMessage()];
+        }
+
+        $this->exporter()->addSpan($span);
+    }
+
+    /**
+     * Wire v1 http attributes (spec M-3: OTel names only where the meaning matches exactly).
+     *
+     * @return array<string, int|string>
+     */
+    private function spanAttributes(Request $request, ?Response $response): array
+    {
+        $attributes = CaptureDepth::httpRequestFields($request->method(), (string) $request->url());
+        if ($response === null) {
+            return $attributes;
+        }
+
+        $attributes['http.response.status_code'] = $response->status();
+        // Decoded body length, not bytes on the wire, so not http.response.body.size.
+        $responseSize = $this->resolveResponseSize($response);
+        if ($responseSize !== null) {
+            $attributes['laravel.http.response_size'] = $responseSize;
+        }
+
+        return $attributes;
     }
 
     private function storeRequestStart(string $executionId, int $requestId, float $start): void

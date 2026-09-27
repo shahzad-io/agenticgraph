@@ -4,6 +4,8 @@ namespace Shahzad\AgenticGraph\Tests\Unit\Tracing;
 
 use Shahzad\AgenticGraph\Events\GraphExecutionStarted;
 use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
+use Shahzad\AgenticGraph\Events\NodeInterrupted;
+use Shahzad\AgenticGraph\Events\NodeResumed;
 use Shahzad\AgenticGraph\Events\TokensUsed;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Tracing\Listeners\TracingListener;
@@ -156,3 +158,21 @@ it('marks llm spans and llm calls as streamed or not', function (bool $streamed)
     expect($exporter->spans[0]['streamed'])->toBe($streamed)
         ->and($exporter->llmCalls[0]['streamed'])->toBe($streamed);
 })->with([true, false]);
+
+it('puts interrupt and resume fields in attributes, keeping state_snapshot nested', function (): void {
+    $exporter = new MockPulseExporter;
+    $listener = new TracingListener($exporter);
+    $at = new \DateTimeImmutable('2026-09-27 10:00:00.000000', new \DateTimeZone('UTC'));
+
+    $listener->onNodeInterrupted(new NodeInterrupted('exec_int', 'approve', 'Needs approval', 'cp_1', ['amount' => 5], $at, parentSpanId: 'span_root'));
+    $listener->onNodeResumed(new NodeResumed('exec_int', 'approve', 'cp_1', ['amount' => 5], $at, 'span_root'));
+
+    [$interrupt, $resume] = $exporter->spans;
+
+    expect($interrupt['attributes'])->toBe(['interrupt.reason' => 'Needs approval', 'checkpoint.id' => 'cp_1'])
+        ->and($interrupt['state_snapshot'])->toBe(['amount'])
+        ->and($resume['attributes'])->toBe(['checkpoint.id' => 'cp_1'])
+        ->and($resume['state_snapshot'])->toBe(['amount'])
+        ->and($interrupt)->not->toHaveKeys(['interrupt_reason', 'checkpoint_id'])
+        ->and($resume)->not->toHaveKey('checkpoint_id');
+});

@@ -31,9 +31,8 @@ final class OtlpExporter extends BufferedTraceExporter
     ) {
         parent::__construct();
 
-        $this->enabled = (bool) config('agenticgraph.tracing.enabled', false)
-            && filled(config('agenticgraph.tracing.otlp.endpoint'));
         $this->endpoint = (string) config('agenticgraph.tracing.otlp.endpoint', 'http://localhost:4318/v1/traces');
+        $this->enabled = (bool) config('agenticgraph.tracing.enabled', false) && filled($this->endpoint);
         $this->protocol = (string) config('agenticgraph.tracing.otlp.protocol', 'http/json');
         $this->headers = $this->resolveHeaders();
     }

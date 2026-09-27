@@ -28,8 +28,8 @@ class ResumeExecutionJob implements ShouldBeUnique, ShouldQueue
         public readonly int $interruptId,
         public readonly mixed $humanInput,
     ) {
-        $this->onConnection(config('agenticgraph.execution.queue_connection'));
-        $this->onQueue(config('agenticgraph.execution.queue_name'));
+        $this->onConnection(config('agenticgraph.execution.queue_connection', 'redis'));
+        $this->onQueue(config('agenticgraph.execution.queue_name', 'agenticgraph'));
     }
 
     public function uniqueId(): string
@@ -110,7 +110,7 @@ class ResumeExecutionJob implements ShouldBeUnique, ShouldQueue
 
     private function resolveInterruptHandler(): ?InterruptHandlerInterface
     {
-        $handler = config('agenticgraph.interrupts.handler');
+        $handler = config('agenticgraph.interrupts.handler', null);
         if (! $handler) {
             return null;
         }

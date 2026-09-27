@@ -1144,9 +1144,9 @@ abstract class PrismNode extends AbstractNode
         $toolSpanId = null;
 
         $attributes = array_merge([
-            'tool_type' => $toolType,
-            'tool_provider' => $this->toolProviderFromName($toolName),
-            'input_size' => $inputSize,
+            'tool.type' => $toolType,
+            'tool.provider' => $this->toolProviderFromName($toolName),
+            'tool.input_size' => $inputSize,
         ], CaptureDepth::toolArgsForSpan($args));
 
         try {

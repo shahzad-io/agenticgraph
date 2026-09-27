@@ -114,7 +114,7 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
 
         // Bind StorageInterface to the configured storage driver
         $this->app->bind(StorageInterface::class, function ($app) {
-            return match (config('agenticgraph.storage')) {
+            return match (config('agenticgraph.storage', 'database')) {
                 'redis' => $app->make(RedisStorage::class),
                 'file' => $app->make(FileStorage::class),
                 default => $app->make(DatabaseStorage::class),
@@ -138,7 +138,7 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
 
         // Register StateManager as singleton with dependencies
         $this->app->singleton(StateManager::class, function ($app) {
-            $storage = match (config('agenticgraph.storage')) {
+            $storage = match (config('agenticgraph.storage', 'database')) {
                 'redis' => $app->make(RedisStorage::class),
                 'file' => $app->make(FileStorage::class),
                 default => $app->make(DatabaseStorage::class),
@@ -155,13 +155,13 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
             return new NodeMiddlewarePipeline(
                 $app,
                 $app->make(Dispatcher::class),
-                config('agenticgraph.middleware.global'),
+                config('agenticgraph.middleware.global', []),
                 static fn (): ?TraceContext => TraceContext::tryGet(),
             );
         });
 
         $this->app->singleton(CheckpointManager::class, function ($app) {
-            $storage = match (config('agenticgraph.storage')) {
+            $storage = match (config('agenticgraph.storage', 'database')) {
                 'redis' => $app->make(RedisStorage::class),
                 'file' => $app->make(FileStorage::class),
                 default => $app->make(DatabaseStorage::class),
@@ -216,7 +216,7 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
                 $app->make(Dispatcher::class),
                 $app,
                 $app->make(CheckpointManager::class),
-                config('agenticgraph.middleware.global'),
+                config('agenticgraph.middleware.global', []),
                 static fn () => $app->bound(TraceContext::class)
                     ? $app->make(TraceContext::class)
                     : null,
@@ -267,7 +267,7 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
 
                 public function __invoke(): ?InterruptHandlerInterface
                 {
-                    $handler = config('agenticgraph.interrupts.handler');
+                    $handler = config('agenticgraph.interrupts.handler', null);
                     if (! $handler) {
                         return null;
                     }

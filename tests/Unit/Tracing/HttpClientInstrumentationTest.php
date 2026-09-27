@@ -3,6 +3,8 @@
 namespace Shahzad\AgenticGraph\Tests\Unit\Tracing;
 
 use GuzzleHttp\Psr7\Response;
+use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\Events\ConnectionFailed;
 use Illuminate\Http\Client\Events\RequestSending;
 use Illuminate\Http\Client\Events\ResponseReceived;
 use Illuminate\Http\Client\Request;
@@ -104,10 +106,94 @@ it('captures http spans from client events', function () {
     expect($span['span_type'])->toBe('http');
     expect($span['trace_id'])->toBe('exec_http_1');
     expect($span['parent_id'])->toBe('span_root');
-    expect($span['http']['method'])->toBe('POST');
-    expect($span['http']['status_code'])->toBe(200);
-    expect($span['http']['response_size'])->toBe(strlen('{"ok":true}'));
+    expect($span['status_code'])->toBe('OK')
+        ->and($span['attributes'])->toBe([
+            'http.request.method' => 'POST',
+            'laravel.http.url_summary' => 'https://api.openai.com/v1/responses',
+            'http.response.status_code' => 200,
+            'laravel.http.response_size' => strlen('{"ok":true}'),
+        ])
+        ->and($span)->not->toHaveKey('http');
 });
+
+it('sets status_code ERROR and keeps the http status as an integer attribute on a 5xx', function (bool $withStart) {
+    [$instrumentation, $exporter] = bindHttpInstrumentationContext();
+    $request = makeHttpRequest();
+    $response = new \Illuminate\Http\Client\Response(new Response(503, [], 'down'));
+
+    if ($withStart) {
+        $instrumentation->onRequestSending(new RequestSending($request));
+    }
+    $instrumentation->onResponseReceived(new ResponseReceived($request, $response));
+
+    expect($exporter->spans[0]['status_code'])->toBe('ERROR')
+        ->and($exporter->spans[0]['status'])->toBe('failed')
+        ->and($exporter->spans[0]['attributes']['http.response.status_code'])->toBe(503)
+        ->and($exporter->spans[0])->not->toHaveKey('http');
+})->with(['with request start' => true, 'fallback without start' => false]);
+
+it('puts a connection failure in the top-level error with status_code ERROR', function (bool $withStart) {
+    [$instrumentation, $exporter] = bindHttpInstrumentationContext();
+    $request = makeHttpRequest();
+
+    if ($withStart) {
+        $instrumentation->onRequestSending(new RequestSending($request));
+    }
+    $instrumentation->onConnectionFailed(new ConnectionFailed(
+        $request,
+        new ConnectionException('Connection refused'),
+    ));
+
+    $span = $exporter->spans[0];
+    expect($span['status_code'])->toBe('ERROR')
+        ->and($span['error'])->toBe(['type' => ConnectionException::class, 'message' => 'Connection refused'])
+        ->and($span['attributes'])->toBe([
+            'http.request.method' => 'POST',
+            'laravel.http.url_summary' => 'https://api.openai.com/v1/responses',
+        ])
+        ->and($span)->not->toHaveKey('http');
+})->with(['with request start' => true, 'fallback without start' => false]);
+
+it('redacts credentials from url.full in full url capture', function () {
+    [$instrumentation, $exporter] = bindHttpInstrumentationContext();
+    config()->set('agenticgraph.tracing.capture.http_urls', 'full');
+    $request = new Request(new \GuzzleHttp\Psr7\Request('GET', 'https://user:secret@api.example.com/v1/rates?q=1'));
+
+    $instrumentation->onRequestSending(new RequestSending($request));
+    $instrumentation->onResponseReceived(new ResponseReceived($request, makeBufferedHttpResponse()));
+
+    expect($exporter->spans[0]['attributes']['url.full'])->toBe('https://REDACTED:REDACTED@api.example.com/v1/rates?q=1')
+        ->and($exporter->spans[0]['attributes'])->not->toHaveKey('laravel.http.url_summary');
+});
+
+it('redacts sensitive query values in url.full and keeps the rest', function (string $url, string $expected) {
+    [$instrumentation, $exporter] = bindHttpInstrumentationContext();
+    config()->set('agenticgraph.tracing.capture.http_urls', 'full');
+    $request = new Request(new \GuzzleHttp\Psr7\Request('GET', $url));
+
+    $instrumentation->onResponseReceived(new ResponseReceived($request, makeBufferedHttpResponse()));
+
+    expect($exporter->spans[0]['attributes']['url.full'])->toBe($expected);
+})->with([
+    'key' => ['https://api.example.com/v1/rates?key=abc', 'https://api.example.com/v1/rates?key=REDACTED'],
+    'API_KEY, any case' => ['https://api.example.com/v1/rates?API_KEY=abc', 'https://api.example.com/v1/rates?API_KEY=REDACTED'],
+    'harmless kept' => ['https://api.example.com/v1/rates?city=Lisbon&units=metric', 'https://api.example.com/v1/rates?city=Lisbon&units=metric'],
+    'mixed, OTel list, fragment' => [
+        'https://s3.example.com/f?city=Lisbon&X-Amz-Signature=s1&sig=s2&Token=t#key=frag',
+        'https://s3.example.com/f?city=Lisbon&X-Amz-Signature=REDACTED&sig=REDACTED&Token=REDACTED#key=frag',
+    ],
+]);
+
+it('guard: emits no url.full unless http url capture is full', function (string $mode) {
+    [$instrumentation, $exporter] = bindHttpInstrumentationContext();
+    config()->set('agenticgraph.tracing.capture.http_urls', $mode);
+    $request = new Request(new \GuzzleHttp\Psr7\Request('GET', 'https://api.example.com/v1/rates?key=abc'));
+
+    $instrumentation->onResponseReceived(new ResponseReceived($request, makeBufferedHttpResponse()));
+
+    expect($exporter->spans[0]['attributes'])->not->toHaveKey('url.full')
+        ->and(json_encode($exporter->spans[0]))->not->toContain('abc');
+})->with(['summary', 'none']);
 
 it('does not drain streamed sse bodies when execution clock is active', function () {
     [$instrumentation] = bindHttpInstrumentationContext('exec_sse_1');
@@ -132,7 +218,7 @@ it('omits response_size for streamed bodies without content-length', function ()
     $instrumentation->onResponseReceived(new ResponseReceived($request, $response));
 
     expect($exporter->spans)->toHaveCount(1)
-        ->and($exporter->spans[0]['http'])->not->toHaveKey('response_size');
+        ->and($exporter->spans[0]['attributes'])->not->toHaveKey('laravel.http.response_size');
 });
 
 it('uses content-length for streamed bodies without draining', function () {
@@ -153,7 +239,7 @@ it('uses content-length for streamed bodies without draining', function () {
     $instrumentation->onRequestSending(new RequestSending($request));
     $instrumentation->onResponseReceived(new ResponseReceived($request, $response));
 
-    expect($exporter->spans[0]['http']['response_size'])->toBe(strlen($sseBody))
+    expect($exporter->spans[0]['attributes']['laravel.http.response_size'])->toBe(strlen($sseBody))
         ->and(readStreamBodyIncrementally($response))->toBe($sseBody);
 });
 

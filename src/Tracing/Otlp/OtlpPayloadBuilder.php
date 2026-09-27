@@ -9,6 +9,11 @@ namespace Shahzad\AgenticGraph\Tracing\Otlp;
  */
 final class OtlpPayloadBuilder
 {
+    private const LLM_FIELDS = ['model', 'prompt_tokens', 'completion_tokens', 'total_tokens', 'cost_usd', 'cached', 'streamed'];
+
+    /** Prism provider names whose OTel gen_ai.provider.name well-known value differs. */
+    private const OTEL_PROVIDERS = ['gemini' => 'gcp.gemini', 'mistral' => 'mistral_ai', 'xai' => 'x_ai'];
+
     /**
      * @param  array<string, mixed>  $trace
      * @param  list<array<string, mixed>>  $spans
@@ -83,8 +88,8 @@ final class OtlpPayloadBuilder
                 (string) ($resource['service.version'] ?? config('agenticgraph.tracing.service.version', 'unknown'))
             ),
             OtlpAttributeMapper::attribute(
-                'deployment.environment',
-                (string) ($resource['deployment.environment'] ?? config('agenticgraph.tracing.environment', 'local'))
+                'deployment.environment.name',
+                (string) ($resource['deployment.environment.name'] ?? config('agenticgraph.tracing.environment', 'local'))
             ),
             OtlpAttributeMapper::attribute('agenticgraph.graph_name', (string) ($trace['graph_name'] ?? '')),
             OtlpAttributeMapper::attribute('agenticgraph.trace_status', (string) ($trace['status'] ?? 'running')),
@@ -128,20 +133,22 @@ final class OtlpPayloadBuilder
     }
 
     /**
+     * Wire v1 attributes pass through under their own names; promoted llm fields map to
+     * gen_ai.* only where the OTel meaning matches (spec M-3, names in spec/tracing-wire-v1.md).
+     *
      * @param  array<string, mixed>  $span
      * @param  array<string, mixed>|null  $llmCall
      * @return list<array{key: string, value: array<string, mixed>}>
      */
     private function spanAttributes(array $span, ?array $llmCall): array
     {
-        $reserved = ['id', 'trace_id', 'parent_id', 'started_at', 'ended_at', 'node_name', 'span_kind', 'status', 'status_code', 'error', 'http'];
+        $reserved = ['id', 'trace_id', 'parent_id', 'started_at', 'ended_at', 'node_name', 'span_kind', 'status', 'status_code', 'error', 'attributes', ...self::LLM_FIELDS];
         $payload = [];
 
         foreach ($span as $key => $value) {
             if (in_array($key, $reserved, true)) {
                 continue;
             }
-
             $payload[$key] = $value;
         }
 
@@ -149,80 +156,94 @@ final class OtlpPayloadBuilder
             $payload['agenticgraph.span_type'] = $span['span_type'];
         }
 
-        if (isset($span['http']) && is_array($span['http'])) {
-            $payload = [...$payload, ...$this->prefixKeys($span['http'], 'http')];
+        if (isset($span['attributes']) && is_array($span['attributes'])) {
+            $payload = [...$payload, ...$span['attributes']];
         }
 
         if (isset($span['error']) && is_array($span['error'])) {
             $payload = [...$payload, ...$this->prefixKeys($span['error'], 'exception')];
         }
 
-        foreach ($span as $key => $value) {
-            if (str_starts_with($key, 'db.')) {
-                $payload[$key] = $value;
-            }
-        }
-
-        if ($llmCall !== null) {
-            $payload = [...$payload, ...$this->genAiAttributes($llmCall)];
+        $spanType = $span['span_type'] ?? null;
+        if ($spanType === 'llm') {
+            $payload = [...$payload, ...$this->genAiAttributes($span, $llmCall)];
+        } elseif ($spanType === 'tool') {
+            $payload['gen_ai.operation.name'] = 'execute_tool';
+            $payload['gen_ai.tool.name'] = (string) ($span['node_name'] ?? '');
         }
 
         return OtlpAttributeMapper::flatten($payload);
     }
 
     /**
-     * @param  array<string, mixed>  $llmCall
+     * @param  array<string, mixed>  $span
+     * @param  array<string, mixed>|null  $llmCall
      * @return array<string, mixed>
      */
-    private function genAiAttributes(array $llmCall): array
+    private function genAiAttributes(array $span, ?array $llmCall): array
     {
-        $attributes = [
-            'gen_ai.operation.name' => (string) ($llmCall['call_type'] ?? 'chat'),
-        ];
-
-        if (isset($llmCall['model'])) {
-            $attributes['gen_ai.request.model'] = (string) $llmCall['model'];
-            $attributes['gen_ai.system'] = $this->modelProvider((string) $llmCall['model']);
+        $attributes = [];
+        foreach (['total_tokens', 'cost_usd', 'cached'] as $key) {
+            if (isset($span[$key])) {
+                $attributes['agenticgraph.'.$key] = $span[$key];
+            }
         }
 
-        if (isset($llmCall['prompt_tokens'])) {
-            $attributes['gen_ai.usage.input_tokens'] = (int) $llmCall['prompt_tokens'];
+        // A cache hit made no provider request, so it carries no gen_ai.* request or usage data.
+        if (($span['cached'] ?? false) === true) {
+            return $attributes;
         }
 
-        if (isset($llmCall['completion_tokens'])) {
-            $attributes['gen_ai.usage.output_tokens'] = (int) $llmCall['completion_tokens'];
+        $provider = isset($span['model']) ? $this->modelProvider((string) $span['model']) : null;
+        $operation = $this->operationName($llmCall['call_type'] ?? null, $provider);
+        if ($operation !== null) {
+            $attributes['gen_ai.operation.name'] = $operation;
         }
 
-        if (isset($llmCall['total_tokens'])) {
-            $attributes['gen_ai.usage.total_tokens'] = (int) $llmCall['total_tokens'];
+        if (isset($span['model'])) {
+            $model = (string) $span['model'];
+            $attributes['gen_ai.request.model'] = str_contains($model, ':') ? explode(':', $model, 2)[1] : $model;
         }
 
-        if (isset($llmCall['cost_usd'])) {
-            $attributes['agenticgraph.cost_usd'] = (float) $llmCall['cost_usd'];
+        if ($provider !== null) {
+            $attributes['gen_ai.provider.name'] = self::OTEL_PROVIDERS[$provider] ?? $provider;
         }
 
-        if (isset($llmCall['prompt']) && is_string($llmCall['prompt'])) {
-            $attributes['gen_ai.prompt'] = $llmCall['prompt'];
+        if (isset($span['prompt_tokens'])) {
+            $attributes['gen_ai.usage.input_tokens'] = (int) $span['prompt_tokens'];
         }
 
-        if (isset($llmCall['response']) && is_string($llmCall['response'])) {
-            $attributes['gen_ai.completion'] = $llmCall['response'];
+        if (isset($span['completion_tokens'])) {
+            $attributes['gen_ai.usage.output_tokens'] = (int) $span['completion_tokens'];
+        }
+
+        if (isset($span['streamed'])) {
+            $attributes['gen_ai.request.stream'] = (bool) $span['streamed'];
         }
 
         return $attributes;
     }
 
-    private function modelProvider(string $model): string
+    /**
+     * text, structured and tools calls are chat requests (generate_content on Gemini). Other
+     * call types (image, audio, mcp) have no exact OTel operation and are left out.
+     */
+    private function operationName(mixed $callType, ?string $provider): ?string
+    {
+        return match ($callType) {
+            'text', 'structured', 'tools' => $provider === 'gemini' ? 'generate_content' : 'chat',
+            'embeddings' => 'embeddings',
+            default => null,
+        };
+    }
+
+    private function modelProvider(string $model): ?string
     {
         if (str_contains($model, ':')) {
             return explode(':', $model, 2)[0];
         }
 
-        if (str_contains($model, '/')) {
-            return explode('/', $model, 2)[0];
-        }
-
-        return 'unknown';
+        return null;
     }
 
     /**

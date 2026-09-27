@@ -41,8 +41,8 @@ class ExecuteGraphJob implements ShouldBeUnique, ShouldQueue
         public readonly ?string $streamId = null,
         public readonly ?int $streamSeq = null,
     ) {
-        $this->onConnection(config('agenticgraph.execution.queue_connection'));
-        $this->onQueue(config('agenticgraph.execution.queue_name'));
+        $this->onConnection(config('agenticgraph.execution.queue_connection', 'redis'));
+        $this->onQueue(config('agenticgraph.execution.queue_name', 'agenticgraph'));
     }
 
     public function uniqueId(): string

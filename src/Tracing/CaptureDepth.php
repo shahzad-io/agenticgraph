@@ -9,6 +9,15 @@ namespace Shahzad\AgenticGraph\Tracing;
  */
 final class CaptureDepth
 {
+    /**
+     * Query parameters whose values url.full never carries (spec N-3): ours plus the OTel list at
+     * semantic-conventions v1.44.0. Matched case-insensitively, a superset of OTel's case-sensitive rule.
+     */
+    private const SENSITIVE_QUERY_KEYS = [
+        'key', 'api_key', 'apikey', 'token', 'access_token', 'signature', 'sig', 'password',
+        'x-amz-signature', 'x-amz-credential', 'x-amz-security-token', 'x-goog-signature',
+    ];
+
     public static function shouldCarryPromptInEvent(): bool
     {
         return (bool) config('agenticgraph.tracing.capture.prompts', false);
@@ -44,8 +53,8 @@ final class CaptureDepth
     public static function toolArgsForSpan(array $args): array
     {
         return match (self::mode('tool_args', 'summary')) {
-            'full' => ['tool_args' => self::truncate(self::encodePayload($args))],
-            'summary' => ['arg_keys' => self::summarizeArgKeys($args)],
+            'full' => ['tool.args' => self::truncate(self::encodePayload($args))],
+            'summary' => ['tool.arg_keys' => self::summarizeArgKeys($args)],
             default => [],
         };
     }
@@ -58,34 +67,38 @@ final class CaptureDepth
         $text = is_string($result) ? $result : self::encodePayload($result);
 
         return match (self::mode('tool_results', 'none')) {
-            'full' => $text !== null ? ['tool_result' => self::truncate($text)] : [],
-            'summary' => $text !== null ? ['tool_result_size' => strlen($text)] : [],
+            'full' => $text !== null ? ['tool.result' => self::truncate($text)] : [],
+            'summary' => $text !== null ? ['tool.result_size' => strlen($text)] : [],
             default => [],
         };
     }
 
     /**
-     * @return array{method: string, url?: string, url_summary?: string}
+     * @return array{'http.request.method': string, 'url.full'?: string, 'laravel.http.url_summary'?: string}
      */
     public static function httpRequestFields(string $method, string $url): array
     {
-        $fields = ['method' => $method];
+        $fields = ['http.request.method' => $method];
 
         return match (self::mode('http_urls', 'summary')) {
-            'full' => array_merge($fields, ['url' => $url]),
-            'summary' => array_merge($fields, ['url_summary' => self::summarizeHttpUrl($url)]),
+            'full' => array_merge($fields, ['url.full' => self::redactUrl($url)]),
+            'summary' => array_merge($fields, ['laravel.http.url_summary' => self::summarizeHttpUrl($url)]),
             default => $fields,
         };
     }
 
-    public static function dbSqlForSpan(string $sql): ?string
+    /**
+     * @return array{'db.query.text'?: string, 'laravel.db.query_summary'?: string}
+     */
+    public static function dbSqlForSpan(string $sql): array
     {
         $normalized = trim(preg_replace('/\s+/', ' ', $sql) ?? $sql);
 
         return match (self::mode('db_sql', 'summary')) {
-            'full' => self::truncate($normalized),
-            'summary' => self::summarizeSql($normalized),
-            default => null,
+            'full' => ['db.query.text' => (string) self::truncate($normalized)],
+            // Our summary is "{VERB} {first table}", not the OTel db.query.summary algorithm.
+            'summary' => ['laravel.db.query_summary' => self::summarizeSql($normalized)],
+            default => [],
         };
     }
 
@@ -148,6 +161,27 @@ final class CaptureDepth
         }
 
         return $base.$path;
+    }
+
+    /**
+     * OTel url.full: credentials become REDACTED:REDACTED, sensitive query values become REDACTED.
+     */
+    private static function redactUrl(string $url): string
+    {
+        $url = preg_replace('#^([a-z][a-z0-9+.-]*://)[^/@]*@#i', '$1REDACTED:REDACTED@', $url) ?? $url;
+        if (preg_match('/^([^?#]*)\?([^#]*)(.*)$/s', $url, $parts) !== 1) {
+            return $url;
+        }
+
+        $query = array_map(function (string $pair): string {
+            [$key] = explode('=', $pair, 2);
+
+            return str_contains($pair, '=') && in_array(strtolower(urldecode($key)), self::SENSITIVE_QUERY_KEYS, true)
+                ? $key.'=REDACTED'
+                : $pair;
+        }, explode('&', $parts[2]));
+
+        return $parts[1].'?'.implode('&', $query).$parts[3];
     }
 
     private static function summarizeSql(string $sql): string

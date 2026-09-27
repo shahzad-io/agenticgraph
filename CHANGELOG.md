@@ -4,7 +4,7 @@
 
 ### Added
 - `file` tracing exporter (`AGENTICGRAPH_TRACING_EXPORTER=file`): one JSON file per flushed segment at `{tracing.file.path}/{trace_id}/{Ymd-His-u}.json`. New config key `tracing.file.path` (`AGENTICGRAPH_TRACING_FILE_PATH`).
-- `schema_version: agenticgraph.trace.v1` as the first key of every trace envelope. Draft wire description in `docs/tracing-wire-v1.md`.
+- `schema_version: agenticgraph.trace.v1` as the first key of every trace envelope. Draft wire description in `spec/tracing-wire-v1.md` (shipped with the package).
 
 - `TraceSegmentMerger`: reference merge of a trace's segment envelopes (final segment wins, otherwise the later `segment.ended_at`; `active_ms` is the union of segment windows).
 - Route spans (`span_type: route`) for conditional edges and joins, with `route.from`, `route.targets`, `route.router` (fully qualified router class, like a node span's `node_type`), `route.kind` (`llm`, `deterministic`, `fan_out`, `join`), `route.from_cache`, `route.fallback`, `route.reason`. The parent is the root graph span; a router's LLM span is a child of its route span. Emitted through the new `RouteDecided` event.
@@ -15,6 +15,14 @@
 - Config `tracing.transport.connect_timeout` (`AGENTICGRAPH_TRACING_CONNECT_TIMEOUT`, default 1) and `tracing.transport.timeout` (`AGENTICGRAPH_TRACING_TIMEOUT`, default 3).
 
 ### Changed
+- **Breaking (wire):** span attributes live in one `attributes` object with dotted names. Top level keeps only the common keys, the llm fields (`model`, `prompt_tokens`, `completion_tokens`, `total_tokens`, `cost_usd`, `cached`, `streamed`) and `state_diff`, `loop_context`, `error`, `state_snapshot`. Moves: route `route.*`; tool `tool_type`, `tool_provider`, `tool_request_id`, `input_size`, `output_size`, `tool_call_id` become `tool.type`, `tool.provider`, `tool.request_id`, `tool.input_size`, `tool.output_size`, `gen_ai.tool.call.id`; interrupt `interrupt_reason`, `checkpoint_id` become `interrupt.reason`, `checkpoint.id`; resume `checkpoint_id` becomes `checkpoint.id`. Names in `spec/tracing-wire-v1.md`.
+- **Breaking (wire):** db spans: `db.connection` becomes `laravel.db.connection`, `db.type` becomes `laravel.db.statement_type`, `db.bindings_count` becomes `laravel.db.bindings_count`, `db.sql` becomes `laravel.db.query_summary` (summary) or `db.query.text` (full). New `db.operation.name` (the SQL verb, single statements only).
+- **Breaking (wire):** http spans: `status_code` is `OK` or `ERROR` like every other span; the HTTP status is `attributes["http.response.status_code"]` (int). The `http` object is gone: `http.request.method`, `laravel.http.url_summary` or `url.full`, `laravel.http.response_size` are in `attributes`. A connection failure or fallback span with an exception carries `error`.
+- `url.full` (capture `http_urls = full`) replaces URL credentials with `REDACTED:REDACTED` and the values of sensitive query parameters (`key`, `api_key`, `apikey`, `token`, `access_token`, `signature`, `sig`, `password`, and the OTel list: `X-Amz-Signature`, `X-Amz-Credential`, `X-Amz-Security-Token`, `X-Goog-Signature`; any case) with `REDACTED`.
+- **Breaking (wire):** `trace.resource` and the OTLP resource use `deployment.environment.name` instead of the deprecated `deployment.environment`.
+- OTLP: attributes are sent under their own names (no `http.` or `db.` prefixing). LLM spans send `gen_ai.operation.name`, `gen_ai.request.model` (without the provider prefix), `gen_ai.provider.name`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.request.stream`, plus `agenticgraph.total_tokens`, `agenticgraph.cost_usd`, `agenticgraph.cached`; none of the `gen_ai.*` on a cache hit. Tool spans send `gen_ai.operation.name = execute_tool` and `gen_ai.tool.name`. `gen_ai.system`, `gen_ai.prompt`, `gen_ai.completion` and `gen_ai.usage.total_tokens` are no longer sent. Names verified against semantic-conventions v1.44.0 and semantic-conventions-genai `e57c543b`.
+- `auto` exporter resolves to `null` when `app()->runningUnitTests()`, so a test suite never sends traces (spec J-1). An explicit driver still applies.
+- Config keys added since the first published config fall back to code defaults when missing: `storage` (`database`), `middleware.global` (`[]`), `interrupts.handler` (null), `execution.queue_connection` (`redis`), `execution.queue_name` (`agenticgraph`). The OTLP exporter reads `tracing.otlp.endpoint` once, default `http://localhost:4318/v1/traces`.
 - **Breaking (wire):** every envelope carries a `segment` block (`id`, `kind`, `final`, `started_at`, `ended_at`) and only that segment's spans and LLM calls. A resumed trace is no longer resent whole: receivers merge segments by trace id. Non-final segments have `trace.status = running` (or `interrupted`).
 - Queue node jobs, continue-execution jobs and batch failures each send their own `continued` segment, so a trace run across several workers is no longer lost or cut short.
 - **Breaking:** `TracerExporter` signatures changed. `completeTrace`, `failTrace` and `interruptTrace` take an optional `?\DateTimeInterface $at`; `resumeTrace` takes `?string $graphName`, `string $kind` and `?\DateTimeInterface $at`. Third-party exporters must update.
@@ -35,6 +43,7 @@
 - `AGENTICGRAPH_TRACING_EXPORTER=null` selects the null exporter. Previously `env()` turned it into PHP null and the factory threw `Unknown agenticgraph tracing exporter []`.
 
 ### Removed
+- `db.rows_affected` on db spans (always null).
 - The trace buffer in the cache and its config (`tracing.buffer.store`, `tracing.buffer.ttl_seconds`). A resume no longer depends on the cache.
 - The unused protected helper `PulseExporter::findSpansOutsideTraceWindow()`.
 

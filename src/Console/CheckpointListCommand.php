@@ -19,7 +19,7 @@ class CheckpointListCommand extends Command
     {
         $graph = $this->option('graph') ?? '';
         $limit = (int) $this->option('limit');
-        $storage = match (config('agenticgraph.storage')) {
+        $storage = match (config('agenticgraph.storage', 'database')) {
             'redis' => app(RedisStorage::class),
             'file' => app(FileStorage::class),
             default => app(DatabaseStorage::class),

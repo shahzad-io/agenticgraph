@@ -18,7 +18,7 @@ class CheckpointCleanupCommand extends Command
     public function handle(): int
     {
         $days = (int) $this->option('days');
-        $storage = match (config('agenticgraph.storage')) {
+        $storage = match (config('agenticgraph.storage', 'database')) {
             'redis' => app(RedisStorage::class),
             'file' => app(FileStorage::class),
             default => app(DatabaseStorage::class),

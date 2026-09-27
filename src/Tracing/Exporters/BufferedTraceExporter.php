@@ -300,7 +300,7 @@ abstract class BufferedTraceExporter implements TracerExporter
                 'resource' => [
                     'service.name' => (string) config('agenticgraph.tracing.service.name', 'agenticgraph'),
                     'service.version' => (string) config('agenticgraph.tracing.service.version', 'unknown'),
-                    'deployment.environment' => (string) config('agenticgraph.tracing.environment', 'local'),
+                    'deployment.environment.name' => (string) config('agenticgraph.tracing.environment', 'local'),
                 ],
                 'instrumentation_scope' => (string) config('agenticgraph.tracing.instrumentation_scope', 'agenticgraph'),
             ],

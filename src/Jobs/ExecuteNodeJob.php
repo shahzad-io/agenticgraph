@@ -42,8 +42,8 @@ class ExecuteNodeJob implements ShouldQueue
         public readonly ?string $parentSpanId = null,
         public readonly ?array $loopMetadata = null,
     ) {
-        $this->onConnection(config('agenticgraph.execution.queue_connection'));
-        $this->onQueue(config('agenticgraph.execution.queue_name'));
+        $this->onConnection(config('agenticgraph.execution.queue_connection', 'redis'));
+        $this->onQueue(config('agenticgraph.execution.queue_name', 'agenticgraph'));
     }
 
     public function handle(GraphRegistry $registry, NodeMiddlewarePipeline $pipeline): void

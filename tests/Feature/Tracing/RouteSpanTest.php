@@ -299,14 +299,15 @@ it('emits one route span per supervisor visit with the chosen target', function 
     $payload = $exporter->sent[0];
     rsAssertRoutesUnderRoot($payload);
     $routes = rsSpans($payload, 'route');
-    expect(array_map(fn (array $route): array => $route['route.targets'], $routes))->toBe([['worker'], ['worker'], ['finish']]);
+    expect(array_map(fn (array $route): array => $route['attributes']['route.targets'], $routes))->toBe([['worker'], ['worker'], ['finish']]);
     foreach ($routes as $route) {
         expect($route['node_name'])->toBe('supervisor route')
-            ->and($route['route.from'])->toBe('supervisor')
-            ->and($route['route.kind'])->toBe('deterministic')
-            ->and($route['route.router'])->toBe(RsSupervisorRouter::class)
-            ->and($route['route.from_cache'])->toBeFalse()
-            ->and($route['route.fallback'])->toBeFalse();
+            ->and($route['attributes']['route.from'])->toBe('supervisor')
+            ->and($route['attributes']['route.kind'])->toBe('deterministic')
+            ->and($route['attributes']['route.router'])->toBe(RsSupervisorRouter::class)
+            ->and($route['attributes']['route.from_cache'])->toBeFalse()
+            ->and($route['attributes']['route.fallback'])->toBeFalse()
+            ->and(array_filter(array_keys($route), fn (string $key): bool => str_starts_with($key, 'route.')))->toBe([]);
     }
     expect(rsVisits($payload))->toBe(['supervisor:1', 'worker:1', 'supervisor:2', 'worker:2', 'supervisor:3', 'finish:1']);
 });
@@ -323,7 +324,7 @@ it('names routers by fully qualified class, so routers sharing a short name stay
             ->addExitPoint('end')
             ->build());
         app(GraphExecutor::class)->execute($graph, new State([]));
-        $routers[] = rsSpans(end($exporter->sent), 'route')[0]['route.router'];
+        $routers[] = rsSpans(end($exporter->sent), 'route')[0]['attributes']['route.router'];
     }
 
     expect($routers)->toBe([BillingIntentRouter::class, ShippingIntentRouter::class])
@@ -353,14 +354,14 @@ it('sync fan-out emits one fan_out route span, one join span, and counts each br
     $payload = $exporter->sent[0];
     rsAssertRoutesUnderRoot($payload);
     [$fanOut, $join] = rsSpans($payload, 'route');
-    expect($fanOut['route.from'])->toBe('start')
-        ->and($fanOut['route.targets'])->toBe(['a', 'b', 'c'])
-        ->and($fanOut['route.kind'])->toBe('fan_out')
-        ->and($join['route.from'])->toBe('a|b|c')
+    expect($fanOut['attributes']['route.from'])->toBe('start')
+        ->and($fanOut['attributes']['route.targets'])->toBe(['a', 'b', 'c'])
+        ->and($fanOut['attributes']['route.kind'])->toBe('fan_out')
+        ->and($join['attributes']['route.from'])->toBe('a|b|c')
         ->and($join['node_name'])->toBe('a|b|c route')
-        ->and($join['route.targets'])->toBe(['end'])
-        ->and($join['route.kind'])->toBe('join')
-        ->and($join['route.router'])->toBeNull()
+        ->and($join['attributes']['route.targets'])->toBe(['end'])
+        ->and($join['attributes']['route.kind'])->toBe('join')
+        ->and($join['attributes']['route.router'])->toBeNull()
         ->and(rsVisits($payload))->toBe(['start:1', 'a:1', 'b:1', 'c:1', 'end:1']);
 });
 
@@ -392,16 +393,16 @@ it('an LLM router records kind llm, a cache hit, and parents its LLM span on the
     rsAssertRoutesUnderRoot($first);
     $route = rsSpans($first, 'route')[0];
     $llm = rsSpans($first, 'llm')[0];
-    expect($route['route.kind'])->toBe('llm')
-        ->and($route['route.router'])->toBe(PrismRouter::class)
-        ->and($route['route.targets'])->toBe(['b'])
-        ->and($route['route.from_cache'])->toBeFalse()
+    expect($route['attributes']['route.kind'])->toBe('llm')
+        ->and($route['attributes']['route.router'])->toBe(PrismRouter::class)
+        ->and($route['attributes']['route.targets'])->toBe(['b'])
+        ->and($route['attributes']['route.from_cache'])->toBeFalse()
         ->and($llm['parent_id'])->toBe($route['id'])
         ->and(rsMicros($llm['started_at']))->toBeGreaterThanOrEqual(rsMicros($route['started_at']))
         ->and(rsMicros($llm['ended_at']))->toBeLessThanOrEqual(rsMicros($route['ended_at']));
 
     rsAssertRoutesUnderRoot($second);
-    expect(rsSpans($second, 'route')[0]['route.from_cache'])->toBeTrue()
+    expect(rsSpans($second, 'route')[0]['attributes']['route.from_cache'])->toBeTrue()
         ->and(rsSpans($second, 'llm'))->toBe([]);
 });
 
@@ -492,12 +493,12 @@ it('queue fan-out carries the loop context to branch jobs and the continuation, 
 
     $join = array_values(array_filter($exporter->sent, fn (array $sent): bool => rsSpans($sent, 'route') !== [] && rsSpans($sent, 'node') === []));
     expect($join)->toHaveCount(1)
-        ->and(rsSpans($join[0], 'route')[0]['route.kind'])->toBe('join');
+        ->and(rsSpans($join[0], 'route')[0]['attributes']['route.kind'])->toBe('join');
 
     $merged = (new TraceSegmentMerger)->merge($exporter->sent);
     $root = rsAssertRoutesUnderRoot($merged);
     expect($root['id'])->toBe('span_rs_root')
-        ->and(array_column(rsSpans($merged, 'route'), 'route.kind'))->toBe(['fan_out', 'join'])
+        ->and(array_map(fn (array $route): string => $route['attributes']['route.kind'], rsSpans($merged, 'route')))->toBe(['fan_out', 'join'])
         ->and(rsVisits($merged))->toBe(['start:1', 'a:1', 'b:1', 'c:1', 'end:1']);
 });
 

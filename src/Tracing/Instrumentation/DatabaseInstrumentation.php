@@ -84,19 +84,16 @@ class DatabaseInstrumentation
             'started_at' => TraceTime::format($startedAt),
             'ended_at' => TraceTime::format($endedAt),
             'duration_ms' => $durationMs,
-            'db.connection' => $event->connectionName,
-            'db.type' => DbQueryType::fromSql($sql),
-            'db.bindings_count' => count($event->bindings),
-            // QueryExecuted does not expose row counts; PDO rowCount() is unreliable for SELECT
-            // (especially MySQL). Populating this requires upstream Laravel support or invasive
-            // connection wrapping — leave null so the dashboard does not show misleading zeros.
-            'db.rows_affected' => null,
+            // Wire v1 (spec M-3): a Laravel connection name is not an OTel db.namespace, and the
+            // read/write class is not an operation, so both use laravel.db.*.
+            'attributes' => array_filter([
+                'laravel.db.connection' => $event->connectionName,
+                'laravel.db.statement_type' => DbQueryType::fromSql($sql),
+                'db.operation.name' => DbQueryType::operation($sql),
+                'laravel.db.bindings_count' => count($event->bindings),
+                ...CaptureDepth::dbSqlForSpan($sql),
+            ], fn (mixed $value): bool => $value !== null),
         ];
-
-        $capturedSql = CaptureDepth::dbSqlForSpan($sql);
-        if ($capturedSql !== null) {
-            $span['db.sql'] = $capturedSql;
-        }
 
         $this->exporter()->addSpan($span);
     }

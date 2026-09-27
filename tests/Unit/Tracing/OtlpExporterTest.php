@@ -32,7 +32,7 @@ it('maps internal span tree to valid otlp json preserving parent relationships',
             'resource' => [
                 'service.name' => 'workflow',
                 'service.version' => '1.0.0',
-                'deployment.environment' => 'testing',
+                'deployment.environment.name' => 'testing',
             ],
         ],
         spans: [
@@ -147,53 +147,130 @@ it('maps internal span tree to valid otlp json preserving parent relationships',
 
     $resourceAttributes = $resourceSpan['resource']['attributes'] ?? [];
     $serviceName = collect($resourceAttributes)->firstWhere('key', 'service.name');
-    expect($serviceName['value']['stringValue'] ?? null)->toBe('workflow');
+    expect($serviceName['value']['stringValue'] ?? null)->toBe('workflow')
+        ->and(collect($resourceAttributes)->firstWhere('key', 'deployment.environment.name')['value']['stringValue'] ?? null)->toBe('testing')
+        ->and(collect($resourceAttributes)->firstWhere('key', 'deployment.environment'))->toBeNull();
 });
 
-it('merges llm call gen_ai attributes into matching llm spans', function (): void {
-    $builder = new OtlpPayloadBuilder;
-
-    $payload = $builder->build(
-        trace: ['id' => 'exec_llm', 'graph_name' => 'g', 'status' => 'completed'],
+/**
+ * OTLP attributes of the single span built from $span, as key => decoded value.
+ *
+ * @param  array<string, mixed>  $span
+ * @param  list<array<string, mixed>>  $llmCalls
+ * @return array<string, mixed>
+ */
+function otlpAttrs(array $span, array $llmCalls = []): array
+{
+    $payload = (new OtlpPayloadBuilder)->build(
+        trace: ['id' => 'exec_map', 'graph_name' => 'g', 'status' => 'completed'],
         spans: [[
-            'id' => 'span_llm',
-            'trace_id' => 'exec_llm',
+            'id' => 'span_x',
+            'trace_id' => 'exec_map',
             'parent_id' => 'span_node',
-            'node_name' => 'generate llm',
-            'span_type' => 'llm',
-            'span_kind' => 'client',
             'status' => 'success',
             'status_code' => 'OK',
             'started_at' => '2026-06-27T10:00:00+00:00',
             'ended_at' => '2026-06-27T10:00:01+00:00',
-            'model' => 'openai:gpt-4o',
-            'prompt_tokens' => 10,
-            'completion_tokens' => 20,
-            'cost_usd' => 0.05,
+            ...$span,
         ]],
-        llmCalls: [[
-            'span_id' => 'span_llm',
-            'trace_id' => 'exec_llm',
-            'call_type' => 'text',
-            'model' => 'openai:gpt-4o',
-            'prompt_tokens' => 10,
-            'completion_tokens' => 20,
-            'total_tokens' => 30,
-            'cost_usd' => 0.05,
-            'prompt' => 'hello',
-            'response' => 'world',
-        ]],
+        llmCalls: $llmCalls,
     );
 
-    $span = $payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0];
-    $keys = array_column($span['attributes'], 'key');
+    $attrs = [];
+    foreach ($payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['attributes'] as $attribute) {
+        $value = $attribute['value'];
+        $attrs[$attribute['key']] = isset($value['intValue']) ? (int) $value['intValue'] : array_values($value)[0];
+    }
 
-    expect($keys)->toContain('gen_ai.request.model')
-        ->and($keys)->toContain('gen_ai.usage.input_tokens')
-        ->and($keys)->toContain('gen_ai.usage.output_tokens')
-        ->and($keys)->toContain('agenticgraph.cost_usd')
-        ->and($keys)->toContain('gen_ai.prompt')
-        ->and($keys)->toContain('gen_ai.completion');
+    return $attrs;
+}
+
+it('maps promoted llm fields from the span itself to verified gen_ai attributes', function (): void {
+    $attrs = otlpAttrs([
+        'node_name' => 'generate llm',
+        'span_type' => 'llm',
+        'span_kind' => 'client',
+        'model' => 'openai:gpt-4o',
+        'prompt_tokens' => 10,
+        'completion_tokens' => 20,
+        'total_tokens' => 30,
+        'cost_usd' => 0.05,
+        'cached' => false,
+        'streamed' => true,
+    ]);
+
+    expect($attrs)->toMatchArray([
+        'gen_ai.request.model' => 'gpt-4o',
+        'gen_ai.provider.name' => 'openai',
+        'gen_ai.usage.input_tokens' => 10,
+        'gen_ai.usage.output_tokens' => 20,
+        'gen_ai.request.stream' => true,
+        'agenticgraph.total_tokens' => 30,
+        'agenticgraph.cost_usd' => 0.05,
+        'agenticgraph.cached' => false,
+    ])
+        ->and($attrs)->not->toHaveKeys([
+            'gen_ai.operation.name', 'gen_ai.system', 'gen_ai.prompt', 'gen_ai.completion', 'gen_ai.usage.total_tokens',
+            'model', 'prompt_tokens', 'completion_tokens', 'total_tokens', 'cost_usd', 'cached', 'streamed',
+        ]);
+});
+
+it('maps the llm call type to the OTel operation and provider well-known values', function (string $model, string $callType, ?string $operation, string $provider): void {
+    $attrs = otlpAttrs(
+        ['node_name' => 'n llm', 'span_type' => 'llm', 'model' => $model, 'prompt_tokens' => 1, 'completion_tokens' => 1],
+        [['span_id' => 'span_x', 'call_type' => $callType, 'model' => $model, 'prompt' => 'hello', 'response' => 'world']],
+    );
+
+    expect($attrs['gen_ai.operation.name'] ?? null)->toBe($operation)
+        ->and($attrs['gen_ai.provider.name'])->toBe($provider)
+        ->and($attrs)->not->toHaveKeys(['gen_ai.prompt', 'gen_ai.completion']);
+})->with([
+    'openai text' => ['openai:gpt-4o', 'text', 'chat', 'openai'],
+    'anthropic structured' => ['anthropic:claude-sonnet-4-5', 'structured', 'chat', 'anthropic'],
+    'gemini tools' => ['gemini:gemini-2.5-flash', 'tools', 'generate_content', 'gcp.gemini'],
+    'mistral embeddings' => ['mistral:mistral-embed', 'embeddings', 'embeddings', 'mistral_ai'],
+    'xai image' => ['xai:grok-2-image', 'image', null, 'x_ai'],
+]);
+
+it('leaves gen_ai request and usage attributes off a cache hit', function (): void {
+    $attrs = otlpAttrs(['node_name' => 'n llm', 'span_type' => 'llm', 'model' => 'openai:gpt-4o', 'prompt_tokens' => 10, 'completion_tokens' => 5, 'cached' => true]);
+
+    expect($attrs['agenticgraph.cached'])->toBeTrue()
+        ->and(array_filter(array_keys($attrs), fn (string $key): bool => str_starts_with($key, 'gen_ai.')))->toBe([]);
+});
+
+it('passes span attributes through without an attributes prefix', function (): void {
+    $vector = otlpAttrs(['node_name' => 'vector.search', 'span_type' => 'vector', 'attributes' => ['vector.store' => 'pgvector', 'vector.top_k' => 5]]);
+    $tool = otlpAttrs(['node_name' => 'lookup_order', 'span_type' => 'tool', 'attributes' => ['gen_ai.tool.call.id' => 'call_1', 'tool.type' => 'prism']]);
+
+    expect($vector)->toMatchArray(['vector.store' => 'pgvector', 'vector.top_k' => 5])
+        ->and(array_filter(array_keys($vector), fn (string $key): bool => str_starts_with($key, 'attributes.')))->toBe([])
+        ->and($tool)->toMatchArray([
+            'gen_ai.operation.name' => 'execute_tool',
+            'gen_ai.tool.name' => 'lookup_order',
+            'gen_ai.tool.call.id' => 'call_1',
+            'tool.type' => 'prism',
+        ]);
+});
+
+it('maps http attributes and a connection error to OTel names with an integer status', function (): void {
+    $attrs = otlpAttrs([
+        'node_name' => 'http_request',
+        'span_type' => 'http',
+        'span_kind' => 'client',
+        'status' => 'failed',
+        'status_code' => 'ERROR',
+        'attributes' => ['http.request.method' => 'GET', 'http.response.status_code' => 503],
+        'error' => ['type' => 'Illuminate\\Http\\Client\\ConnectionException', 'message' => 'refused'],
+    ]);
+
+    expect($attrs)->toMatchArray([
+        'http.request.method' => 'GET',
+        'http.response.status_code' => 503,
+        'exception.type' => 'Illuminate\\Http\\Client\\ConnectionException',
+        'exception.message' => 'refused',
+    ])
+        ->and($attrs)->not->toHaveKeys(['http.method', 'http.status_code', 'http.url_summary']);
 });
 
 it('resolves otlp exporter from factory when configured', function (): void {

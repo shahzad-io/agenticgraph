@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use Illuminate\Http\Client\Request;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Events\GraphExecutionCompleted;
 use Shahzad\AgenticGraph\Events\GraphExecutionStarted;
@@ -15,6 +17,7 @@ use Shahzad\AgenticGraph\Tracing\PulseExporter;
 use Shahzad\AgenticGraph\Tracing\TracerExporterFactory;
 
 it('resolves log exporter when tracing is enabled without api key', function () {
+    app()->detectEnvironment(fn (): string => 'local');
     config([
         'agenticgraph.tracing.enabled' => true,
         'agenticgraph.tracing.exporter' => 'auto',
@@ -25,6 +28,32 @@ it('resolves log exporter when tracing is enabled without api key', function () 
 
     expect($exporter)->toBeInstanceOf(LogExporter::class)
         ->and($exporter->isEnabled())->toBeTrue();
+});
+
+it('applies J-1: auto is null in unit tests, an explicit driver still sends', function () {
+    Http::fake(['*' => Http::response(['status' => 'captured'], 202)]);
+    config([
+        'agenticgraph.tracing.enabled' => true,
+        'agenticgraph.tracing.exporter' => 'auto',
+        'agenticgraph.tracing.api_key' => 'pk_test',
+        'agenticgraph.tracing.endpoint' => 'https://sink.test',
+    ]);
+
+    expect(app()->runningUnitTests())->toBeTrue()
+        ->and(TracerExporterFactory::make(app()))->toBeInstanceOf(NullExporter::class);
+
+    config(['agenticgraph.tracing.exporter' => 'pulse']);
+    $exporter = TracerExporterFactory::make(app());
+    $exporter->startTrace('exec_j1', 'j1-graph');
+    $exporter->completeTrace('exec_j1');
+
+    Http::assertSentCount(1);
+    Http::assertSent(fn (Request $request): bool => $request->url() === 'https://sink.test/v1/ingest');
+
+    app()->detectEnvironment(fn (): string => 'production');
+    config(['agenticgraph.tracing.exporter' => 'auto']);
+
+    expect(TracerExporterFactory::make(app()))->toBeInstanceOf(PulseExporter::class);
 });
 
 it('resolves pulse exporter when exporter is pulse and api key is set', function () {

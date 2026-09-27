@@ -414,12 +414,14 @@ class TracingListener
             'started_at' => TraceTime::format($startedAt),
             'ended_at' => TraceTime::format($endedAt),
             'duration_ms' => $durationMs,
-            'tool_call_id' => $event->toolCallId,
-            'tool_type' => $event->toolType,
-            'tool_provider' => $event->toolProvider,
-            'tool_request_id' => $event->toolRequestId,
-            'input_size' => $event->inputSize,
-            'output_size' => $event->outputSize,
+            'attributes' => [
+                'gen_ai.tool.call.id' => $event->toolCallId,
+                'tool.type' => $event->toolType,
+                'tool.provider' => $event->toolProvider,
+                'tool.request_id' => $event->toolRequestId,
+                'tool.input_size' => $event->inputSize,
+                'tool.output_size' => $event->outputSize,
+            ],
             'error' => $event->errorType || $event->errorMessage ? [
                 'type' => $event->errorType,
                 'message' => $event->errorMessage,
@@ -470,8 +472,10 @@ class TracingListener
             'started_at' => TraceTime::format($event->interruptedAt),
             'ended_at' => TraceTime::format($event->interruptedAt),
             'duration_ms' => 0, // Instant event
-            'interrupt_reason' => $event->reason,
-            'checkpoint_id' => $event->checkpointId,
+            'attributes' => [
+                'interrupt.reason' => $event->reason,
+                'checkpoint.id' => $event->checkpointId,
+            ],
             'state_snapshot' => array_keys($event->stateSnapshot), // Just keys for size
         ]);
     }
@@ -499,7 +503,9 @@ class TracingListener
             'started_at' => TraceTime::format($event->resumedAt),
             'ended_at' => TraceTime::format($event->resumedAt),
             'duration_ms' => 0, // Instant event
-            'checkpoint_id' => $event->checkpointId,
+            'attributes' => [
+                'checkpoint.id' => $event->checkpointId,
+            ],
             'state_snapshot' => array_keys($event->stateSnapshot), // Just keys for size
         ]);
     }
@@ -526,13 +532,15 @@ class TracingListener
             'started_at' => TraceTime::format($event->startedAt),
             'ended_at' => TraceTime::format($event->endedAt),
             'duration_ms' => TraceTime::diffMs($event->startedAt, $event->endedAt),
-            'route.from' => $event->from,
-            'route.targets' => $event->targets,
-            'route.router' => $event->router,
-            'route.kind' => $event->kind,
-            'route.from_cache' => $event->fromCache,
-            'route.fallback' => $event->fallback,
-            'route.reason' => null,
+            'attributes' => [
+                'route.from' => $event->from,
+                'route.targets' => $event->targets,
+                'route.router' => $event->router,
+                'route.kind' => $event->kind,
+                'route.from_cache' => $event->fromCache,
+                'route.fallback' => $event->fallback,
+                'route.reason' => null,
+            ],
         ]);
     }
 
