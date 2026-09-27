@@ -26,6 +26,15 @@ final class ExecutionContextManager implements ExecutionScopeInterface
         private readonly LoggerInterface $logger
     ) {}
 
+    /**
+     * The exporter is resolved per call, never pinned at construction (spec G-1).
+     */
+    private function tracerExporter(): ?TracerExporter
+    {
+        return $this->tracerExporter
+            ?? ($this->container->bound(TracerExporter::class) ? $this->container->make(TracerExporter::class) : null);
+    }
+
     public function enter(
         string $executionId,
         string $graphName,
@@ -188,8 +197,8 @@ final class ExecutionContextManager implements ExecutionScopeInterface
         $durationMs = (microtime(true) - $scope->startTime) * 1000;
 
         try {
-            if ($this->tracerExporter && $this->tracerExporter->isEnabled()) {
-                $this->tracerExporter->failTrace($scope->executionId, $e, $durationMs, null);
+            if (($tracerExporter = $this->tracerExporter()) && $tracerExporter->isEnabled()) {
+                $tracerExporter->failTrace($scope->executionId, $e, $durationMs, null);
             }
         } catch (\Throwable $cleanupException) {
             $this->logger->warning('Execution cleanup failed', [

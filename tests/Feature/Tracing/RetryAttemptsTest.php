@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
+use Shahzad\AgenticGraph\Contracts\NodeInterface;
 use Shahzad\AgenticGraph\Contracts\RouterInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\TokensUsed;
@@ -29,7 +30,7 @@ class RetryAttemptsExporter extends PulseExporter
     /** @var array<int, array<string, mixed>> */
     public array $sent = [];
 
-    protected function sendIngestPayload(array $payload): void
+    protected function send(array $payload): void
     {
         $this->sent[] = $payload;
     }
@@ -80,6 +81,36 @@ class RaStreamThenThrowNode extends AbstractNode
         self::$calls++;
         $this->streamEvent('text_delta', ['delta' => 'partial']);
         throw new RuntimeException('failed after streaming');
+    }
+}
+
+/**
+ * Node middleware for the flaky node only: throws before $next, throws after $next returns,
+ * or catches and rethrows the node's own exception.
+ */
+class RaGuardMiddleware
+{
+    public static string $mode = 'rethrow';
+
+    public function handle(StateContract $state, NodeInterface $node, Closure $next): StateContract
+    {
+        if (! $node instanceof RaFlakyNode) {
+            return $next($state);
+        }
+        if (self::$mode === 'before') {
+            throw new RuntimeException('middleware rejected before next');
+        }
+
+        try {
+            $result = $next($state);
+        } catch (Throwable $e) {
+            throw $e;
+        }
+        if (self::$mode === 'after') {
+            throw new RuntimeException('middleware rejected the result');
+        }
+
+        return $result;
     }
 }
 
@@ -372,3 +403,92 @@ it('sync fan-out: every attempt of a retried branch parents the root', function 
     $payload = $exporter->sent[0];
     raAssertSuccessAfterTwoFailures(raAttempts($payload['spans']), raRootId($payload));
 });
+
+/**
+ * Run the flaky node on one execution path and return every span the exporter got.
+ *
+ * @return array{0: array<int, array<string, mixed>>, 1: string}
+ */
+function raRunPath(RetryAttemptsExporter $exporter, string $path): array
+{
+    $name = 'ra-mw-'.$path.'-'.bin2hex(random_bytes(3));
+
+    if ($path === 'queue') {
+        raGraph($name, RaFlakyNode::class);
+        $executionId = 'exec_'.$name;
+        $exporter->startTrace($executionId, $name);
+        $job = unserialize(serialize(new ExecuteNodeJob($executionId, 'flaky', [], $name, 'span_ra_root')));
+        try {
+            app()->call([$job, 'handle']);
+        } catch (RuntimeException) {
+        }
+
+        return [$exporter->getBuffer()['spans'], 'span_ra_root'];
+    }
+
+    if ($path === 'streaming') {
+        AgenticGraph::register($name, raGraph($name, RaFlakyNode::class));
+    }
+
+    try {
+        match ($path) {
+            'sync' => app(GraphExecutor::class)->execute(raGraph($name, RaFlakyNode::class), new State([])),
+            'fan-out' => app(GraphExecutor::class)->execute(raFanOutGraph($name), new State([])),
+            'streaming' => AgenticGraph::execute($name, new State, new ExecutionOptions(mode: ExecutionMode::SYNC, streaming: StreamingMode::ITERATOR))
+                ->getFinalState(),
+        };
+    } catch (RuntimeException) {
+    }
+
+    $payload = $exporter->sent[0];
+
+    return [$payload['spans'], raRootId($payload)];
+}
+
+it('middleware failing before $next still emits one failed attempt span', function (string $path) {
+    $exporter = raExporter();
+    config(['agenticgraph.middleware.global' => [RaGuardMiddleware::class]]);
+    RaGuardMiddleware::$mode = 'before';
+
+    [$spans, $rootId] = raRunPath($exporter, $path);
+    $attempts = raAttempts($spans);
+
+    expect(RaFlakyNode::$calls)->toBe(0)
+        ->and($attempts)->toHaveCount(1)
+        ->and($attempts[0]['status'])->toBe('failed')
+        ->and($attempts[0]['attempt'])->toBe(1)
+        ->and($attempts[0]['attempt_of'])->toBe($attempts[0]['id'])
+        ->and($attempts[0]['error']['message'] ?? null)->toBe('middleware rejected before next')
+        ->and($attempts[0]['node_type'])->toBe(RaFlakyNode::class)
+        ->and($attempts[0]['parent_id'])->toBe($rootId);
+})->with(['sync', 'fan-out', 'queue', 'streaming']);
+
+it('middleware failing after $next marks the successful attempt failed', function (string $path) {
+    $exporter = raExporter();
+    config(['agenticgraph.middleware.global' => [RaGuardMiddleware::class]]);
+    RaGuardMiddleware::$mode = 'after';
+    RaFlakyNode::$failures = 1;
+
+    [$spans, $rootId] = raRunPath($exporter, $path);
+    $attempts = raAttempts($spans);
+
+    expect(RaFlakyNode::$calls)->toBe(2)
+        ->and($attempts)->toHaveCount(2)
+        ->and(array_column($attempts, 'attempt'))->toBe([1, 2])
+        ->and(array_column($attempts, 'status'))->toBe(['failed', 'failed'])
+        ->and($attempts[1]['error']['message'] ?? null)->toBe('middleware rejected the result')
+        ->and($attempts[1]['attempt_of'])->toBe($attempts[0]['id'])
+        ->and($attempts[1]['parent_id'])->toBe($rootId);
+})->with(['sync', 'fan-out', 'queue', 'streaming']);
+
+it('guard: a middleware that rethrows the node exception adds no duplicate spans', function (string $path) {
+    $exporter = raExporter();
+    config(['agenticgraph.middleware.global' => [RaGuardMiddleware::class]]);
+    RaGuardMiddleware::$mode = 'rethrow';
+    RaFlakyNode::$failures = 99;
+
+    [$spans, $rootId] = raRunPath($exporter, $path);
+
+    raAssertFourFailedAttempts(raAttempts($spans), $rootId);
+    expect(array_filter($spans, fn (array $s): bool => $s['span_type'] === 'node' && $s['node_name'] === 'flaky'))->toHaveCount(4);
+})->with(['sync', 'fan-out', 'queue', 'streaming']);

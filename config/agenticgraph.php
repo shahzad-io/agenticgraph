@@ -173,8 +173,13 @@ return [
     'tracing' => [
         'enabled' => env('AGENTICGRAPH_TRACING', false),
 
-        // Exporter driver: auto (pulse when api_key set, else log), pulse, log, null, otlp
+        // Exporter driver: auto (pulse when api_key set, else log), pulse, log, file, null, otlp
         'exporter' => env('AGENTICGRAPH_TRACING_EXPORTER', 'auto'),
+
+        // exporter=file writes {path}/{trace_id}/{Ymd-His-u}.json, one file per segment
+        'file' => [
+            'path' => env('AGENTICGRAPH_TRACING_FILE_PATH', storage_path('app/agenticgraph/traces')),
+        ],
 
         // AgenticPulse API credentials (required only for exporter=pulse or auto with key)
         'api_key' => env('AGENTICPULSE_API_KEY'),

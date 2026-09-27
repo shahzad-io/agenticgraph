@@ -41,7 +41,7 @@ class RootLifecycleExporter extends PulseExporter
     /** @var array<int, array<string, mixed>> */
     public array $sent = [];
 
-    protected function sendIngestPayload(array $payload): void
+    protected function send(array $payload): void
     {
         $this->sent[] = $payload;
     }

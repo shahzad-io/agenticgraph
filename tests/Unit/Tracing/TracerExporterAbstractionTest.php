@@ -72,6 +72,8 @@ it('log exporter receives trace lifecycle calls without agenticpulse', function 
         'agenticgraph.tracing.enabled' => true,
         'agenticgraph.tracing.exporter' => 'log',
     ]);
+    // Console context: the log write happens during flush, not after the response.
+    app()->forgetInstance('request');
 
     $exporter = new LogExporter;
     $listener = new TracingListener($exporter);

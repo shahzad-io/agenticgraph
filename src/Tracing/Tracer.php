@@ -16,8 +16,17 @@ use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 final class Tracer
 {
     public function __construct(
-        private readonly TracerExporter $exporter,
+        private readonly ?TracerExporter $exporter = null,
     ) {}
+
+    /**
+     * The exporter is resolved per call, never pinned at construction (spec G-1),
+     * so a TracerExporter rebound at runtime receives the spans.
+     */
+    private function exporter(): TracerExporter
+    {
+        return $this->exporter ?? app(TracerExporter::class);
+    }
 
     /**
      * Run a callback inside a child span when an active trace context exists.
@@ -58,7 +67,7 @@ final class Tracer
         } finally {
             $durationMs = (microtime(true) - $startMicrotime) * 1000;
 
-            if ($this->exporter->isEnabled()) {
+            if ($this->exporter()->isEnabled()) {
                 if ($spanType === 'tool') {
                     $attributes = array_merge($attributes, CaptureDepth::toolResultForSpan($result));
                 }
@@ -142,7 +151,7 @@ final class Tracer
             $span['error'] = $error;
         }
 
-        $this->exporter->addSpan($span);
+        $this->exporter()->addSpan($span);
     }
 
     /**

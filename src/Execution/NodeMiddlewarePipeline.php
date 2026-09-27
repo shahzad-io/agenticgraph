@@ -49,6 +49,9 @@ final class NodeMiddlewarePipeline
         string $nodeName,
         ?string $spanId,
     ): StateContract {
+        $this->lastAttempt = null;
+        $pipelineStart = microtime(true);
+        $reported = null;
         $stack = [];
         foreach ($this->resolveMiddleware() as $middleware) {
             $stack[] = is_string($middleware) ? $this->container->make($middleware) : $middleware;
@@ -61,7 +64,7 @@ final class NodeMiddlewarePipeline
                     return $middleware->handle($state, $node, $next);
                 };
             },
-            function (StateContract $state) use ($node, $executionId, $nodeName, $spanId) {
+            function (StateContract $state) use ($node, $executionId, $nodeName, $spanId, &$reported) {
                 $attempt = 0;
                 $max = $node->getRetryAttempts();
                 $delay = $node->getRetryDelay();
@@ -120,6 +123,8 @@ final class NodeMiddlewarePipeline
                         $node->onError($e, $state);
 
                         if (! $willRetry) {
+                            $reported = $e;
+
                             throw $e;
                         }
 
@@ -129,7 +134,33 @@ final class NodeMiddlewarePipeline
             }
         );
 
-        return $pipeline($state);
+        try {
+            return $pipeline($state);
+        } catch (\Throwable $e) {
+            // A middleware failed outside the retry loop (before $next, or after it returned):
+            // record it as a failed attempt so the node still has a span.
+            if ($e !== $reported) {
+                $attempt = $this->lastAttempt ?? ['spanId' => $spanId, 'attempt' => 1, 'attemptOf' => $spanId, 'startedAt' => $pipelineStart];
+                $traceContext = $this->resolveTraceContext();
+
+                $this->events->dispatch(new NodeExecutionFailed(
+                    $executionId,
+                    $attempt['spanId'],
+                    $nodeName,
+                    $state,
+                    $e,
+                    (microtime(true) - $attempt['startedAt']) * 1000,
+                    $attempt['attempt'],
+                    false,
+                    TraceTime::fromMicrotime($attempt['startedAt']),
+                    $traceContext instanceof TraceContext ? $traceContext->getRootSpanId() : null,
+                    $node::class,
+                    $attempt['attemptOf'],
+                ));
+            }
+
+            throw $e;
+        }
     }
 
     /**

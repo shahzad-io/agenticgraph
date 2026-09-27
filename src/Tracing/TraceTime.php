@@ -30,6 +30,22 @@ final class TraceTime
         return $at->setTimezone(new \DateTimeZone('UTC'))->format(self::FORMAT);
     }
 
+    /**
+     * Parse a wire timestamp. Returns null for anything that is not a parseable string.
+     */
+    public static function parse(mixed $value): ?\DateTimeImmutable
+    {
+        if (! is_string($value) || $value === '') {
+            return null;
+        }
+
+        try {
+            return new \DateTimeImmutable($value);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
     public static function toMicrotime(\DateTimeInterface $at): float
     {
         return (float) $at->format('U.u');

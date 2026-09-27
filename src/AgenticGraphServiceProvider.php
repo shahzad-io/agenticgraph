@@ -63,6 +63,7 @@ use Shahzad\AgenticGraph\Streaming\StreamObserverFactory;
 use Shahzad\AgenticGraph\Streaming\StreamSinkFactory;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\ExecutionClockFactory;
+use Shahzad\AgenticGraph\Tracing\Exporters\FileExporter;
 use Shahzad\AgenticGraph\Tracing\Exporters\LogExporter;
 use Shahzad\AgenticGraph\Tracing\Exporters\NullExporter;
 use Shahzad\AgenticGraph\Tracing\Exporters\OtlpExporter;
@@ -128,10 +129,11 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
         // Register tracer exporters (open-core: contract + pulse premium + OSS fallbacks)
         $this->app->singleton(PulseExporter::class, fn () => new PulseExporter);
         $this->app->singleton(LogExporter::class, fn () => new LogExporter);
+        $this->app->singleton(FileExporter::class, fn () => new FileExporter);
         $this->app->singleton(OtlpExporter::class, fn () => new OtlpExporter);
         $this->app->singleton(NullExporter::class, fn () => new NullExporter);
         $this->app->singleton(TracerExporter::class, fn ($app) => TracerExporterFactory::make($app));
-        $this->app->singleton(Tracer::class, fn ($app) => new Tracer($app->make(TracerExporter::class)));
+        $this->app->singleton(Tracer::class, fn () => new Tracer);
         $this->app->singleton(ModelPricingCalculator::class);
 
         // Register StateManager as singleton with dependencies
@@ -177,7 +179,7 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
 
         $this->app->singleton(ExecutionContextManager::class, function ($app) {
             return new ExecutionContextManager(
-                $app->bound(TracerExporter::class) ? $app->make(TracerExporter::class) : null,
+                null,
                 $app->bound(HttpClientInstrumentation::class)
                     ? $app->make(HttpClientInstrumentation::class)
                     : null,
@@ -308,7 +310,6 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
                 (bool) config('agenticgraph.interrupts.broadcast_enabled', true),
                 (int) config('agenticgraph.interrupts.default_expiry_days', 7),
                 (bool) config('agenticgraph.logging.enabled', true),
-                $app->bound(TracerExporter::class) ? $app->make(TracerExporter::class) : null
             );
         });
 
@@ -361,14 +362,13 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
         // Register event subscribers
         Event::subscribe(TracingListener::class);
         // Singleton so RequestSending and ResponseReceived share the stored request starts.
-        $this->app->singleton(HttpClientInstrumentation::class);
+        $this->app->singleton(HttpClientInstrumentation::class, fn () => new HttpClientInstrumentation);
         Event::subscribe(HttpClientInstrumentation::class);
 
         // Register database instrumentation as singleton
         $this->app->singleton(DatabaseInstrumentation::class, function ($app) {
             return new DatabaseInstrumentation(
-                $app->make(TracerExporter::class),
-                (float) config('agenticgraph.tracing.db.slow_threshold_ms', 1000)
+                slowThresholdMs: (float) config('agenticgraph.tracing.db.slow_threshold_ms', 1000)
             );
         });
 

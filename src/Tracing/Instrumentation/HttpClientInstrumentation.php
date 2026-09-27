@@ -28,8 +28,17 @@ class HttpClientInstrumentation
     private array $loggedMissingStarts = [];
 
     public function __construct(
-        protected TracerExporter $exporter
+        protected ?TracerExporter $exporter = null
     ) {}
+
+    /**
+     * The exporter is resolved per call, never pinned at construction (spec G-1),
+     * so a TracerExporter rebound at runtime receives the spans.
+     */
+    private function exporter(): TracerExporter
+    {
+        return $this->exporter ?? app(TracerExporter::class);
+    }
 
     /**
      * @param  object  $events
@@ -46,7 +55,7 @@ class HttpClientInstrumentation
 
     public function onRequestSending(RequestSending $event): void
     {
-        if ($this->exporter->isCapturing()) {
+        if ($this->exporter()->isCapturing()) {
             return;
         }
 
@@ -55,7 +64,7 @@ class HttpClientInstrumentation
             return;
         }
 
-        if (! $this->exporter->isEnabled()) {
+        if (! $this->exporter()->isEnabled()) {
             return;
         }
 
@@ -80,7 +89,7 @@ class HttpClientInstrumentation
 
     public function onResponseReceived(ResponseReceived $event): void
     {
-        if ($this->exporter->isCapturing()) {
+        if ($this->exporter()->isCapturing()) {
             return;
         }
 
@@ -89,7 +98,7 @@ class HttpClientInstrumentation
             return;
         }
 
-        if (! $this->exporter->isEnabled()) {
+        if (! $this->exporter()->isEnabled()) {
             return;
         }
 
@@ -152,7 +161,7 @@ class HttpClientInstrumentation
             $http['response_size'] = $responseSize;
         }
         $http['status_code'] = $event->response->status();
-        $this->exporter->addSpan([
+        $this->exporter()->addSpan([
             'id' => $spanId,
             'trace_id' => $executionId,
             'parent_id' => $parentId,
@@ -178,7 +187,7 @@ class HttpClientInstrumentation
 
     public function onConnectionFailed(ConnectionFailed $event): void
     {
-        if ($this->exporter->isCapturing()) {
+        if ($this->exporter()->isCapturing()) {
             return;
         }
 
@@ -187,7 +196,7 @@ class HttpClientInstrumentation
             return;
         }
 
-        if (! $this->exporter->isEnabled()) {
+        if (! $this->exporter()->isEnabled()) {
             return;
         }
 
@@ -234,7 +243,7 @@ class HttpClientInstrumentation
         $durationMs = (microtime(true) - $requestStart) * 1000;
         $startedAt = $clock->spanStartedAt($requestStart);
         $endedAt = $clock->spanEndedAt($requestStart, $durationMs);
-        $this->exporter->addSpan([
+        $this->exporter()->addSpan([
             'id' => uniqid('span_', true),
             'trace_id' => $executionId,
             'parent_id' => $parentId,
@@ -322,7 +331,7 @@ class HttpClientInstrumentation
             $http['error'] = $errorMessage;
         }
 
-        $this->exporter->addSpan([
+        $this->exporter()->addSpan([
             'id' => uniqid('span_', true),
             'trace_id' => $executionId,
             'parent_id' => $parentId,

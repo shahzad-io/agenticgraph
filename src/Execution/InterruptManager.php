@@ -47,6 +47,15 @@ final class InterruptManager implements InterruptServiceInterface
         private readonly ?TracerExporter $tracerExporter = null
     ) {}
 
+    /**
+     * The exporter is resolved per call, never pinned at construction (spec G-1).
+     */
+    private function tracerExporter(): ?TracerExporter
+    {
+        return $this->tracerExporter
+            ?? ($this->container->bound(TracerExporter::class) ? $this->container->make(TracerExporter::class) : null);
+    }
+
     public function shouldInterrupt(NodeInterface $node, StateContract $state): bool
     {
         if (! $node instanceof PrismNode) {
@@ -224,8 +233,8 @@ final class InterruptManager implements InterruptServiceInterface
             }
         }
 
-        if ($this->tracerExporter && $this->tracerExporter->isEnabled()) {
-            $this->tracerExporter->interruptTrace($executionId, $reason);
+        if (($tracerExporter = $this->tracerExporter()) && $tracerExporter->isEnabled()) {
+            $tracerExporter->interruptTrace($executionId, $reason);
         }
 
         if ($this->loggingEnabled) {
@@ -263,8 +272,8 @@ final class InterruptManager implements InterruptServiceInterface
             $traceContext = TraceContext::fromArray($checkpoint->metadata['trace_context']);
             $this->container->instance(TraceContext::class, $traceContext);
 
-            if ($this->tracerExporter && $this->tracerExporter->isEnabled()) {
-                $this->tracerExporter->resumeTrace($executionId);
+            if (($tracerExporter = $this->tracerExporter()) && $tracerExporter->isEnabled()) {
+                $tracerExporter->resumeTrace($executionId);
             }
         }
 
@@ -350,8 +359,8 @@ final class InterruptManager implements InterruptServiceInterface
             $traceContext = TraceContext::fromArray($checkpoint->metadata['trace_context']);
             $this->container->instance(TraceContext::class, $traceContext);
 
-            if ($this->tracerExporter && $this->tracerExporter->isEnabled()) {
-                $this->tracerExporter->resumeTrace($executionId);
+            if (($tracerExporter = $this->tracerExporter()) && $tracerExporter->isEnabled()) {
+                $tracerExporter->resumeTrace($executionId);
             }
         }
 

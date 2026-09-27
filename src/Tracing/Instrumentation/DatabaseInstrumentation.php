@@ -20,9 +20,18 @@ use Shahzad\AgenticGraph\Tracing\TraceTime;
 class DatabaseInstrumentation
 {
     public function __construct(
-        private readonly TracerExporter $exporter,
-        private readonly float $slowThresholdMs
+        private readonly ?TracerExporter $exporter = null,
+        private readonly float $slowThresholdMs = 1000.0
     ) {}
+
+    /**
+     * The exporter is resolved per call, never pinned at construction (spec G-1),
+     * so a TracerExporter rebound at runtime receives the spans.
+     */
+    private function exporter(): TracerExporter
+    {
+        return $this->exporter ?? app(TracerExporter::class);
+    }
 
     /**
      * Register the database query listener
@@ -37,7 +46,7 @@ class DatabaseInstrumentation
      */
     public function handleQuery(QueryExecuted $event): void
     {
-        if ($this->exporter->isCapturing()) {
+        if ($this->exporter()->isCapturing()) {
             return;
         }
 
@@ -46,7 +55,7 @@ class DatabaseInstrumentation
             return;
         }
 
-        if (! $this->exporter->isEnabled()) {
+        if (! $this->exporter()->isEnabled()) {
             return;
         }
 
@@ -89,6 +98,6 @@ class DatabaseInstrumentation
             $span['db.sql'] = $capturedSql;
         }
 
-        $this->exporter->addSpan($span);
+        $this->exporter()->addSpan($span);
     }
 }
