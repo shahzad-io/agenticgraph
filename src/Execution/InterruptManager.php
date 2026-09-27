@@ -105,6 +105,10 @@ final class InterruptManager implements InterruptServiceInterface
         if ($traceContext) {
             $checkpoint->metadata['trace_context'] = $traceContext->toArray();
         }
+        // The loop context already counts this node, so a resume continues its counts (K-5).
+        if ($this->container->bound(ExecutionContext::class)) {
+            $checkpoint->metadata['loop'] = LoopMetadata::fromExecutionContext($this->container->make(ExecutionContext::class))->toArray();
+        }
 
         $checkpointId = $this->checkpoints->saveInterrupt($executionId, $checkpoint);
 

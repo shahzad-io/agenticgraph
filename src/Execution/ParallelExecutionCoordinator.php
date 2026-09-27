@@ -83,7 +83,13 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
         // Every node span parents the root graph span; fan-out is shown by the route span, not nesting.
         $parentSpanId = $traceContext instanceof TraceContext ? $traceContext->getRootSpanId() : null;
         $nodeCompletePayloadBuilder = StreamNodeCompletePayloadBuilder::fromConfig($this->stateManager);
+        // Resolve before the branches are pushed: the source is the node that fanned out.
+        $sourceNode = $this->resolveSourceNode($graph, $parallelNodes);
         foreach ($parallelNodes as $nodeName) {
+            $executionContext = ($this->executionContextProvider)();
+            if ($executionContext instanceof ExecutionContext) {
+                $this->container->instance(ExecutionContext::class, $executionContext->pushNode($nodeName));
+            }
             $node = $graph->getNode($nodeName);
             $spanId = $traceContext instanceof TraceContext ? $traceContext->startSpan($nodeName) : null;
             $inputState = $state;
@@ -146,7 +152,6 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
         }
         $this->stateManager->warnParallelMergeCollisions($this->logger, $state, $parallelNodes, $results);
         $merged = $this->stateManager->mergeAll($results);
-        $sourceNode = $this->resolveSourceNode($graph, $parallelNodes);
         $this->checkpoint($graph, $executionId, $sourceNode, $merged, $streamContext);
         $next = $this->routingEngine->determinePostParallelNext($graph, $parallelNodes, $merged);
         $fallback = $next ?? ($graph->exitPoints[0] ?? $sourceNode);
@@ -166,13 +171,15 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
         $jobs = [];
         $traceContext = ($this->traceContextProvider)();
         $parentSpanId = $traceContext instanceof TraceContext ? $traceContext->getRootSpanId() : null;
+        $loopMetadataArray = $this->captureLoopMetadataArray();
         foreach ($parallelNodes as $nodeName) {
             $jobs[] = new ExecuteNodeJob(
                 $executionId,
                 $nodeName,
                 $state->toArray(),
                 $graph->name,
-                $parentSpanId
+                $parentSpanId,
+                $loopMetadataArray
             );
         }
 
@@ -184,7 +191,6 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
         ]);
 
         $sourceNode = $this->resolveSourceNode($graph, $parallelNodes);
-        $loopMetadataArray = $this->captureLoopMetadataArray();
         $this->cache->put(
             $this->batchInputCacheKey($executionId),
             $state->toArray(),
@@ -336,7 +342,16 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
         $this->stateManager->warnParallelMergeCollisions($this->logger, $baseState, $targets, $results);
         $merged = $this->stateManager->mergeAll($results);
         $this->checkpoint($graph, $executionId, $sourceNode, $merged, null);
-        $next = $this->routingEngine->determinePostParallelNext($graph, $targets, $merged);
+        $next = $this->joinInSegment($graph, $executionId, $targets, $merged, $rootSpanId);
+
+        // The snapshot was taken at fan-out; add each branch visit once.
+        if ($loopMetadataArray !== null) {
+            $loopContext = ExecutionContext::fromArray($loopMetadataArray, $executionId);
+            foreach ($targets as $nodeName) {
+                $loopContext = $loopContext->pushNode($nodeName);
+            }
+            $loopMetadataArray = LoopMetadata::fromExecutionContext($loopContext)->toArray();
+        }
 
         $job = new ContinueExecutionJob(
             $graphName,
@@ -350,6 +365,34 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
         ($this->dispatchCallable)($job)
             ->onConnection(config('agenticgraph.execution.queue_connection'))
             ->onQueue(config('agenticgraph.execution.queue_name'));
+    }
+
+    /**
+     * The batch join runs in the worker that finished last, after that job sent its segment.
+     * It sends its own continued segment so the join's route span is not lost.
+     *
+     * @param  array<int, string>  $targets
+     */
+    private function joinInSegment(Graph $graph, string $executionId, array $targets, StateContract $merged, ?string $rootSpanId): ?string
+    {
+        $exporter = $this->container->bound(TracerExporter::class) ? $this->container->make(TracerExporter::class) : null;
+        if ($rootSpanId === null || ! $exporter?->isEnabled()) {
+            return $this->routingEngine->determinePostParallelNext($graph, $targets, $merged);
+        }
+
+        $previous = ($this->traceContextProvider)();
+        $this->container->instance(TraceContext::class, new TraceContext($executionId, $rootSpanId));
+        $exporter->resumeTrace($executionId, $graph->name, 'continued');
+        try {
+            return $this->routingEngine->determinePostParallelNext($graph, $targets, $merged);
+        } finally {
+            $exporter->flush($executionId);
+            if ($previous instanceof TraceContext) {
+                $this->container->instance(TraceContext::class, $previous);
+            } else {
+                $this->container->forgetInstance(TraceContext::class);
+            }
+        }
     }
 
     public function handleBatchFailure(

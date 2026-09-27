@@ -359,9 +359,9 @@ it('queue fan-out on one worker keeps one root across ExecuteNodeJob and Continu
     expect($continue->rootSpanId)->toBe('span_rl_root');
     app()->call([unserialize(serialize($continue)), 'handle']);
 
-    // Hand-off, each branch job, and the continuation each send a segment; merged, they form one tree.
+    // Hand-off, each branch job, the join decision and the continuation each send a segment; merged, they form one tree.
     expect(array_map(fn (array $sent): string => $sent['segment']['kind'].($sent['segment']['final'] ? ':final' : ''), $exporter->sent))
-        ->toBe(['initial', 'continued', 'continued', 'continued:final']);
+        ->toBe(['initial', 'continued', 'continued', 'continued', 'continued:final']);
     $payload = (new TraceSegmentMerger)->merge($exporter->sent);
     $root = assertTraceTree($payload);
     expect($root['id'])->toBe('span_rl_root')
@@ -633,7 +633,7 @@ it('queue fan-out across two workers: every segment is sent and the merge has on
 
     expect($nodeWorkers)->toBe(['a' => 'A', 'b' => 'B', 'end' => 'B', 'start' => 'A'])
         ->and($merged['trace']['status'])->toBe('completed')
-        ->and($merged['segments'])->toHaveCount(4)
+        ->and($merged['segments'])->toHaveCount(5)
         ->and($merged['trace']['active_ms'])->toBeLessThanOrEqual($merged['trace']['duration_ms'])
         ->and($merged['trace']['ended_at'])->toBe(end($merged['segments'])['ended_at']);
 });

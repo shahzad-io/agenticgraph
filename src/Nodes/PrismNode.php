@@ -502,7 +502,12 @@ abstract class PrismNode extends AbstractNode
                 parentSpanId: $traceContext?->getParentSpanId()
             );
             $toolCalls = [];
+            $text = '';
+            $streamUsage = null;
             foreach ($request->asStream() as $event) {
+                if ($event instanceof StreamEndEvent && $event->usage !== null) {
+                    $streamUsage = $event->usage;
+                }
                 $streamEvent = $adapter->adapt($event);
                 if ($streamEvent === null) {
                     continue;
@@ -511,8 +516,26 @@ abstract class PrismNode extends AbstractNode
                 if ($event instanceof ToolCallEvent) {
                     $toolCalls[] = $event->toolCall;
                 }
+                if ($streamEvent->type() === 'text_delta' && is_string($delta = $streamEvent->payload()['delta'] ?? null)) {
+                    $text .= $delta;
+                }
             }
             $this->dispatchToolCalls($toolCalls, 'prism');
+
+            if ($this->trackTokens && $streamUsage !== null) {
+                $this->events()->dispatch(TokensUsed::fromLlmCall(
+                    node: $this->getName(),
+                    callStartMicrotime: $startTime,
+                    callDurationMs: (microtime(true) - $startTime) * 1000,
+                    promptTokens: (int) $streamUsage->promptTokens,
+                    completionTokens: (int) $streamUsage->completionTokens,
+                    callType: 'tools',
+                    model: "{$provider}:{$model}",
+                    prompt: $prompt,
+                    response: $text,
+                    streamed: true,
+                ));
+            }
 
             return $toolCalls;
         }
@@ -960,7 +983,8 @@ abstract class PrismNode extends AbstractNode
                 callType: $callType,
                 model: "{$provider}:{$model}",
                 prompt: $promptForTrace,
-                response: $text
+                response: $text,
+                streamed: true,
             ));
         }
 

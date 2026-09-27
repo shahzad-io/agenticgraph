@@ -7,6 +7,11 @@
 - `schema_version: agenticgraph.trace.v1` as the first key of every trace envelope. Draft wire description in `docs/tracing-wire-v1.md`.
 
 - `TraceSegmentMerger`: reference merge of a trace's segment envelopes (final segment wins, otherwise the later `segment.ended_at`; `active_ms` is the union of segment windows).
+- Route spans (`span_type: route`) for conditional edges and joins, with `route.from`, `route.targets`, `route.router` (fully qualified router class, like a node span's `node_type`), `route.kind` (`llm`, `deterministic`, `fan_out`, `join`), `route.from_cache`, `route.fallback`, `route.reason`. The parent is the root graph span; a router's LLM span is a child of its route span. Emitted through the new `RouteDecided` event.
+- `streamed` on llm spans and `llm_calls`. New optional `TokensUsed` argument `streamed` (default false).
+- `PrismRouter::lastRouteFlags()` returns the `from_cache` and `fallback` flags of the last route.
+- The interrupt checkpoint stores the loop context in `metadata['loop']`.
+- New optional `ExecuteNodeJob` argument `loopMetadata`. Jobs queued before it run as before.
 - Config `tracing.transport.connect_timeout` (`AGENTICGRAPH_TRACING_CONNECT_TIMEOUT`, default 1) and `tracing.transport.timeout` (`AGENTICGRAPH_TRACING_TIMEOUT`, default 3).
 
 ### Changed
@@ -24,6 +29,8 @@
 - A payload over 10 MB keeps its real `trace.status`. The reason moves to `_meta.error_reason = payload_too_large`, with dropped counts in `_meta.dropped`.
 
 ### Fixed
+- `loop_context.node_visit_count` is correct after a sync or streaming resume, on sync and queued parallel branches, and after a queued join. Exported counts change on these paths. A checkpoint without `metadata['loop']` resumes with fresh counts.
+- A streaming `tools()` call in `PrismNode` now dispatches `TokensUsed`, so it produces an llm span.
 - A middleware that throws, before or after the node runs, now produces a failed node attempt span.
 - `AGENTICGRAPH_TRACING_EXPORTER=null` selects the null exporter. Previously `env()` turned it into PHP null and the factory threw `Unknown agenticgraph tracing exporter []`.
 

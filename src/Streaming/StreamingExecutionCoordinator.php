@@ -314,7 +314,8 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                 $baseSink,
                 $sink,
                 $start,
-                skipInterruptGateForEntry: $resumePayload !== null
+                skipInterruptGateForEntry: $resumePayload !== null,
+                entryAlreadyCounted: $resumePayload !== null && $loopMetadata !== null
             );
 
             $finalState = $handle->getFinalState();
@@ -342,7 +343,8 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
         StreamSinkInterface $baseSink,
         StreamSinkInterface $sink,
         float $start,
-        bool $skipInterruptGateForEntry = false
+        bool $skipInterruptGateForEntry = false,
+        bool $entryAlreadyCounted = false
     ): StreamHandle {
         try {
             $interrupted = false;
@@ -359,40 +361,45 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                         );
                     }
 
-                    [$executionContext, $cycle] = $executionContext->detectAndRecordCycle($current);
-                    $executionContext = $executionContext->pushNode($current);
+                    // An interrupted node was counted before it paused; its restored loop context keeps that visit.
+                    if ($entryAlreadyCounted) {
+                        $entryAlreadyCounted = false;
+                    } else {
+                        [$executionContext, $cycle] = $executionContext->detectAndRecordCycle($current);
+                        $executionContext = $executionContext->pushNode($current);
 
-                    try {
-                        $this->loopGuard->check($executionContext, $cycle);
-                        $this->loopGuard->checkCyclicSafetyNet($executionContext, $graph->hasCycles());
-                    } catch (LoopLimitExceededException $e) {
-                        $this->repo->failed($executionId, $e->getMessage());
-                        throw $e;
-                    }
+                        try {
+                            $this->loopGuard->check($executionContext, $cycle);
+                            $this->loopGuard->checkCyclicSafetyNet($executionContext, $graph->hasCycles());
+                        } catch (LoopLimitExceededException $e) {
+                            $this->repo->failed($executionId, $e->getMessage());
+                            throw $e;
+                        }
 
-                    $executionContext = $executionContext->incrementIteration();
-                    $this->container->instance(ExecutionContext::class, $executionContext);
+                        $executionContext = $executionContext->incrementIteration();
+                        $this->container->instance(ExecutionContext::class, $executionContext);
 
-                    if ($cycle !== null) {
-                        $this->events->dispatch(new CycleCompleted(
-                            executionId: $executionId,
-                            cycleHash: $cycle->cycleHash,
-                            cyclePath: $cycle->cyclePath,
-                            completionCount: $cycle->completionCount,
-                            globalIterations: $executionContext->globalIterations,
-                            completedAt: new \DateTimeImmutable,
-                            spanId: $traceContext->getSpanId(),
-                        ));
+                        if ($cycle !== null) {
+                            $this->events->dispatch(new CycleCompleted(
+                                executionId: $executionId,
+                                cycleHash: $cycle->cycleHash,
+                                cyclePath: $cycle->cyclePath,
+                                completionCount: $cycle->completionCount,
+                                globalIterations: $executionContext->globalIterations,
+                                completedAt: new \DateTimeImmutable,
+                                spanId: $traceContext->getSpanId(),
+                            ));
 
-                        if ((bool) config('agenticgraph.logging.enabled', true)) {
-                            $this->logger->debug('Cycle completed', [
-                                'execution_id' => $executionId,
-                                'cycle_hash' => $cycle->cycleHash,
-                                'cycle_path' => $cycle->cyclePath,
-                                'completion_count' => $cycle->completionCount,
-                                'global_iterations' => $executionContext->globalIterations,
-                                'node_visit_count' => $executionContext->nodeVisitCounts[$current] ?? 0,
-                            ]);
+                            if ((bool) config('agenticgraph.logging.enabled', true)) {
+                                $this->logger->debug('Cycle completed', [
+                                    'execution_id' => $executionId,
+                                    'cycle_hash' => $cycle->cycleHash,
+                                    'cycle_path' => $cycle->cyclePath,
+                                    'completion_count' => $cycle->completionCount,
+                                    'global_iterations' => $executionContext->globalIterations,
+                                    'node_visit_count' => $executionContext->nodeVisitCounts[$current] ?? 0,
+                                ]);
+                            }
                         }
                     }
 
@@ -519,6 +526,8 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                             $executionId,
                             $this->streamContext
                         );
+                        // The branches recorded their visits in the bound loop context.
+                        $executionContext = $this->container->make(ExecutionContext::class);
                         $state = $result->state;
                         $current = $result->nextNode;
                     } else {

@@ -40,6 +40,7 @@ class TokensUsed implements ShouldQueue
         public readonly ?string $response = null,
         public readonly bool $cached = false,
         public readonly ?string $cacheKey = null,
+        public readonly bool $streamed = false,
     ) {}
 
     public static function fromLlmCall(
@@ -51,7 +52,8 @@ class TokensUsed implements ShouldQueue
         string $callType,
         ?string $model = null,
         ?string $prompt = null,
-        ?string $response = null
+        ?string $response = null,
+        bool $streamed = false,
     ): self {
         $clock = ExecutionClock::tryGet();
         $traceContext = TraceContext::tryGet();
@@ -97,6 +99,7 @@ class TokensUsed implements ShouldQueue
             response: self::responseForEvent($response),
             cached: false,
             cacheKey: null,
+            streamed: $streamed,
         );
     }
 

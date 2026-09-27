@@ -432,3 +432,54 @@ it('dispatches TokensUsed when streaming text completes with usage', function ()
 
     app()->forgetInstance(StreamContext::class);
 });
+
+class StreamingToolsTokensNode extends StreamingPromptTokensNode
+{
+    public function execute(StateContract $state): StateContract
+    {
+        return $state->set('tool_calls', $this->tools('Use a tool', []));
+    }
+}
+
+it('marks streamed and non-streamed text calls in TokensUsed', function () {
+    Event::fake([TokensUsed::class]);
+    config()->set('agenticgraph.prism.track_tokens', true);
+    config()->set('agenticgraph.prism.cache_enabled', false);
+
+    Prism::fake([TextResponseFake::make()->withText('Hello John')->withUsage(new Usage(10, 20))]);
+    (new TestPrismNode)->execute(new State(['name' => 'John']));
+    Event::assertDispatched(TokensUsed::class, fn (TokensUsed $event): bool => $event->streamed === false);
+
+    Event::fake([TokensUsed::class]);
+    bindStreamContextWithSink(new MemorySink);
+    (new StreamingPromptTokensNode(new FakeStreamingPromptRequest([
+        new TextDeltaEvent('evt-1', time(), 'Hi', 'msg-1'),
+        new StreamEndEvent('evt-2', time(), FinishReason::Stop, new Usage(1, 2)),
+    ])))->execute(new State);
+    Event::assertDispatched(TokensUsed::class, fn (TokensUsed $event): bool => $event->streamed === true);
+
+    app()->forgetInstance(StreamContext::class);
+});
+
+it('dispatches a streamed TokensUsed for a streaming tools call', function () {
+    Event::fake([TokensUsed::class]);
+    config()->set('agenticgraph.prism.track_tokens', true);
+    config()->set('agenticgraph.tracing.capture.prompts', true);
+    config()->set('agenticgraph.tracing.capture.responses', true);
+    bindStreamContextWithSink(new MemorySink);
+
+    (new StreamingToolsTokensNode(new FakeStreamingPromptRequest([
+        new TextDeltaEvent('evt-1', time(), 'Calling ', 'msg-1'),
+        new TextDeltaEvent('evt-2', time(), 'nothing', 'msg-1'),
+        new StreamEndEvent('evt-3', time(), FinishReason::Stop, new Usage(7, 8)),
+    ])))->execute(new State);
+
+    Event::assertDispatched(TokensUsed::class, fn (TokensUsed $event): bool => $event->callType === 'tools'
+        && $event->streamed === true
+        && $event->promptTokens === 7
+        && $event->completionTokens === 8
+        && $event->prompt === 'Use a tool'
+        && $event->response === 'Calling nothing');
+
+    app()->forgetInstance(StreamContext::class);
+});

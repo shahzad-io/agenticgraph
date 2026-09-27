@@ -13,6 +13,7 @@ use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
 use Shahzad\AgenticGraph\Events\NodeExecutionFailed;
 use Shahzad\AgenticGraph\Events\NodeInterrupted;
 use Shahzad\AgenticGraph\Events\NodeResumed;
+use Shahzad\AgenticGraph\Events\RouteDecided;
 use Shahzad\AgenticGraph\Events\TokensUsed;
 use Shahzad\AgenticGraph\Events\ToolCallCaptured;
 use Shahzad\AgenticGraph\Execution\ExecutionContext;
@@ -344,6 +345,7 @@ class TracingListener
             'total_tokens' => $event->totalTokens,
             'cost_usd' => $cost,
             'cached' => $event->cached,
+            'streamed' => $event->streamed,
         ]);
 
         // Build LLM call data with optional prompt/response capture
@@ -360,6 +362,7 @@ class TracingListener
             'duration_ms' => $event->durationMs,
             'created_at' => TraceTime::format(TraceTime::now()),
             'cost_usd' => $cost,
+            'streamed' => $event->streamed,
         ];
 
         // Add prompt if capture is enabled
@@ -502,6 +505,38 @@ class TracingListener
     }
 
     /**
+     * Handle a routing decision (spec T8.9, K-1): a child of the root graph span.
+     */
+    public function onRouteDecided(RouteDecided $event): void
+    {
+        if (! $this->exporter->isEnabled()) {
+            return;
+        }
+
+        $this->exporter->addSpan([
+            'id' => $event->spanId,
+            'trace_id' => $event->executionId,
+            'parent_id' => $event->parentSpanId,
+            'node_name' => $event->from.' route',
+            'node_type' => 'route',
+            'span_type' => 'route',
+            'status' => 'success',
+            'span_kind' => 'internal',
+            'status_code' => 'OK',
+            'started_at' => TraceTime::format($event->startedAt),
+            'ended_at' => TraceTime::format($event->endedAt),
+            'duration_ms' => TraceTime::diffMs($event->startedAt, $event->endedAt),
+            'route.from' => $event->from,
+            'route.targets' => $event->targets,
+            'route.router' => $event->router,
+            'route.kind' => $event->kind,
+            'route.from_cache' => $event->fromCache,
+            'route.fallback' => $event->fallback,
+            'route.reason' => null,
+        ]);
+    }
+
+    /**
      * Subscribe to events.
      *
      * @param  object  $events
@@ -520,6 +555,7 @@ class TracingListener
             // Interrupt events
             NodeInterrupted::class => 'onNodeInterrupted',
             NodeResumed::class => 'onNodeResumed',
+            RouteDecided::class => 'onRouteDecided',
         ];
     }
 

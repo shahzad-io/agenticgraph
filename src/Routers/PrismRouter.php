@@ -37,6 +37,9 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
 
     private Container $container;
 
+    /** @var array{from_cache: bool, fallback: bool} */
+    private array $lastRouteFlags = ['from_cache' => false, 'fallback' => false];
+
     /**
      * @param  array<string, string>  $routes
      */
@@ -62,16 +65,29 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
     }
 
     /**
+     * How the last route was decided, for the route span. Recorded here rather than in
+     * afterRoute(), which subclasses override without calling the parent.
+     *
+     * @return array{from_cache: bool, fallback: bool}
+     */
+    public function lastRouteFlags(): array
+    {
+        return $this->lastRouteFlags;
+    }
+
+    /**
      * @return string|array<int, string>
      */
     protected function routeWithLoop(StateContract $state, ?LoopContext $loop): string|array
     {
+        $this->lastRouteFlags = ['from_cache' => false, 'fallback' => false];
         $prompt = $this->buildPromptWithLoop($state, $loop);
         $cacheKey = $this->buildCacheKey($prompt);
 
         if (config('agenticgraph.prism.cache_enabled') && $this->cache->has($cacheKey)) {
             $cachedRoute = $this->cache->get($cacheKey);
             if (is_string($cachedRoute) && $this->validateRoute($cachedRoute)) {
+                $this->lastRouteFlags['from_cache'] = true;
                 $this->afterRoute($state, $cachedRoute, $loop, true);
 
                 return $cachedRoute;
@@ -119,6 +135,7 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
         }
 
         $route = $this->handleRoutingFailure($lastException, $state);
+        $this->lastRouteFlags['fallback'] = true;
         $this->afterRoute($state, $route, $loop, false);
 
         return $route;
@@ -175,6 +192,8 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
                 ]);
             }
 
+            $this->lastRouteFlags['fallback'] = true;
+
             return $this->defaultRoute ?? '';
         }
 
@@ -188,6 +207,8 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
                     'defaulting_to' => $this->defaultRoute,
                 ]);
             }
+
+            $this->lastRouteFlags['fallback'] = true;
 
             return $this->defaultRoute ?? '';
         }

@@ -162,41 +162,7 @@ class ExecutionCoordinator
                         );
                     }
 
-                    [$executionContext, $cycle] = $executionContext->detectAndRecordCycle($current);
-                    $executionContext = $executionContext->pushNode($current);
-
-                    try {
-                        $this->loopGuard->check($executionContext, $cycle);
-                        $this->loopGuard->checkCyclicSafetyNet($executionContext, $graph->hasCycles());
-                    } catch (LoopLimitExceededException $e) {
-                        throw $e;
-                    }
-
-                    $executionContext = $executionContext->incrementIteration();
-                    $this->container->instance(ExecutionContext::class, $executionContext);
-
-                    if ($cycle !== null) {
-                        $this->events->dispatch(new CycleCompleted(
-                            executionId: $executionId,
-                            cycleHash: $cycle->cycleHash,
-                            cyclePath: $cycle->cyclePath,
-                            completionCount: $cycle->completionCount,
-                            globalIterations: $executionContext->globalIterations,
-                            completedAt: new \DateTimeImmutable,
-                            spanId: $traceContext->getSpanId(),
-                        ));
-
-                        if ((bool) config('agenticgraph.logging.enabled', true)) {
-                            $this->logger->debug('Cycle completed', [
-                                'execution_id' => $executionId,
-                                'cycle_hash' => $cycle->cycleHash,
-                                'cycle_path' => $cycle->cyclePath,
-                                'completion_count' => $cycle->completionCount,
-                                'global_iterations' => $executionContext->globalIterations,
-                                'node_visit_count' => $executionContext->nodeVisitCounts[$current] ?? 0,
-                            ]);
-                        }
-                    }
+                    $executionContext = $this->enterNode($graph, $executionId, $current, $executionContext, $traceContext);
 
                     $node = $graph->getNode($current);
                     if ($options->interrupts && $this->shouldInterrupt($node, $state)) {
@@ -268,6 +234,8 @@ class ExecutionCoordinator
                         );
                         $state = $result->state;
                         $current = $result->nextNode;
+                        // The branches recorded their visits in the bound loop context.
+                        $executionContext = $this->container->make(ExecutionContext::class);
                     } else {
                         $current = $next;
                     }
@@ -498,6 +466,51 @@ class ExecutionCoordinator
     }
 
     /**
+     * Records a node visit in the loop context: cycle detection, loop guard, visit count and
+     * iteration, then binds the new context.
+     */
+    private function enterNode(Graph $graph, string $executionId, string $current, ExecutionContext $executionContext, TraceContext $traceContext): ExecutionContext
+    {
+        [$executionContext, $cycle] = $executionContext->detectAndRecordCycle($current);
+        $executionContext = $executionContext->pushNode($current);
+
+        try {
+            $this->loopGuard->check($executionContext, $cycle);
+            $this->loopGuard->checkCyclicSafetyNet($executionContext, $graph->hasCycles());
+        } catch (LoopLimitExceededException $e) {
+            throw $e;
+        }
+
+        $executionContext = $executionContext->incrementIteration();
+        $this->container->instance(ExecutionContext::class, $executionContext);
+
+        if ($cycle !== null) {
+            $this->events->dispatch(new CycleCompleted(
+                executionId: $executionId,
+                cycleHash: $cycle->cycleHash,
+                cyclePath: $cycle->cyclePath,
+                completionCount: $cycle->completionCount,
+                globalIterations: $executionContext->globalIterations,
+                completedAt: new \DateTimeImmutable,
+                spanId: $traceContext->getSpanId(),
+            ));
+
+            if ((bool) config('agenticgraph.logging.enabled', true)) {
+                $this->logger->debug('Cycle completed', [
+                    'execution_id' => $executionId,
+                    'cycle_hash' => $cycle->cycleHash,
+                    'cycle_path' => $cycle->cyclePath,
+                    'completion_count' => $cycle->completionCount,
+                    'global_iterations' => $executionContext->globalIterations,
+                    'node_visit_count' => $executionContext->nodeVisitCounts[$current] ?? 0,
+                ]);
+            }
+        }
+
+        return $executionContext;
+    }
+
+    /**
      * @return string|array<int, string>|null
      */
     public function determineNext(Graph $graph, string $current, StateContract $state): string|array|null
@@ -518,6 +531,9 @@ class ExecutionCoordinator
         $segmentStart = microtime(true);
         $scope = $this->enterScope($executionId, $graph, $options, $loopMetadata);
         $traceContext = $scope->traceContext;
+        $executionContext = $scope->context;
+        // An interrupted node was counted before it paused; its restored loop context keeps that visit.
+        $entryAlreadyCounted = $skipInterruptGateForEntry && $loopMetadata !== null;
 
         $current = $startNode;
         $visited = [];
@@ -551,6 +567,12 @@ class ExecutionCoordinator
                         $this->repo->started($executionId, $graph->name, State::toStoragePayload($state));
                     }
 
+                    if ($entryAlreadyCounted) {
+                        $entryAlreadyCounted = false;
+                    } else {
+                        $executionContext = $this->enterNode($graph, $executionId, $current, $executionContext, $traceContext);
+                    }
+
                     $node = $graph->getNode($current);
                     if (! $skipEntryInterruptGate && $options->interrupts && $this->shouldInterrupt($node, $state)) {
                         $state = $this->handleInterrupt($executionId, $graph->name, $current, $state);
@@ -562,7 +584,7 @@ class ExecutionCoordinator
 
                     $nodeResult = $this->executeNode($graph, $executionId, $current, $state);
                     $state = $nodeResult['state'];
-                    $this->checkpoint($graph, $executionId, $current, $state);
+                    $this->checkpoint($graph, $executionId, $current, $state, $executionContext);
                     $this->events->dispatch(new NodeExecutionCompleted(
                         $executionId,
                         $current,
@@ -608,6 +630,8 @@ class ExecutionCoordinator
                         );
                         $state = $result->state;
                         $current = $result->nextNode;
+                        // The branches recorded their visits in the bound loop context.
+                        $executionContext = $this->container->make(ExecutionContext::class);
                     } else {
                         $current = $next;
                     }

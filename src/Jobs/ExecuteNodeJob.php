@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
 use Shahzad\AgenticGraph\Events\NodeExecutionStarted;
+use Shahzad\AgenticGraph\Execution\ExecutionContext;
 use Shahzad\AgenticGraph\Execution\NodeMiddlewarePipeline;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\State\State;
@@ -31,6 +32,7 @@ class ExecuteNodeJob implements ShouldQueue
 
     /**
      * @param  array<string, mixed>  $stateData
+     * @param  array<string, mixed>|null  $loopMetadata  Loop context at fan-out
      */
     public function __construct(
         public readonly string $executionId,
@@ -38,6 +40,7 @@ class ExecuteNodeJob implements ShouldQueue
         public readonly array $stateData,
         public readonly string $graphName,
         public readonly ?string $parentSpanId = null,
+        public readonly ?array $loopMetadata = null,
     ) {
         $this->onConnection(config('agenticgraph.execution.queue_connection'));
         $this->onQueue(config('agenticgraph.execution.queue_name'));
@@ -69,6 +72,14 @@ class ExecuteNodeJob implements ShouldQueue
         // This ensures timestamps are relative to when job actually runs
         $jobStartMicrotime = microtime(true);
         app()->instance(ExecutionClock::class, new ExecutionClock($this->executionId, $jobStartMicrotime));
+
+        // Jobs queued before this property existed leave it uninitialized; ?? reads that as null
+        // and the branch runs without a loop context, as before.
+        $loopMetadata = $this->loopMetadata ?? null;
+        $previousLoopContext = app()->bound(ExecutionContext::class) ? app(ExecutionContext::class) : null;
+        if ($loopMetadata !== null) {
+            app()->instance(ExecutionContext::class, ExecutionContext::fromArray($loopMetadata, $this->executionId)->pushNode($this->nodeName));
+        }
 
         $spanId = $traceContext->startSpan($this->nodeName);
 
@@ -155,6 +166,11 @@ class ExecuteNodeJob implements ShouldQueue
             }
             app()->forgetInstance(ExecutionClock::class);
             app()->forgetInstance(TraceContext::class);
+            if ($loopMetadata !== null) {
+                $previousLoopContext !== null
+                    ? app()->instance(ExecutionContext::class, $previousLoopContext)
+                    : app()->forgetInstance(ExecutionContext::class);
+            }
         }
     }
 }

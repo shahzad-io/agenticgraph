@@ -132,3 +132,27 @@ it('starts trace with the event timestamp', function () {
     expect($exporter->traces)->toHaveKey('exec_999');
     expect($exporter->traces['exec_999']['started_at'])->toBe('2024-02-01T08:30:00.654321+00:00');
 });
+
+it('marks llm spans and llm calls as streamed or not', function (bool $streamed) {
+    $exporter = new MockPulseExporter;
+    $listener = new TracingListener($exporter);
+
+    $listener->onTokensUsed(new TokensUsed(
+        node: 'node-a',
+        promptTokens: 1,
+        completionTokens: 1,
+        totalTokens: 2,
+        executionId: 'exec_streamed',
+        parentSpanId: 'parent_1',
+        spanId: 'span_1',
+        callType: 'text',
+        model: 'openai:gpt-4',
+        durationMs: 1.0,
+        startedAt: new \DateTimeImmutable('2024-01-01 10:00:00'),
+        endedAt: new \DateTimeImmutable('2024-01-01 10:00:00.001'),
+        streamed: $streamed,
+    ));
+
+    expect($exporter->spans[0]['streamed'])->toBe($streamed)
+        ->and($exporter->llmCalls[0]['streamed'])->toBe($streamed);
+})->with([true, false]);

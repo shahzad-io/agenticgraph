@@ -334,3 +334,33 @@ afterEach(function () {
     Cache::flush();
     Mockery::close();
 });
+
+it('records from_cache and fallback flags for the last route', function (string $case, array $expected) {
+    config()->set('agenticgraph.prism.cache_enabled', true);
+    config()->set('agenticgraph.router.max_retries', 1);
+    Cache::flush();
+    $fake = fn (array $structured): StructuredResponseFake => StructuredResponseFake::make()
+        ->withStructured($structured)
+        ->withUsage(new Usage(1, 1))
+        ->withMeta(new Meta('fake-flags', 'fake-model'));
+    Prism::fake(match ($case) {
+        'llm', 'cache' => [$fake(['route' => 'target_a'])],
+        'missing_key' => [$fake(['reasoning' => 'none'])],
+        'invalid_route' => [$fake(['route' => 'nowhere'])],
+        'exception' => [fn () => throw new RuntimeException('provider unavailable')],
+    });
+    $router = new PrismRouter(['target_a' => 'a', 'target_b' => 'b'], defaultRoute: 'target_b');
+
+    $router->route(new State);
+    if ($case === 'cache') {
+        $router->route(new State);
+    }
+
+    expect($router->lastRouteFlags())->toBe($expected);
+})->with([
+    'llm call' => ['llm', ['from_cache' => false, 'fallback' => false]],
+    'cache hit' => ['cache', ['from_cache' => true, 'fallback' => false]],
+    'missing route key' => ['missing_key', ['from_cache' => false, 'fallback' => true]],
+    'invalid route' => ['invalid_route', ['from_cache' => false, 'fallback' => true]],
+    'exception after retries' => ['exception', ['from_cache' => false, 'fallback' => true]],
+]);
