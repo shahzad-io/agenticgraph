@@ -33,7 +33,7 @@ final class TraceSegmentMerger
         $trace = [];
         $spans = [];
         $llmCalls = [];
-        $truncation = [];
+        $meta = [];
         foreach ($ranked as $envelope) {
             $trace = array_merge($trace, is_array($envelope['trace'] ?? null) ? $envelope['trace'] : []);
             foreach ($envelope['spans'] ?? [] as $span) {
@@ -43,7 +43,7 @@ final class TraceSegmentMerger
                 $llmCalls[(string) ($call['id'] ?? count($llmCalls))] = $call;
             }
             if (is_array($envelope['_meta'] ?? null)) {
-                $truncation = [...$truncation, ...($envelope['_meta']['truncation_applied'] ?? [])];
+                $meta = $this->mergeMeta($meta, $envelope['_meta']);
             }
         }
 
@@ -96,16 +96,44 @@ final class TraceSegmentMerger
         $merged = [
             'schema_version' => TracePayloadBuilder::SCHEMA_VERSION,
             'trace' => $trace,
-            'segments' => array_map(fn (array $envelope): array => $envelope['segment'], $segments),
+            'segments' => array_map(fn (array $envelope): array => is_array($envelope['_meta'] ?? null)
+                ? $envelope['segment'] + ['_meta' => $envelope['_meta']]
+                : $envelope['segment'], $segments),
             'spans' => $spans,
             'llm_calls' => array_values($llmCalls),
         ];
 
-        if ($truncation !== []) {
-            $merged['_meta'] = ['truncated' => true, 'truncation_applied' => array_values(array_unique($truncation))];
+        if ($meta !== []) {
+            $merged['_meta'] = $meta;
         }
 
         return $merged;
+    }
+
+    /**
+     * Merged _meta: the union of truncation_applied, the first error_reason, dropped summed.
+     *
+     * @param  array<string, mixed>  $merged
+     * @param  array<string, mixed>  $meta
+     * @return array<string, mixed>
+     */
+    private function mergeMeta(array $merged, array $meta): array
+    {
+        $applied = array_values(array_unique([...($merged['truncation_applied'] ?? []), ...($meta['truncation_applied'] ?? [])]));
+        $result = ['truncated' => true, 'truncation_applied' => $applied];
+
+        $errorReason = $merged['error_reason'] ?? $meta['error_reason'] ?? null;
+        if ($errorReason !== null) {
+            $result['error_reason'] = $errorReason;
+        }
+        if (isset($merged['dropped']) || isset($meta['dropped'])) {
+            $result['dropped'] = [
+                'spans' => (int) ($merged['dropped']['spans'] ?? 0) + (int) ($meta['dropped']['spans'] ?? 0),
+                'llm_calls' => (int) ($merged['dropped']['llm_calls'] ?? 0) + (int) ($meta['dropped']['llm_calls'] ?? 0),
+            ];
+        }
+
+        return $result;
     }
 
     /**

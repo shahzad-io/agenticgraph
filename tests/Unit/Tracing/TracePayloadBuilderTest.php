@@ -191,3 +191,35 @@ it('keeps the real trace status on an oversize payload and reports why in _meta'
         ->and($payload['_meta']['dropped'])->toBe(['spans' => 2, 'llm_calls' => 11])
         ->and($payload['_meta']['truncation_applied'])->toBe(['complete_payload']);
 });
+
+it('keeps the root graph span when spans are dropped, wherever it sits', function () {
+    $spans = [];
+    for ($i = 0; $i < 150; $i++) {
+        $spans[] = tpbSpan("s{$i}", ['parent_id' => 'root', 'blob' => str_repeat('x', 12_000)]);
+    }
+    array_splice($spans, 75, 0, [tpbSpan('root', ['parent_id' => null, 'span_type' => 'graph'])]);
+
+    $ids = array_column(tpbBuild(tpbTrace(), $spans)['spans'], 'id');
+
+    expect($ids)->toHaveCount(101)
+        ->and($ids)->toContain('root')
+        ->and(array_slice($ids, 49, 3))->toBe(['s49', 'root', 's100'])
+        ->and($ids[100])->toBe('s149');
+});
+
+it('records exactly how many spans soft truncation dropped', function () {
+    $spans = [tpbSpan('root', ['parent_id' => null, 'span_type' => 'graph'])];
+    for ($i = 0; $i < 173; $i++) {
+        $spans[] = tpbSpan("s{$i}", ['parent_id' => 'root', 'blob' => str_repeat('x', 12_000)]);
+    }
+    $calls = [['id' => 'c1', 'trace_id' => 'tr_1', 'response' => 'r']];
+
+    $truncated = tpbBuild(tpbTrace(), $spans, $calls);
+    $textOnly = tpbBuild(tpbTrace(), [], [['id' => 'big', 'trace_id' => 'tr_1', 'response' => str_repeat('word ', 300_000)]]);
+
+    expect($truncated['spans'])->toHaveCount(101)
+        ->and($truncated['llm_calls'])->toHaveCount(1)
+        ->and($truncated['_meta']['dropped'])->toBe(['spans' => 73, 'llm_calls' => 0])
+        ->and(array_keys($truncated['_meta']))->toBe(['truncated', 'truncation_applied', 'original_size_bytes', 'dropped', 'truncated_at'])
+        ->and($textOnly['_meta']['dropped'])->toBe(['spans' => 0, 'llm_calls' => 0]);
+});

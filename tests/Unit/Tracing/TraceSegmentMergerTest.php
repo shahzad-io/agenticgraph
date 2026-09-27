@@ -104,3 +104,23 @@ it('without a final segment takes status from the segment that ended last', func
         ->and($merged['trace']['interrupt_reason'])->toBe('approval')
         ->and($merged['trace']['ended_at'])->toBe('2026-09-27T10:00:05.000000+00:00');
 });
+
+it('keeps each segment _meta in its segments entry, error_reason, and dropped summed over segments', function () {
+    $tooLarge = ['truncated' => true, 'truncation_applied' => ['complete_payload'], 'error_reason' => 'payload_too_large', 'original_size_bytes' => 12_000_000, 'dropped' => ['spans' => 40, 'llm_calls' => 7], 'truncated_at' => '2026-09-27T10:00:05.000000+00:00'];
+    $soft = ['truncated' => true, 'truncation_applied' => ['responses', 'prompts', 'spans'], 'original_size_bytes' => 2_000_000, 'dropped' => ['spans' => 12, 'llm_calls' => 0], 'truncated_at' => '2026-09-27T10:00:09.000000+00:00'];
+    $merged = (new TraceSegmentMerger)->merge([
+        tsmEnvelope(['id' => 'seg_1', 'kind' => 'initial', 'started_at' => '2026-09-27T10:00:00.000000+00:00', 'ended_at' => '2026-09-27T10:00:05.000000+00:00']) + ['_meta' => $tooLarge],
+        tsmEnvelope(['id' => 'seg_2', 'started_at' => '2026-09-27T10:00:06.000000+00:00', 'ended_at' => '2026-09-27T10:00:07.000000+00:00']),
+        tsmEnvelope(['id' => 'seg_3', 'final' => true, 'started_at' => '2026-09-27T10:00:08.000000+00:00', 'ended_at' => '2026-09-27T10:00:09.000000+00:00'], ['status' => 'completed']) + ['_meta' => $soft],
+    ]);
+
+    expect($merged['_meta'])->toBe([
+        'truncated' => true,
+        'truncation_applied' => ['complete_payload', 'responses', 'prompts', 'spans'],
+        'error_reason' => 'payload_too_large',
+        'dropped' => ['spans' => 52, 'llm_calls' => 7],
+    ])
+        ->and($merged['segments'][0]['_meta'])->toBe($tooLarge)
+        ->and($merged['segments'][1])->not->toHaveKey('_meta')
+        ->and($merged['segments'][2]['_meta'])->toBe($soft);
+});

@@ -43,6 +43,9 @@
 - The interrupt checkpoint stores the loop context in `metadata['loop']`.
 - New optional `ExecuteNodeJob` argument `loopMetadata`. Jobs queued before it run as before.
 - Config `tracing.transport.connect_timeout` (`AGENTICGRAPH_TRACING_CONNECT_TIMEOUT`, default 1) and `tracing.transport.timeout` (`AGENTICGRAPH_TRACING_TIMEOUT`, default 3).
+- Soft truncation (over 1 MB) adds `_meta.dropped` (`spans`, `llm_calls`), the counts removed from the envelope. `llm_calls` is always 0 there. New optional key.
+- `TraceSegmentMerger` keeps each truncated segment's `_meta` in its `segments` entry. The merged `_meta` adds `error_reason` (when a segment has one) and `dropped` (summed over segments).
+- The key registry in `spec/tracing-wire-v1.md` gains a `merged` block (merged keys, `segments` entry keys, merged `_meta` keys), checked by `TraceWireContractFreezeTest` against the merger's own output.
 
 ### Changed
 - Every node span's parent is the root graph span, including fan-out branches.
@@ -61,6 +64,10 @@
 - Instrumentation resolves the exporter lazily.
 - Floats keep their zero fraction on the file and pulse wire.
 - One instant defines each segment boundary, so a segment's end and the next one's start agree.
+- Docs: `spec/tracing-wire-v1.md` states every merge rule `TraceSegmentMerger` follows (envelope without a segment block, repeated segment ids, segment order, shallow trace field precedence, whole-object upsert of spans and llm calls, start and end fallbacks, recomputed `duration_ms` and `active_ms`, interrupt keys removed, root span widening).
+- Docs: `llm_calls` is the canonical source for cost and tokens; the llm span carries the same values, so a receiver sums one source only. After span truncation an llm call may name a dropped span.
+- Docs: a running trace has no root span until an interrupt or the final segment arrives; receivers group its spans by their shared `parent_id`.
+- Docs: the zero-fraction note matches the drivers: `pulse` and `file` send `0.0` as `0.0`.
 
 ### Fixed
 - Timestamps were in whole seconds.
@@ -80,6 +87,7 @@
 - A streaming `tools()` call in `PrismNode` now dispatches `TokensUsed`, so it produces an llm span.
 - A middleware that throws, before or after the node runs, now produces a failed node attempt span.
 - `AGENTICGRAPH_TRACING_EXPORTER=null` selects the null exporter. Previously `env()` turned it into PHP null and the factory threw `Unknown agenticgraph tracing exporter []`.
+- Span truncation could drop the root graph span when it was not among the first or last 50 spans. The root graph span now always stays; the first 50 and last 50 of the other spans are kept. After truncation a `parent_id` may name a dropped span; receivers attach such spans to the root.
 
 ### Removed
 - The duplicate failure events and second `onError` in the streaming path and `ExecuteNodeJob`.

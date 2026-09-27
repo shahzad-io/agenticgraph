@@ -39,6 +39,7 @@ use Shahzad\AgenticGraph\Tracing\ExecutionClock;
 use Shahzad\AgenticGraph\Tracing\Exporters\FileExporter;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 use Shahzad\AgenticGraph\Tracing\TracePayloadBuilder;
+use Shahzad\AgenticGraph\Tracing\TraceSegmentMerger;
 
 class FzWorkNode extends PrismNode
 {
@@ -399,7 +400,7 @@ test('contract freeze guard: every registry key and value is named in the prose 
     preg_match_all('/`([^`\n]+)`/', fzProse(), $matches);
     $named = array_flip($matches[1]);
     // Registry structure, not wire names.
-    $structural = ['envelope', 'keys', 'optional', 'always', 'common', 'top', 'attributes', 'attributes_prefix', 'attributes_open', 'id_pattern', 'timestamp_pattern', 'span_types', 'route_kind', 'resource', 'span', 'segment', 'trace'];
+    $structural = ['envelope', 'keys', 'optional', 'always', 'common', 'top', 'attributes', 'attributes_prefix', 'attributes_open', 'id_pattern', 'timestamp_pattern', 'span_types', 'route_kind', 'resource', 'span', 'segment', 'trace', 'merged'];
     $names = [];
     $walk = function (array $node) use (&$walk, &$names): void {
         foreach ($node as $key => $value) {
@@ -415,4 +416,62 @@ test('contract freeze guard: every registry key and value is named in the prose 
     );
 
     expect(array_values($missing))->toBe([]);
+});
+
+test('contract freeze guard: the merger output matches the merged block, both directions', function () {
+    $registry = fzRegistry()['merged'];
+    $envelopes = fzEnvelopes();
+    $byTrace = [];
+    foreach ($envelopes as $envelope) {
+        if (isset($envelope['segment'])) {
+            $byTrace[$envelope['trace']['id']][] = $envelope;
+        }
+    }
+    // The two size-limit envelopes as two segments of one trace: a merge with segment _meta,
+    // error_reason and dropped from two segments.
+    $sizeLimited = array_values(array_filter($envelopes, fn (array $envelope): bool => ! isset($envelope['segment'])));
+    $byTrace['fz-size'] = array_map(fn (array $envelope, int $i): array => $envelope + ['segment' => [
+        'id' => 'seg_000000000000000'.$i, 'kind' => $i === 0 ? 'initial' : 'continued', 'final' => $i === 1,
+        'started_at' => "2026-09-27T10:00:0{$i}.000000+00:00", 'ended_at' => "2026-09-27T10:00:0{$i}.500000+00:00",
+    ]], $sizeLimited, array_keys($sizeLimited));
+
+    $problems = [];
+    $seen = ['merged' => [], 'segments' => [], '_meta' => []];
+    $merger = new TraceSegmentMerger;
+    foreach ($byTrace as $traceId => $segments) {
+        $merged = $merger->merge($segments);
+        $keys = array_keys($merged);
+        $seen['merged'] = [...$seen['merged'], ...$keys];
+        $expected = array_values(array_intersect([...$registry['keys'], ...$registry['optional']], $keys));
+        if ($keys !== $expected) {
+            $problems[] = "{$traceId} merged keys: ".json_encode($keys);
+        }
+        fzSubset($registry['keys'], $keys, "{$traceId} merged (missing key)", $problems);
+
+        foreach ($merged['segments'] as $segment) {
+            $seen['segments'] = [...$seen['segments'], ...array_keys($segment)];
+            fzSubset(array_keys($segment), [...$registry['segments']['keys'], ...$registry['segments']['optional']], "{$traceId} segments[]", $problems);
+            fzSubset($registry['segments']['keys'], array_keys($segment), "{$traceId} segments[] (missing key)", $problems);
+        }
+        if (isset($merged['_meta'])) {
+            $seen['_meta'] = [...$seen['_meta'], ...array_keys($merged['_meta'])];
+            fzSubset(array_keys($merged['_meta']), [...$registry['_meta']['always'], ...$registry['_meta']['optional']], "{$traceId} merged _meta", $problems);
+            fzSubset($registry['_meta']['always'], array_keys($merged['_meta']), "{$traceId} merged _meta (missing key)", $problems);
+        }
+    }
+
+    // Registry to code: every key of the merged block shows up in some merge.
+    foreach ([
+        'merged' => [...$registry['keys'], ...$registry['optional']],
+        'segments' => [...$registry['segments']['keys'], ...$registry['segments']['optional']],
+        '_meta' => [...$registry['_meta']['always'], ...$registry['_meta']['optional']],
+    ] as $group => $keys) {
+        foreach (array_diff($keys, $seen[$group]) as $key) {
+            $problems[] = "merged {$group}: registry key [{$key}] was never emitted";
+        }
+    }
+
+    expect(count($byTrace))->toBeGreaterThanOrEqual(3)
+        ->and(max(array_map('count', $byTrace)))->toBeGreaterThanOrEqual(2)
+        ->and($problems)->toBe([]);
 });

@@ -210,6 +210,7 @@ final class TracePayloadBuilder
         $targetSize = (int) (self::MAX_PAYLOAD_BYTES * 0.9); // Aim for 90% of limit
         $excess = $currentSize - $targetSize;
         $applied = [];
+        $droppedSpans = 0;
 
         // Priority 1: Truncate LLM responses
         if ($excess > 0 && isset($payload['llm_calls'])) {
@@ -233,16 +234,19 @@ final class TracePayloadBuilder
             $excess = $newSize - $targetSize;
         }
 
-        // Priority 3: Drop middle spans (keep first 50 + last 50)
-        if ($excess > 0 && isset($payload['spans']) && count($payload['spans']) > 100) {
-            $payload['spans'] = array_merge(
-                array_slice($payload['spans'], 0, 50),
-                array_slice($payload['spans'], -50)
-            );
-            $applied[] = 'spans';
-            $newSize = $this->estimatePayloadSize($payload);
-            if ($newSize <= self::MAX_PAYLOAD_BYTES) {
-                return $this->finalizePayload($payload, $applied, $currentSize);
+        // Priority 3: Drop middle spans. The root graph span always stays; of the others the
+        // first 50 and last 50 stay. Original order is kept.
+        if ($excess > 0 && isset($payload['spans'])) {
+            $others = array_keys(array_filter($payload['spans'], fn (array $span): bool => ! $this->isRootSpan($span)));
+            if (count($others) > 100) {
+                $dropped = array_flip(array_slice($others, 50, -50));
+                $droppedSpans = count($dropped);
+                $payload['spans'] = array_values(array_diff_key($payload['spans'], $dropped));
+                $applied[] = 'spans';
+                $newSize = $this->estimatePayloadSize($payload);
+                if ($newSize <= self::MAX_PAYLOAD_BYTES) {
+                    return $this->finalizePayload($payload, $applied, $currentSize, $droppedSpans);
+                }
             }
         }
 
@@ -253,7 +257,15 @@ final class TracePayloadBuilder
             $applied[] = 'state_values';
         }
 
-        return $this->finalizePayload($payload, $applied, $currentSize);
+        return $this->finalizePayload($payload, $applied, $currentSize, $droppedSpans);
+    }
+
+    /**
+     * @param  array<string, mixed>  $span
+     */
+    private function isRootSpan(array $span): bool
+    {
+        return ($span['span_type'] ?? null) === 'graph' && ($span['parent_id'] ?? null) === null;
     }
 
     /**
@@ -366,7 +378,7 @@ final class TracePayloadBuilder
      * @param  array<int, string>  $applied
      * @return array<string, mixed>
      */
-    private function finalizePayload(array $payload, array $applied, int $originalSize): array
+    private function finalizePayload(array $payload, array $applied, int $originalSize, int $droppedSpans = 0): array
     {
         if ($applied === []) {
             return $payload;
@@ -377,6 +389,8 @@ final class TracePayloadBuilder
             'truncated' => true,
             'truncation_applied' => array_values(array_unique($applied)),
             'original_size_bytes' => $originalSize,
+            // Soft truncation never drops llm calls, only shortens their text.
+            'dropped' => ['spans' => $droppedSpans, 'llm_calls' => 0],
             'truncated_at' => TraceTime::format(TraceTime::now()),
         ];
 
