@@ -347,7 +347,9 @@ it('queue: ExecuteNodeJob on one worker emits one span per attempt under the roo
     } catch (RuntimeException) {
     }
 
-    $attempts = raAttempts($exporter->getBuffer()['spans']);
+    // The job sends its spans as a segment when it ends (spec G-F).
+    expect($exporter->sent)->toHaveCount(1);
+    $attempts = raAttempts($exporter->sent[0]['spans']);
     if ($failures > 3) {
         raAssertFourFailedAttempts($attempts, 'span_ra_root');
     } else {
@@ -423,7 +425,7 @@ function raRunPath(RetryAttemptsExporter $exporter, string $path): array
         } catch (RuntimeException) {
         }
 
-        return [$exporter->getBuffer()['spans'], 'span_ra_root'];
+        return [$exporter->sent[0]['spans'] ?? [], 'span_ra_root'];
     }
 
     if ($path === 'streaming') {

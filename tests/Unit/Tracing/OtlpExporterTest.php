@@ -303,3 +303,70 @@ it('maps a paused interrupted span to otlp unset status', function (): void {
 
     expect($payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0]['status'])->toBe(['code' => 0]);
 });
+
+/**
+ * @return list<array<string, mixed>> the OTLP spans of every export, in order, tagged with the export index
+ */
+function otlpExportedSpans(): array
+{
+    $spans = [];
+    foreach (Http::recorded() as $index => [$request]) {
+        foreach ($request->data()['resourceSpans'][0]['scopeSpans'][0]['spans'] ?? [] as $span) {
+            $spans[] = $span + ['export' => $index];
+        }
+    }
+
+    return $spans;
+}
+
+it('exports the resumed segment of an interrupted trace, in the same process and in a new one (F-7)', function (bool $newProcess): void {
+    Http::fake(['localhost:4318/*' => Http::response([], 200)]);
+    config([
+        'agenticgraph.tracing.enabled' => true,
+        'agenticgraph.tracing.otlp.endpoint' => 'http://localhost:4318/v1/traces',
+    ]);
+
+    $exporter = new OtlpExporter;
+    $exporter->startTrace('exec_f7', 'demo-graph');
+    $exporter->addSpan(['id' => 'span_before', 'trace_id' => 'exec_f7', 'parent_id' => 'span_root', 'span_type' => 'node', 'node_name' => 'before']);
+    $exporter->interruptTrace('exec_f7', 'approval');
+
+    $resumed = $newProcess ? new OtlpExporter : $exporter;
+    $resumed->resumeTrace('exec_f7', 'demo-graph');
+    $resumed->addSpan(['id' => 'span_after', 'trace_id' => 'exec_f7', 'parent_id' => 'span_root', 'span_type' => 'node', 'node_name' => 'after']);
+    $resumed->completeTrace('exec_f7', [], 10.0);
+
+    $names = array_map(fn (array $span): string => $span['export'].':'.$span['name'], otlpExportedSpans());
+
+    Http::assertSentCount(2);
+    expect($names)->toBe(['0:before', '1:after']);
+})->with(['same process' => false, 'new process' => true]);
+
+it('exports exactly one root span for an interrupted then resumed trace, in the final segment (I-6)', function (): void {
+    Http::fake(['localhost:4318/*' => Http::response([], 200)]);
+    config([
+        'agenticgraph.tracing.enabled' => true,
+        'agenticgraph.tracing.otlp.endpoint' => 'http://localhost:4318/v1/traces',
+    ]);
+    $root = ['id' => 'span_root', 'trace_id' => 'exec_i6', 'parent_id' => null, 'span_type' => 'graph', 'node_name' => 'demo-graph'];
+
+    $exporter = new OtlpExporter;
+    $exporter->startTrace('exec_i6', 'demo-graph');
+    $exporter->addSpan(['id' => 'span_node', 'trace_id' => 'exec_i6', 'parent_id' => 'span_root', 'span_type' => 'node', 'node_name' => 'node']);
+    $exporter->addSpan($root + ['status' => 'interrupted', 'status_code' => 'PAUSED']);
+    $exporter->interruptTrace('exec_i6', 'approval');
+
+    $resumed = new OtlpExporter;
+    $resumed->resumeTrace('exec_i6', 'demo-graph');
+    $resumed->addSpan($root + ['status' => 'success', 'status_code' => 'OK']);
+    $resumed->completeTrace('exec_i6', [], 10.0);
+
+    $roots = array_values(array_filter(
+        otlpExportedSpans(),
+        fn (array $span): bool => $span['spanId'] === OtlpIdEncoder::spanId('span_root')
+    ));
+
+    expect($roots)->toHaveCount(1)
+        ->and($roots[0]['export'])->toBe(1)
+        ->and($roots[0]['status']['code'] ?? null)->toBe(1);
+});

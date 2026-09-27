@@ -65,28 +65,28 @@ class TeeTraceExporter implements TracerExporter
         $this->b->addLlmCall($call);
     }
 
-    public function completeTrace(string $traceId, array $finalStateKeys = [], float $durationMs = 0, ?array $finalStateData = null): void
+    public function completeTrace(string $traceId, array $finalStateKeys = [], float $durationMs = 0, ?array $finalStateData = null, ?DateTimeInterface $at = null): void
     {
-        $this->a->completeTrace($traceId, $finalStateKeys, $durationMs, $finalStateData);
-        $this->b->completeTrace($traceId, $finalStateKeys, $durationMs, $finalStateData);
+        $this->a->completeTrace($traceId, $finalStateKeys, $durationMs, $finalStateData, $at);
+        $this->b->completeTrace($traceId, $finalStateKeys, $durationMs, $finalStateData, $at);
     }
 
-    public function failTrace(string $traceId, Throwable $exception, float $durationMs = 0, ?array $finalStateData = null): void
+    public function failTrace(string $traceId, Throwable $exception, float $durationMs = 0, ?array $finalStateData = null, ?DateTimeInterface $at = null): void
     {
-        $this->a->failTrace($traceId, $exception, $durationMs, $finalStateData);
-        $this->b->failTrace($traceId, $exception, $durationMs, $finalStateData);
+        $this->a->failTrace($traceId, $exception, $durationMs, $finalStateData, $at);
+        $this->b->failTrace($traceId, $exception, $durationMs, $finalStateData, $at);
     }
 
-    public function interruptTrace(string $traceId, string $reason): void
+    public function interruptTrace(string $traceId, string $reason, ?DateTimeInterface $at = null): void
     {
-        $this->a->interruptTrace($traceId, $reason);
-        $this->b->interruptTrace($traceId, $reason);
+        $this->a->interruptTrace($traceId, $reason, $at);
+        $this->b->interruptTrace($traceId, $reason, $at);
     }
 
-    public function resumeTrace(string $traceId): void
+    public function resumeTrace(string $traceId, ?string $graphName = null, string $kind = 'resumed', ?DateTimeInterface $at = null): void
     {
-        $this->a->resumeTrace($traceId);
-        $this->b->resumeTrace($traceId);
+        $this->a->resumeTrace($traceId, $graphName, $kind, $at);
+        $this->b->resumeTrace($traceId, $graphName, $kind, $at);
     }
 
     public function flush(string $traceId): void
@@ -162,7 +162,8 @@ function tePulseBodies(): array
  */
 function teWithoutClock(array $payload): array
 {
-    unset($payload['_meta']['truncated_at']);
+    // Each exporter mints its own segment id; everything else must match.
+    unset($payload['_meta']['truncated_at'], $payload['segment']['id']);
 
     return $payload;
 }
@@ -206,7 +207,7 @@ it('pulse and file carry the same envelope for a real run', function (bool $fail
     $files = teFiles($pulse[0]['trace']['id']);
 
     expect($files)->toHaveCount(1)
-        ->and($files[0])->toBe($pulse[0])
+        ->and(teWithoutClock($files[0]))->toBe(teWithoutClock($pulse[0]))
         ->and($pulse[0]['schema_version'])->toBe('agenticgraph.trace.v1')
         ->and($pulse[0]['trace']['status'])->toBe($fail ? 'failed' : 'completed')
         ->and($pulse[0]['llm_calls'])->toHaveCount(1)
@@ -234,7 +235,7 @@ it('file exporter writes one file per segment, interrupted then completed across
     $first->addSpan(['id' => 'span_before', 'trace_id' => 'tr_resume', 'span_type' => 'node', 'started_at' => '2026-09-27T10:00:00.000000+00:00', 'duration_ms' => 5]);
     $first->interruptTrace('tr_resume', 'approval');
 
-    // A new instance stands in for the resume worker; the buffer comes back from the cache.
+    // A new instance stands in for the resume worker; it sends only its own spans.
     $second = new FileExporter;
     $second->resumeTrace('tr_resume');
     $second->addSpan(['id' => 'span_after', 'trace_id' => 'tr_resume', 'span_type' => 'resume', 'started_at' => '2026-09-27T10:05:00.000000+00:00', 'duration_ms' => 5]);
@@ -249,7 +250,8 @@ it('file exporter writes one file per segment, interrupted then completed across
         ->and(array_column($files[0]['spans'], 'id'))->toBe(['span_before'])
         ->and($files[1]['trace']['status'])->toBe('completed')
         ->and($files[1]['trace'])->toHaveKey('resumed_at')
-        ->and(array_column($files[1]['spans'], 'id'))->toBe(['span_before', 'span_after']);
+        ->and($files[1]['segment']['kind'])->toBe('resumed')
+        ->and(array_column($files[1]['spans'], 'id'))->toBe(['span_after']);
 });
 
 it('pulse and file keep the zero fraction of float fields on the wire', function () {

@@ -20,6 +20,7 @@ use Shahzad\AgenticGraph\Streaming\StreamContext;
 use Shahzad\AgenticGraph\Streaming\StreamOptions;
 use Shahzad\AgenticGraph\Streaming\StreamResumePayload;
 use Shahzad\AgenticGraph\Streaming\StreamSession;
+use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 
 class ContinueExecutionJob implements ShouldQueue
@@ -71,6 +72,11 @@ class ContinueExecutionJob implements ShouldQueue
         $rootSpanId = $this->rootSpanId ?? null;
         if ($rootSpanId !== null) {
             app()->instance(TraceContext::class, new TraceContext($this->executionId, $rootSpanId));
+        }
+
+        // The rest of the run is a continued segment of the same trace, never a new initial one.
+        if (app()->bound(TracerExporter::class) && ($exporter = app(TracerExporter::class))->isEnabled()) {
+            $exporter->resumeTrace($this->executionId, $this->graphName, 'continued');
         }
 
         try {

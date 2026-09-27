@@ -35,6 +35,7 @@ use Shahzad\AgenticGraph\Tracing\ExecutionClock;
 use Shahzad\AgenticGraph\Tracing\Listeners\TracingListener;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
+use Shahzad\AgenticGraph\Tracing\TraceSegmentMerger;
 
 class RootLifecycleExporter extends PulseExporter
 {
@@ -160,8 +161,8 @@ function rlForgetExecutionServices(): void
 }
 
 /**
- * Simulates a fresh PHP process: the in-memory trace buffer and per-run bindings are gone,
- * the cache (checkpoints, interrupted trace buffer) survives.
+ * Simulates a fresh PHP process: open segments and per-run bindings are gone, the cache
+ * (checkpoints) survives.
  */
 function rlNewProcess(RootLifecycleExporter $exporter): void
 {
@@ -358,7 +359,10 @@ it('queue fan-out on one worker keeps one root across ExecuteNodeJob and Continu
     expect($continue->rootSpanId)->toBe('span_rl_root');
     app()->call([unserialize(serialize($continue)), 'handle']);
 
-    $payload = $exporter->sent[0];
+    // Hand-off, each branch job, and the continuation each send a segment; merged, they form one tree.
+    expect(array_map(fn (array $sent): string => $sent['segment']['kind'].($sent['segment']['final'] ? ':final' : ''), $exporter->sent))
+        ->toBe(['initial', 'continued', 'continued', 'continued:final']);
+    $payload = (new TraceSegmentMerger)->merge($exporter->sent);
     $root = assertTraceTree($payload);
     expect($root['id'])->toBe('span_rl_root')
         ->and($root['duration_ms'])->toBeGreaterThan(0);
@@ -478,7 +482,7 @@ it('interrupt then resume reports duration_ms >= active_ms > 0', function () {
     rlNewProcess($exporter);
     app(GraphExecutor::class)->resumeWithInput($state->getInterruptCheckpointId(), ['ok' => true]);
 
-    $trace = $exporter->sent[1]['trace'];
+    $trace = (new TraceSegmentMerger)->merge($exporter->sent)['trace'];
     expect($trace['active_ms'])->toBeGreaterThan(0)
         ->and($trace['duration_ms'])->toBeGreaterThanOrEqual($trace['active_ms'])
         ->and($trace['active_ms'])->toBeLessThanOrEqual($trace['duration_ms'] - $waitMs)
@@ -533,7 +537,202 @@ it('ExecuteNodeJob queued before C1 still runs and nests under its old parent', 
     $job = unserialize(serialize(new ExecuteNodeJob('exec_rl_old_node', 'a', [], 'rl-old-node-job', 'span_old_orchestrator')));
     app()->call([$job, 'handle']);
 
-    $node = array_values(array_filter($exporter->getBuffer()['spans'], fn (array $span): bool => $span['span_type'] === 'node'))[0];
+    $node = array_values(array_filter($exporter->sent[0]['spans'], fn (array $span): bool => $span['span_type'] === 'node'))[0];
     expect($node['parent_id'])->toBe('span_old_orchestrator')
         ->and(Cache::get('agenticgraph:batch:exec_rl_old_node:a'))->toBeArray();
+});
+
+/**
+ * A worker process with its own exporter instance. Everything each worker sends lands in $sent.
+ *
+ * @param  array<int, array{worker: string, payload: array<string, mixed>}>  $sent
+ */
+function rlWorker(string $name, array &$sent): RootLifecycleExporter
+{
+    $exporter = new class($name, $sent) extends RootLifecycleExporter
+    {
+        /** @param  array<int, array{worker: string, payload: array<string, mixed>}>  $log */
+        public function __construct(private readonly string $worker, private array &$log)
+        {
+            parent::__construct();
+        }
+
+        protected function send(array $payload): void
+        {
+            parent::send($payload);
+            $this->log[] = ['worker' => $this->worker, 'payload' => $payload];
+        }
+    };
+    app()->instance(TracerExporter::class, $exporter);
+    app()->instance(PulseExporter::class, $exporter);
+    foreach ([TraceContext::class, ExecutionClock::class, ExecutionContext::class, Graph::class] as $binding) {
+        app()->forgetInstance($binding);
+    }
+    rlForgetExecutionServices();
+
+    return $exporter;
+}
+
+/**
+ * One root, and every parent id resolves in the merged trace.
+ *
+ * @param  array<string, mixed>  $merged
+ */
+function rlAssertNoOrphans(array $merged): void
+{
+    $ids = array_column($merged['spans'], 'id');
+    foreach ($merged['spans'] as $span) {
+        if ($span['parent_id'] !== null) {
+            expect($ids)->toContain($span['parent_id']);
+        }
+    }
+    expect(array_filter($merged['spans'], fn (array $span): bool => $span['parent_id'] === null))->toHaveCount(1);
+}
+
+it('queue fan-out across two workers: every segment is sent and the merge has one root and no orphans', function () {
+    rlExporter();
+    $sent = [];
+    $fake = Bus::fake();
+    rlFanOutGraph('rl-two-workers');
+    $executionId = 'exec_rl_two_'.bin2hex(random_bytes(4));
+    app(ExecutionRepository::class)->queued($executionId, 'rl-two-workers', State::toStoragePayload(new State([])));
+
+    rlWorker('A', $sent);
+    app()->call([unserialize(serialize(new ExecuteGraphJob('rl-two-workers', $executionId, [], null, 'span_rl_root'))), 'handle']);
+
+    /** @var PendingBatch|null $pending */
+    $pending = null;
+    $fake->assertBatched(function (PendingBatch $batch) use (&$pending): bool {
+        $pending = $batch;
+
+        return true;
+    });
+    [$jobA, $jobB] = $pending->jobs->all();
+    rlWorker('A', $sent);
+    app()->call([unserialize(serialize($jobA)), 'handle']);
+    rlWorker('B', $sent);
+    app()->call([unserialize(serialize($jobB)), 'handle']);
+
+    $batch = Mockery::mock(Batch::class);
+    $batch->id = 'batch-rl-two';
+    unserialize(serialize($pending->thenCallbacks()[0]))->getClosure()($batch);
+    rlWorker('B', $sent);
+    app()->call([unserialize(serialize($fake->dispatched(ContinueExecutionJob::class)->first())), 'handle']);
+
+    $merged = (new TraceSegmentMerger)->merge(array_column($sent, 'payload'));
+    rlAssertNoOrphans($merged);
+    $nodeWorkers = [];
+    foreach ($sent as $entry) {
+        foreach ($entry['payload']['spans'] as $span) {
+            if ($span['span_type'] === 'node') {
+                $nodeWorkers[$span['node_name']] = $entry['worker'];
+            }
+        }
+    }
+    ksort($nodeWorkers);
+
+    expect($nodeWorkers)->toBe(['a' => 'A', 'b' => 'B', 'end' => 'B', 'start' => 'A'])
+        ->and($merged['trace']['status'])->toBe('completed')
+        ->and($merged['segments'])->toHaveCount(4)
+        ->and($merged['trace']['active_ms'])->toBeLessThanOrEqual($merged['trace']['duration_ms'])
+        ->and($merged['trace']['ended_at'])->toBe(end($merged['segments'])['ended_at']);
+});
+
+it('a failed batch branch sends every segment and closes the trace with a failed final segment', function () {
+    rlExporter();
+    $sent = [];
+    $fake = Bus::fake();
+    $graph = GraphBuilder::create('rl-batch-fail')
+        ->addNode('start', RlStart::class)
+        ->addNode('a', RlBranchA::class)
+        ->addNode('b', RlBoom::class)
+        ->addNode('end', RlEnd::class)
+        ->addConditionalEdge('start', rlRouter())
+        ->addJoin(['a', 'b'], 'end')
+        ->addEdge('a', 'end')
+        ->addEdge('b', 'end')
+        ->setEntryPoint('start')
+        ->addExitPoint('end')
+        ->build();
+    app(GraphRegistry::class)->register('rl-batch-fail', $graph);
+    $executionId = 'exec_rl_bfail_'.bin2hex(random_bytes(4));
+    app(ExecutionRepository::class)->queued($executionId, 'rl-batch-fail', State::toStoragePayload(new State([])));
+
+    rlWorker('A', $sent);
+    app()->call([unserialize(serialize(new ExecuteGraphJob('rl-batch-fail', $executionId, [], null, 'span_rl_root'))), 'handle']);
+
+    /** @var PendingBatch|null $pending */
+    $pending = null;
+    $fake->assertBatched(function (PendingBatch $batch) use (&$pending): bool {
+        $pending = $batch;
+
+        return true;
+    });
+    [$jobA, $jobB] = $pending->jobs->all();
+    rlWorker('A', $sent);
+    app()->call([unserialize(serialize($jobA)), 'handle']);
+    rlWorker('B', $sent);
+    $error = null;
+    try {
+        app()->call([unserialize(serialize($jobB)), 'handle']);
+    } catch (RuntimeException $e) {
+        $error = $e;
+    }
+    $batch = Mockery::mock(Batch::class);
+    $batch->id = 'batch-rl-fail';
+    unserialize(serialize($pending->catchCallbacks()[0]))->getClosure()($batch, $error);
+
+    $merged = (new TraceSegmentMerger)->merge(array_column($sent, 'payload'));
+    $root = array_values(array_filter($merged['spans'], fn (array $span): bool => $span['parent_id'] === null))[0];
+    rlAssertNoOrphans($merged);
+
+    expect($error)->toBeInstanceOf(RuntimeException::class)
+        ->and(array_map(fn (array $entry): string => $entry['worker'].':'.$entry['payload']['segment']['kind'], $sent))
+        ->toBe(['A:initial', 'A:continued', 'B:continued', 'B:continued'])
+        ->and(end($sent)['payload']['segment']['final'])->toBeTrue()
+        ->and($merged['trace']['status'])->toBe('failed')
+        ->and($merged['trace']['error']['message'])->toBe('rl boom')
+        ->and($root['id'])->toBe('span_rl_root')
+        ->and($root['status'])->toBe('failed');
+});
+
+it('resume in a new process after the cache is flushed sends the resumed segment and merges into one trace', function (bool $afterTtl) {
+    $first = rlExporter();
+    $graph = rlLinearGraph('rl-flushed-'.($afterTtl ? 'ttl' : 'cache'), [['start', RlStart::class], ['approve', RlApproval::class], ['end', RlEnd::class]]);
+    $state = app(GraphExecutor::class)->execute($graph, new State([]));
+    $checkpointId = $state->getInterruptCheckpointId();
+    $interrupted = $first->sent;
+
+    // Only the checkpoint survives; before G-F the resume found no buffered trace and sent nothing.
+    $checkpoint = app(StorageInterface::class)->load($checkpointId);
+    Cache::flush();
+    app(StorageInterface::class)->save($checkpoint);
+    if ($afterTtl) {
+        $this->travel(2)->hours();
+    }
+
+    $sent = [];
+    rlWorker('resume', $sent);
+    app(GraphExecutor::class)->resumeWithInput($checkpointId, ['ok' => true]);
+
+    $merged = (new TraceSegmentMerger)->merge([...$interrupted, ...array_column($sent, 'payload')]);
+    rlAssertNoOrphans($merged);
+    expect($sent)->toHaveCount(1)
+        ->and($sent[0]['payload']['segment']['kind'])->toBe('resumed')
+        ->and($sent[0]['payload']['segment']['final'])->toBeTrue()
+        ->and($merged['trace']['status'])->toBe('completed')
+        ->and($merged['trace']['started_at'])->toBe($interrupted[0]['trace']['started_at'])
+        ->and($merged['trace'])->not->toHaveKey('interrupt_reason');
+})->with(['cache flushed' => false, 'after the old buffer TTL' => true]);
+
+it('the interrupt segment ends at the same instant as the interrupted root span (H-2)', function () {
+    $exporter = rlExporter();
+    $graph = rlLinearGraph('rl-h2', [['start', RlStart::class], ['approve', RlApproval::class], ['end', RlEnd::class]]);
+
+    app(GraphExecutor::class)->execute($graph, new State([]));
+
+    $payload = $exporter->sent[0];
+    $root = assertTraceTree($payload);
+    expect($root['ended_at'])->toBe($payload['segment']['ended_at'])
+        ->and($payload['trace']['interrupted_at'])->toBe($payload['segment']['ended_at']);
 });

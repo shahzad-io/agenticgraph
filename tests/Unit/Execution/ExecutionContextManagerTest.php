@@ -166,6 +166,8 @@ it('continues cleanup when http instrumentation cleanup fails', function () {
     $executionId = 'exec-7';
     $exporter = Mockery::mock(TracerExporter::class);
     $exporter->shouldNotReceive('completeTrace');
+    $exporter->shouldReceive('isEnabled')->andReturn(true);
+    $exporter->shouldReceive('flush')->once()->with($executionId);
     $instrumentation = Mockery::mock(HttpClientInstrumentation::class);
     $instrumentation->shouldReceive('cleanupExecution')->once()->with($executionId)->andThrow(new RuntimeException('fail'));
     $logger = Mockery::mock(LoggerInterface::class);

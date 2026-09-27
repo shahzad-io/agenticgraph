@@ -112,13 +112,16 @@ final class InterruptManager implements InterruptServiceInterface
 
         $this->repo->interrupted($executionId);
 
+        // One instant for the root span end, the interrupt span, and the segment end (spec H-2).
+        $interruptedAt = TraceTime::now();
+
         $this->events->dispatch(new NodeInterrupted(
             executionId: $executionId,
             nodeName: $nodeName,
             reason: $reason,
             checkpointId: $checkpointId,
             stateSnapshot: $state->toArray(),
-            interruptedAt: TraceTime::now(),
+            interruptedAt: $interruptedAt,
             interruptPayload: $interruptPayload,
             parentSpanId: $traceContext?->getSpanId(),
             graphName: $graph->name,
@@ -234,7 +237,7 @@ final class InterruptManager implements InterruptServiceInterface
         }
 
         if (($tracerExporter = $this->tracerExporter()) && $tracerExporter->isEnabled()) {
-            $tracerExporter->interruptTrace($executionId, $reason);
+            $tracerExporter->interruptTrace($executionId, $reason, $interruptedAt);
         }
 
         if ($this->loggingEnabled) {
@@ -273,7 +276,7 @@ final class InterruptManager implements InterruptServiceInterface
             $this->container->instance(TraceContext::class, $traceContext);
 
             if (($tracerExporter = $this->tracerExporter()) && $tracerExporter->isEnabled()) {
-                $tracerExporter->resumeTrace($executionId);
+                $tracerExporter->resumeTrace($executionId, $graph->name);
             }
         }
 
@@ -333,12 +336,18 @@ final class InterruptManager implements InterruptServiceInterface
             $parentSpanId = $storedTrace['current_span_id'] ?? $storedTrace['root_span_id'] ?? null;
         }
 
+        // Open the resumed segment first so the resume span lands in it, at the same instant.
+        $resumedAt = TraceTime::now();
+        if (($tracerExporter = $this->tracerExporter()) && $tracerExporter->isEnabled()) {
+            $tracerExporter->resumeTrace($executionId, $graph->name, 'resumed', $resumedAt);
+        }
+
         $this->events->dispatch(new NodeResumed(
             executionId: $executionId,
             nodeName: $checkpoint->currentNode,
             checkpointId: $checkpointId,
             stateSnapshot: $state->toArray(),
-            resumedAt: TraceTime::now(),
+            resumedAt: $resumedAt,
             parentSpanId: is_string($parentSpanId) ? $parentSpanId : null,
         ));
 
@@ -358,10 +367,6 @@ final class InterruptManager implements InterruptServiceInterface
         if (isset($checkpoint->metadata['trace_context']) && is_array($checkpoint->metadata['trace_context'])) {
             $traceContext = TraceContext::fromArray($checkpoint->metadata['trace_context']);
             $this->container->instance(TraceContext::class, $traceContext);
-
-            if (($tracerExporter = $this->tracerExporter()) && $tracerExporter->isEnabled()) {
-                $tracerExporter->resumeTrace($executionId);
-            }
         }
 
         return ($this->executeFromNode)(

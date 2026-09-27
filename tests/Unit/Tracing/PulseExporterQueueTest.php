@@ -50,9 +50,10 @@ it('dispatches trace after response in HTTP context', function () {
         'api.example.com/*' => Http::response(['success' => true], 200),
     ]);
 
-    // Simulate HTTP context by binding a request
+    // Simulate HTTP context: a bound request outside the console (spec H-1)
     $request = Request::create('/test', 'GET');
     app()->instance('request', $request);
+    (fn () => $this->isRunningInConsole = false)->call(app());
 
     $exporter = new PulseExporter;
     $exporter->startTrace('test-trace', 'test-graph');
@@ -70,8 +71,29 @@ it('dispatches trace after response in HTTP context', function () {
     // Complete trace - should dispatch job with afterResponse()
     $exporter->completeTrace('test-trace', [], 100);
 
-    // In HTTP context, the job is dispatched but not executed yet
-    // We can't easily test afterResponse() behavior in unit tests
-    // but we can verify no immediate HTTP call was made
-    Http::assertNothingSent();
+    // In HTTP context the send is deferred until the response is done
+    try {
+        Http::assertNothingSent();
+
+        app()->terminate();
+
+        Http::assertSentCount(1);
+    } finally {
+        (fn () => $this->isRunningInConsole = null)->call(app());
+    }
+});
+
+it('sends synchronously in the console even when a request is bound', function () {
+    Http::fake([
+        'api.example.com/*' => Http::response(['success' => true], 200),
+    ]);
+
+    // Artisan commands and workers have a bound request too (spec H-1)
+    app()->instance('request', Request::create('/test', 'GET'));
+
+    $exporter = new PulseExporter;
+    $exporter->startTrace('test-trace', 'test-graph');
+    $exporter->completeTrace('test-trace', [], 100);
+
+    Http::assertSentCount(1);
 });

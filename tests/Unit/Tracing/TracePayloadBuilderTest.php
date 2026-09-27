@@ -79,7 +79,7 @@ it('fills only the missing span timestamp from duration_ms', function () {
         ->and($byId['both']['ended_at'])->toBe('2026-09-27T10:00:02.000000+00:00');
 });
 
-it('extends the trace ended_at to the latest span end without touching duration_ms', function () {
+it('extends an ended trace to the latest span end without touching duration_ms, and never ends an open one', function () {
     $late = tpbBuild(tpbTrace(), [tpbSpan('late', ['ended_at' => '2026-09-27T10:00:07.250000+00:00'])]);
     $inside = tpbBuild(tpbTrace(), [tpbSpan('inside')]);
     $open = tpbBuild(tpbTrace(['ended_at' => null]), [tpbSpan('inside')]);
@@ -87,7 +87,7 @@ it('extends the trace ended_at to the latest span end without touching duration_
     expect($late['trace']['ended_at'])->toBe('2026-09-27T10:00:07.250000+00:00')
         ->and($late['trace']['duration_ms'])->toBe(5000.0)
         ->and($inside['trace']['ended_at'])->toBe('2026-09-27T10:00:05.000000+00:00')
-        ->and($open['trace']['ended_at'])->toBe('2026-09-27T10:00:02.000000+00:00');
+        ->and($open['trace']['ended_at'])->toBeNull();
 });
 
 it('leaves a payload under 1 MB unchanged apart from shaping', function () {

@@ -183,7 +183,13 @@ return [
 
         // AgenticPulse API credentials (required only for exporter=pulse or auto with key)
         'api_key' => env('AGENTICPULSE_API_KEY'),
-        'endpoint' => env('AGENTICPULSE_ENDPOINT', 'https://api.agenticpulse.io'),
+        'endpoint' => env('AGENTICPULSE_ENDPOINT', 'https://ingest.agenticgraph.dev'),
+
+        // Ingest transport: seconds per attempt; one retry on a connection error or 5xx
+        'transport' => [
+            'connect_timeout' => env('AGENTICGRAPH_TRACING_CONNECT_TIMEOUT', 1),
+            'timeout' => env('AGENTICGRAPH_TRACING_TIMEOUT', 3),
+        ],
 
         'service' => [
             'name' => env('AGENTICGRAPH_SERVICE_NAME', 'agenticgraph'),
@@ -236,12 +242,6 @@ return [
         'sampling' => [
             'rate' => env('AGENTICGRAPH_SAMPLE_RATE', 1.0),
             'always_on_error' => true,
-        ],
-        // An interrupted trace is kept in the cache until it resumes. 'store' picks the
-        // cache store (null means the default store).
-        'buffer' => [
-            'store' => env('AGENTICGRAPH_TRACING_BUFFER_STORE'),
-            'ttl_seconds' => env('AGENTICGRAPH_TRACING_BUFFER_TTL', 3600),
         ],
         'http' => [
             'request_ttl_seconds' => env('AGENTICGRAPH_HTTP_REQUEST_TTL', 120),

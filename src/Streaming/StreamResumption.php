@@ -59,12 +59,21 @@ final class StreamResumption
             $parentSpanId = $storedTrace['current_span_id'] ?? $storedTrace['root_span_id'] ?? null;
         }
 
+        // Open the resumed segment first so the resume span lands in it, at the same instant.
+        $resumedAt = TraceTime::now();
+        if (app()->bound(TracerExporter::class)) {
+            $exporter = app(TracerExporter::class);
+            if ($exporter->isEnabled()) {
+                $exporter->resumeTrace($executionId, $graph->name, 'resumed', $resumedAt);
+            }
+        }
+
         app('events')->dispatch(new NodeResumed(
             executionId: $executionId,
             nodeName: $checkpoint->currentNode,
             checkpointId: $checkpointId,
             stateSnapshot: $state->toArray(),
-            resumedAt: TraceTime::now(),
+            resumedAt: $resumedAt,
             parentSpanId: is_string($parentSpanId) ? $parentSpanId : null,
         ));
 
@@ -79,13 +88,6 @@ final class StreamResumption
         if (isset($checkpoint->metadata['trace_context']) && is_array($checkpoint->metadata['trace_context'])) {
             $traceContext = TraceContext::fromArray($checkpoint->metadata['trace_context']);
             app()->instance(TraceContext::class, $traceContext);
-
-            if (app()->bound(TracerExporter::class)) {
-                $exporter = app(TracerExporter::class);
-                if ($exporter->isEnabled()) {
-                    $exporter->resumeTrace($executionId);
-                }
-            }
         }
 
         $loopMetadata = null;

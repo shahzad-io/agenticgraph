@@ -124,7 +124,8 @@ class TracingListener
             $event->executionId,
             array_keys($event->finalState->toArray()),
             $durationMs,
-            $finalState
+            $finalState,
+            $endedAt
         );
     }
 
@@ -176,7 +177,8 @@ class TracingListener
             $event->executionId,
             $event->exception,
             $durationMs,
-            $finalState
+            $finalState,
+            $resolvedEndedAt
         );
     }
 
@@ -432,7 +434,7 @@ class TracingListener
         }
 
         // The root graph span is sent now with status interrupted; completion or failure later
-        // re-sends the same id, and mergeById keeps the final one.
+        // re-sends the same id in a later segment, and the merge keeps the final segment copy.
         if ($event->rootSpanId !== null && $event->graphName !== null) {
             $traceStartDt = $this->traceStart($event->executionId) ?? $event->interruptedAt;
             $this->exporter->addSpan([

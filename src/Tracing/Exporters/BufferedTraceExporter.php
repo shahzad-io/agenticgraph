@@ -4,37 +4,27 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph\Tracing\Exporters;
 
-use Illuminate\Contracts\Cache\Repository;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\TracePayloadBuilder;
 use Shahzad\AgenticGraph\Tracing\TraceTime;
 
 /**
- * Shared lifecycle for exporters that send the JSON trace envelope (pulse, file, log).
- * Buffers spans in memory during execution and flushes once per segment (interrupt, complete, fail).
- * An interrupted trace is kept in the cache so a resume in another process continues it.
+ * Shared lifecycle for exporters that send a trace as segments (pulse, file, log, otlp).
+ * A segment is what one process produced for one trace between two boundaries (start, resume,
+ * or job start, to interrupt, hand-off, complete, or fail). Each segment carries only its own
+ * spans and LLM calls; the server (or TraceSegmentMerger) merges segments by trace id.
+ * State is kept per trace, so sending one trace never touches another.
  */
 abstract class BufferedTraceExporter implements TracerExporter
 {
-    /** @var array<string, array<string, mixed>> */
-    private array $traces = [];
-
-    /** @var array<int, array<string, mixed>> */
-    private array $spans = [];
-
-    /** @var array<int, array<string, mixed>> */
-    private array $llmCalls = [];
-
-    /** @var array<string, bool> */
-    private array $sampledTraces = [];
-
-    /** @var array<string, Carbon> */
-    private array $traceStarts = [];
-
-    /** @var array<string, true> */
-    private array $flushedTraceIds = [];
+    /**
+     * Open segments by trace id.
+     *
+     * @var array<string, array{trace: array<string, mixed>, segment: array<string, mixed>, start: \DateTimeImmutable, spans: list<array<string, mixed>>, llm_calls: list<array<string, mixed>>}>
+     */
+    private array $open = [];
 
     protected int $captureDepth = 0;
 
@@ -50,6 +40,18 @@ abstract class BufferedTraceExporter implements TracerExporter
      * @param  array<string, mixed>  $payload
      */
     abstract protected function send(array $payload): void;
+
+    /**
+     * @param  array<string, mixed>  $trace
+     * @param  array<string, mixed>  $segment
+     * @param  array<int, array<string, mixed>>  $spans
+     * @param  array<int, array<string, mixed>>  $llmCalls
+     * @return array<string, mixed>
+     */
+    protected function buildPayload(array $trace, array $segment, array $spans, array $llmCalls): array
+    {
+        return $this->payloadBuilder->build($trace, $spans, $llmCalls, $segment);
+    }
 
     /**
      * True while the exporter is capturing, buffering, or flushing trace data.
@@ -78,7 +80,7 @@ abstract class BufferedTraceExporter implements TracerExporter
     }
 
     /**
-     * Start a new trace.
+     * Open the initial segment of a trace.
      *
      * @param  array<int, string>  $initialStateKeys
      * @param  array<string, mixed>|null  $initialStateData
@@ -90,45 +92,25 @@ abstract class BufferedTraceExporter implements TracerExporter
         ?\DateTimeImmutable $startedAt = null,
         ?array $initialStateData = null
     ): void {
-        if (! $this->isEnabled()) {
+        if (! $this->isEnabled() || isset($this->open[$traceId])) {
             return;
         }
 
-        if (isset($this->traces[$traceId])) {
-            $this->traces[$traceId]['status'] = 'running';
+        $this->openSegment($traceId, $graphName, 'initial', $startedAt);
+        $this->open[$traceId]['trace']['started_at'] = $this->open[$traceId]['segment']['started_at'];
+        $this->open[$traceId]['trace']['initial_state_keys'] = $initialStateKeys;
 
-            return;
-        }
-
-        $sampled = $this->shouldSampleTrace();
-        $this->sampledTraces[$traceId] = $sampled;
-        $startTime = $startedAt ? Carbon::instance($startedAt) : now();
-        $this->traceStarts[$traceId] = $startTime;
-
-        $this->traces[$traceId] = [
-            'id' => $traceId,
-            'graph_name' => $graphName,
-            'status' => 'running',
-            'started_at' => TraceTime::format($startTime),
-            'initial_state_keys' => $initialStateKeys,
-            'sampled' => $sampled,
-            'resource' => [
-                'service.name' => (string) config('agenticgraph.tracing.service.name', 'agenticgraph'),
-                'service.version' => (string) config('agenticgraph.tracing.service.version', 'unknown'),
-                'deployment.environment' => (string) config('agenticgraph.tracing.environment', 'local'),
-            ],
-            'instrumentation_scope' => (string) config('agenticgraph.tracing.instrumentation_scope', 'agenticgraph'),
-        ];
-
-        // Add initial state data if provided
         if ($initialStateData !== null && $initialStateData !== []) {
-            $this->traces[$traceId]['initial_state'] = $initialStateData;
+            $this->open[$traceId]['trace']['initial_state'] = $initialStateData;
         }
     }
 
+    /**
+     * Start of the open segment. For the initial segment this is the trace start.
+     */
     public function getTraceStartTime(string $traceId): ?Carbon
     {
-        return $this->traceStarts[$traceId] ?? null;
+        return isset($this->open[$traceId]) ? Carbon::instance($this->open[$traceId]['start']) : null;
     }
 
     /**
@@ -136,18 +118,7 @@ abstract class BufferedTraceExporter implements TracerExporter
      */
     public function addSpan(array $span): void
     {
-        if (! $this->isEnabled()) {
-            return;
-        }
-
-        $traceId = $span['trace_id'] ?? null;
-        if (! $this->isSampled($traceId)) {
-            return;
-        }
-
-        $this->whileCapturing(function () use ($span): void {
-            $this->spans[] = $span;
-        });
+        $this->collect('spans', $span);
     }
 
     /**
@@ -155,22 +126,11 @@ abstract class BufferedTraceExporter implements TracerExporter
      */
     public function addLlmCall(array $call): void
     {
-        if (! $this->isEnabled()) {
-            return;
-        }
-
-        $traceId = $call['trace_id'] ?? null;
-        if (! $this->isSampled($traceId)) {
-            return;
-        }
-
-        $this->whileCapturing(function () use ($call): void {
-            $this->llmCalls[] = $call;
-        });
+        $this->collect('llm_calls', $call);
     }
 
     /**
-     * Complete a trace (success).
+     * Complete a trace (success). Sends the final segment.
      *
      * @param  array<int, string>  $finalStateKeys
      * @param  array<string, mixed>|null  $finalStateData
@@ -179,34 +139,25 @@ abstract class BufferedTraceExporter implements TracerExporter
         string $traceId,
         array $finalStateKeys = [],
         float $durationMs = 0,
-        ?array $finalStateData = null
+        ?array $finalStateData = null,
+        ?\DateTimeInterface $at = null
     ): void {
-        if (! $this->isEnabled() || ! isset($this->traces[$traceId]) || isset($this->flushedTraceIds[$traceId])) {
+        if (! $this->isEnabled() || ! isset($this->open[$traceId])) {
             return;
         }
 
-        $this->traces[$traceId]['status'] = 'completed';
-        $this->markTraceEnded($traceId, $durationMs);
-        $this->traces[$traceId]['final_state_keys'] = $finalStateKeys;
+        $this->endSegment($traceId, 'completed', $at, $durationMs, final: true);
+        $this->open[$traceId]['trace']['final_state_keys'] = $finalStateKeys;
 
-        // Add final state data if provided
         if ($finalStateData !== null && $finalStateData !== []) {
-            $this->traces[$traceId]['final_state'] = $finalStateData;
+            $this->open[$traceId]['trace']['final_state'] = $finalStateData;
         }
 
-        if (! $this->isSampled($traceId)) {
-            $this->reset();
-
-            return;
-        }
-
-        $this->forgetInterruptedBuffer($traceId);
-
-        $this->flush($traceId);
+        $this->isSampled($traceId) ? $this->sendSegment($traceId) : $this->forget($traceId);
     }
 
     /**
-     * Fail a trace (error).
+     * Fail a trace (error). Sends the final segment.
      *
      * @param  array<string, mixed>|null  $finalStateData
      */
@@ -214,277 +165,231 @@ abstract class BufferedTraceExporter implements TracerExporter
         string $traceId,
         \Throwable $exception,
         float $durationMs = 0,
-        ?array $finalStateData = null
+        ?array $finalStateData = null,
+        ?\DateTimeInterface $at = null
     ): void {
-        if (! $this->isEnabled() || ! isset($this->traces[$traceId]) || isset($this->flushedTraceIds[$traceId])) {
+        if (! $this->isEnabled() || ! isset($this->open[$traceId])) {
             return;
         }
 
-        $this->traces[$traceId]['status'] = 'failed';
-        $this->markTraceEnded($traceId, $durationMs);
-        $this->traces[$traceId]['error'] = [
+        $this->endSegment($traceId, 'failed', $at, $durationMs, final: true);
+        $this->open[$traceId]['trace']['error'] = [
             'type' => get_class($exception),
             'message' => $exception->getMessage(),
         ];
 
-        // Add final state data if provided (especially useful for error debugging)
         if ($finalStateData !== null && $finalStateData !== []) {
-            $this->traces[$traceId]['final_state'] = $finalStateData;
+            $this->open[$traceId]['trace']['final_state'] = $finalStateData;
         }
 
-        if (! $this->isSampled($traceId)) {
-            if (! $this->shouldAlwaysSampleOnError()) {
-                $this->reset();
+        $this->isSampled($traceId) || $this->shouldAlwaysSampleOnError()
+            ? $this->sendSegment($traceId)
+            : $this->forget($traceId);
+    }
 
-                return;
+    /**
+     * Interrupt a trace (paused for human input). Sends the segment; the resume opens a new one.
+     */
+    public function interruptTrace(string $traceId, string $reason, ?\DateTimeInterface $at = null): void
+    {
+        if (! $this->isEnabled() || ! isset($this->open[$traceId])) {
+            return;
+        }
+
+        $interruptedAt = $this->endSegment($traceId, 'interrupted', $at, 0.0, final: false);
+        $this->open[$traceId]['trace']['interrupt_reason'] = $reason;
+        $this->open[$traceId]['trace']['interrupted_at'] = TraceTime::format($interruptedAt);
+
+        $this->isSampled($traceId) ? $this->sendSegment($traceId) : $this->forget($traceId);
+    }
+
+    /**
+     * Open a segment for a trace started elsewhere: kind "resumed" after an interrupt,
+     * "continued" for queue jobs. A trace that is already open keeps its segment.
+     */
+    public function resumeTrace(
+        string $traceId,
+        ?string $graphName = null,
+        string $kind = 'resumed',
+        ?\DateTimeInterface $at = null
+    ): void {
+        if (! $this->isEnabled() || isset($this->open[$traceId])) {
+            return;
+        }
+
+        $this->openSegment($traceId, $graphName, $kind, $at);
+
+        if ($kind === 'resumed') {
+            $this->open[$traceId]['trace']['resumed_at'] = $this->open[$traceId]['segment']['started_at'];
+        }
+    }
+
+    /**
+     * Send the open segment as it is (not final) and forget it: a queue hand-off, the end of a
+     * batch job, or an execution scope that exits while the trace is still running.
+     */
+    public function flush(string $traceId): void
+    {
+        if (! $this->isEnabled() || ! isset($this->open[$traceId])) {
+            return;
+        }
+
+        $this->isSampled($traceId) ? $this->sendSegment($traceId) : $this->forget($traceId);
+    }
+
+    /**
+     * Clear every open trace. For tests; the lifecycle only ever forgets the trace it sent.
+     */
+    public function reset(): void
+    {
+        $this->open = [];
+        $this->captureDepth = 0;
+    }
+
+    /**
+     * Get the open segments (for testing).
+     *
+     * @return array{traces: array<string, array<string, mixed>>, spans: list<array<string, mixed>>, llm_calls: list<array<string, mixed>>}
+     */
+    public function getBuffer(): array
+    {
+        return [
+            'traces' => array_map(fn (array $open): array => $open['trace'], $this->open),
+            'spans' => array_merge([], ...array_column($this->open, 'spans')),
+            'llm_calls' => array_merge([], ...array_column($this->open, 'llm_calls')),
+        ];
+    }
+
+    /**
+     * @param  'spans'|'llm_calls'  $bucket
+     * @param  array<string, mixed>  $item
+     */
+    private function collect(string $bucket, array $item): void
+    {
+        $traceId = $item['trace_id'] ?? null;
+        if (! $this->isEnabled() || ! is_string($traceId) || ! $this->isSampled($traceId)) {
+            return;
+        }
+
+        $this->whileCapturing(function () use ($traceId, $bucket, $item): void {
+            if (! isset($this->open[$traceId])) {
+                // Data for a trace with no open segment (for example after its segment was sent)
+                // starts a continued segment, so nothing is dropped.
+                if ((bool) config('agenticgraph.logging.enabled', true)) {
+                    Log::debug('AgenticGraph tracing: data for a trace with no open segment', ['trace_id' => $traceId]);
+                }
+                $this->openSegment($traceId, null, 'continued', null);
+            }
+
+            $this->open[$traceId][$bucket][] = $item;
+        });
+    }
+
+    private function openSegment(string $traceId, ?string $graphName, string $kind, ?\DateTimeInterface $at): void
+    {
+        $start = $at ? \DateTimeImmutable::createFromInterface($at) : TraceTime::now();
+        $trace = ['id' => $traceId];
+        if ($graphName !== null) {
+            $trace['graph_name'] = $graphName;
+        }
+
+        $this->open[$traceId] = [
+            'trace' => $trace + [
+                'status' => 'running',
+                'sampled' => $this->isSampled($traceId),
+                'resource' => [
+                    'service.name' => (string) config('agenticgraph.tracing.service.name', 'agenticgraph'),
+                    'service.version' => (string) config('agenticgraph.tracing.service.version', 'unknown'),
+                    'deployment.environment' => (string) config('agenticgraph.tracing.environment', 'local'),
+                ],
+                'instrumentation_scope' => (string) config('agenticgraph.tracing.instrumentation_scope', 'agenticgraph'),
+            ],
+            'segment' => [
+                'id' => 'seg_'.bin2hex(random_bytes(8)),
+                'kind' => $kind,
+                'final' => false,
+                'started_at' => TraceTime::format($start),
+            ],
+            'start' => $start,
+            'spans' => [],
+            'llm_calls' => [],
+        ];
+    }
+
+    /**
+     * Close the open segment at one instant (spec H-2): $at when the caller has it (the same
+     * value as the root span end), otherwise start + measured duration, otherwise now.
+     */
+    private function endSegment(string $traceId, string $status, ?\DateTimeInterface $at, float $durationMs, bool $final): \DateTimeImmutable
+    {
+        $start = $this->open[$traceId]['start'];
+        [$endedAt, $windowMs] = $at
+            ? [\DateTimeImmutable::createFromInterface($at), max(TraceTime::diffMs($start, $at), 0.0)]
+            : TraceTime::traceEnd($start, $durationMs);
+
+        $this->open[$traceId]['trace']['status'] = $status;
+        $this->open[$traceId]['segment']['final'] = $final;
+        $this->open[$traceId]['segment']['ended_at'] = TraceTime::format($endedAt);
+
+        if ($final) {
+            $this->open[$traceId]['trace']['ended_at'] = TraceTime::format($endedAt);
+
+            // A single-segment trace carries its own totals; otherwise the merger computes them.
+            if ($this->open[$traceId]['segment']['kind'] === 'initial') {
+                $this->open[$traceId]['trace']['duration_ms'] = $windowMs;
+                $this->open[$traceId]['trace']['active_ms'] = $windowMs;
             }
         }
 
-        $this->flush($traceId);
+        return $endedAt;
     }
 
-    /**
-     * Interrupt a trace (paused for human input).
-     * Unlike fail/complete, this preserves the trace for continuation.
-     */
-    public function interruptTrace(string $traceId, string $reason): void
+    private function sendSegment(string $traceId): void
     {
-        if (! $this->isEnabled() || ! isset($this->traces[$traceId])) {
-            return;
-        }
+        $open = $this->open[$traceId];
+        $this->forget($traceId);
+        $open['segment']['ended_at'] ??= TraceTime::format(TraceTime::now());
 
-        $this->traces[$traceId]['status'] = 'interrupted';
-        $this->traces[$traceId]['interrupt_reason'] = $reason;
-        $interruptedAt = $this->markTraceEnded($traceId, 0.0);
-        $this->traces[$traceId]['interrupted_at'] = TraceTime::format($interruptedAt);
+        $payload = $this->whileCapturing(
+            fn (): array => $this->buildPayload($open['trace'], $open['segment'], $open['spans'], $open['llm_calls'])
+        );
 
-        if (! $this->isSampled($traceId)) {
-            $this->reset();
-
-            return;
-        }
-
-        // Flush current progress so it's not lost during the interrupt
-        $this->flush($traceId, persistForResume: true);
-    }
-
-    /**
-     * Resume a previously interrupted trace.
-     * Rehydrates trace state for continuation.
-     */
-    public function resumeTrace(string $traceId): void
-    {
-        if (! $this->isEnabled()) {
-            return;
-        }
-
-        if (! isset($this->traces[$traceId])) {
-            $this->restoreInterruptedBuffer($traceId);
-        }
-
-        if (! isset($this->traces[$traceId])) {
-            return;
-        }
-
-        $this->traces[$traceId]['status'] = 'running';
-        $this->traces[$traceId]['resumed_at'] = TraceTime::format(TraceTime::now());
-        unset($this->traces[$traceId]['interrupt_reason'], $this->traces[$traceId]['interrupted_at']);
-        unset($this->flushedTraceIds[$traceId]);
-    }
-
-    /**
-     * Build the envelope for one trace and send it.
-     */
-    public function flush(string $traceId, bool $persistForResume = false): void
-    {
-        if (! $this->isEnabled() || empty($this->traces[$traceId])) {
-            $this->reset();
-
-            return;
-        }
-
-        if (isset($this->flushedTraceIds[$traceId])) {
-            return;
-        }
-
-        $this->flushedTraceIds[$traceId] = true;
-
-        $payload = $this->whileCapturing(function () use ($traceId): array {
-            $localSpans = array_values(array_filter(
-                $this->spans,
-                fn ($s) => ($s['trace_id'] ?? '') === $traceId
-            ));
-            $localCalls = array_values(array_filter(
-                $this->llmCalls,
-                fn ($c) => ($c['trace_id'] ?? '') === $traceId
-            ));
-
-            return $this->payloadBuilder->build($this->traces[$traceId], $localSpans, $localCalls);
-        });
-
-        $requestBound = app()->bound('request');
-        $isHttpContext = $requestBound && (! app()->runningInConsole() || app()->runningUnitTests());
-
-        if ($isHttpContext) {
-            // In HTTP context, dispatch after response to avoid blocking
+        if (app()->bound('request') && ! app()->runningInConsole()) {
+            // In HTTP context, send after the response to avoid blocking
             dispatch(function () use ($payload): void {
                 $this->whileCapturing(function () use ($payload): void {
                     $this->send($payload);
                 });
             })->afterResponse();
-        } else {
-            // In queue/console context, execute synchronously
-            $this->whileCapturing(function () use ($payload): void {
-                $this->send($payload);
-            });
-        }
 
-        if ($persistForResume) {
-            $this->persistInterruptedBuffer($traceId);
-        } else {
-            $this->forgetInterruptedBuffer($traceId);
-        }
-
-        $this->reset();
-    }
-
-    private function bufferCacheKey(string $traceId): string
-    {
-        $version = (string) config('agenticgraph.cache.version', 'v1');
-
-        return "agenticgraph:trace_buffer:{$version}:{$traceId}";
-    }
-
-    private function persistInterruptedBuffer(string $traceId): void
-    {
-        if (! isset($this->traces[$traceId])) {
             return;
         }
 
-        $payload = [
-            'trace' => $this->traces[$traceId],
-            'spans' => array_values(array_filter(
-                $this->spans,
-                fn (array $span): bool => ($span['trace_id'] ?? '') === $traceId
-            )),
-            'llm_calls' => array_values(array_filter(
-                $this->llmCalls,
-                fn (array $call): bool => ($call['trace_id'] ?? '') === $traceId
-            )),
-            'trace_start' => isset($this->traceStarts[$traceId])
-                ? TraceTime::format($this->traceStarts[$traceId])
-                : null,
-            'sampled' => $this->sampledTraces[$traceId] ?? false,
-        ];
-
-        $ttl = (int) config('agenticgraph.tracing.buffer.ttl_seconds', 3600);
-        $this->bufferCache()->put($this->bufferCacheKey($traceId), $payload, $ttl);
+        // In queue/console context, send synchronously
+        $this->whileCapturing(function () use ($payload): void {
+            $this->send($payload);
+        });
     }
 
-    private function restoreInterruptedBuffer(string $traceId): void
+    private function forget(string $traceId): void
     {
-        $payload = $this->bufferCache()->get($this->bufferCacheKey($traceId));
-        if (! is_array($payload) || ! is_array($payload['trace'] ?? null)) {
-            return;
-        }
-
-        $this->traces[$traceId] = $payload['trace'];
-
-        foreach ($payload['spans'] ?? [] as $span) {
-            if (is_array($span)) {
-                $this->spans[] = $span;
-            }
-        }
-
-        foreach ($payload['llm_calls'] ?? [] as $call) {
-            if (is_array($call)) {
-                $this->llmCalls[] = $call;
-            }
-        }
-
-        if (is_string($payload['trace_start'] ?? null) && $payload['trace_start'] !== '') {
-            $this->traceStarts[$traceId] = Carbon::parse($payload['trace_start']);
-        }
-
-        $this->sampledTraces[$traceId] = (bool) ($payload['sampled'] ?? true);
-    }
-
-    private function forgetInterruptedBuffer(string $traceId): void
-    {
-        $this->bufferCache()->forget($this->bufferCacheKey($traceId));
-    }
-
-    private function bufferCache(): Repository
-    {
-        return Cache::store(config('agenticgraph.tracing.buffer.store', null));
-    }
-
-    private function markTraceEnded(string $traceId, float $durationMs): \DateTimeImmutable
-    {
-        [$endedAt, $durationMs] = TraceTime::traceEnd($this->traceStarts[$traceId] ?? null, $durationMs);
-
-        $this->traces[$traceId]['ended_at'] = TraceTime::format($endedAt);
-        $this->traces[$traceId]['duration_ms'] = $durationMs;
-
-        // active_ms sums the segments (start or resume, to interrupt or end), so human wait is
-        // excluded. The running total rides in the trace buffer across an interrupt.
-        $segmentStart = TraceTime::parse($this->traces[$traceId]['resumed_at'] ?? null)
-            ?? $this->traceStarts[$traceId]
-            ?? null;
-        $segmentMs = $segmentStart ? max(TraceTime::diffMs($segmentStart, $endedAt), 0.0) : $durationMs;
-        $this->traces[$traceId]['active_ms'] = (float) ($this->traces[$traceId]['active_ms'] ?? 0.0) + $segmentMs;
-
-        return $endedAt;
+        unset($this->open[$traceId]);
     }
 
     /**
-     * Reset the buffer.
+     * Deterministic per trace id, so every process that sends a segment of the trace agrees.
      */
-    public function reset(): void
-    {
-        $this->traces = [];
-        $this->spans = [];
-        $this->llmCalls = [];
-        $this->sampledTraces = [];
-        $this->traceStarts = [];
-        $this->flushedTraceIds = [];
-        $this->captureDepth = 0;
-    }
-
-    /**
-     * Get the current buffer (for testing).
-     *
-     * @return array<string, mixed>
-     */
-    public function getBuffer(): array
-    {
-        return [
-            'traces' => $this->traces,
-            'spans' => $this->spans,
-            'llm_calls' => $this->llmCalls,
-        ];
-    }
-
-    private function shouldSampleTrace(): bool
+    private function isSampled(string $traceId): bool
     {
         $rate = (float) config('agenticgraph.tracing.sampling.rate', 1.0);
         if ($rate >= 1.0) {
             return true;
         }
-        if ($rate <= 0.0) {
+        if ($rate <= 0.0 || $traceId === '') {
             return false;
         }
 
-        return mt_rand() / mt_getrandmax() < $rate;
-    }
-
-    private function isSampled(?string $traceId): bool
-    {
-        if (! $traceId) {
-            return false;
-        }
-
-        return $this->sampledTraces[$traceId] ?? true;
+        return crc32($traceId) / 0xFFFFFFFF < $rate;
     }
 
     private function shouldAlwaysSampleOnError(): bool

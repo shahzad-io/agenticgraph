@@ -13,6 +13,7 @@ use Illuminate\Foundation\Bus\PendingDispatch;
 use Psr\Log\LoggerInterface;
 use Shahzad\AgenticGraph\Contracts\ParallelExecutorInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Events\GraphExecutionFailed;
 use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
 use Shahzad\AgenticGraph\Events\NodeExecutionStarted;
 use Shahzad\AgenticGraph\Graph\Graph;
@@ -28,6 +29,7 @@ use Shahzad\AgenticGraph\Streaming\StreamContext;
 use Shahzad\AgenticGraph\Streaming\StreamLifecycleEventEmitter;
 use Shahzad\AgenticGraph\Streaming\StreamLifecycleEventTypes;
 use Shahzad\AgenticGraph\Streaming\StreamNodeCompletePayloadBuilder;
+use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 use Shahzad\AgenticGraph\Tracing\TraceTime;
 
@@ -239,8 +241,8 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
                     $rootSpanId
                 );
             },
-            'catch' => static function (Batch $batch, \Throwable $e) use ($executionId): void {
-                app(ParallelExecutionCoordinator::class)->handleBatchFailure($batch, $executionId, $e);
+            'catch' => static function (Batch $batch, \Throwable $e) use ($graphName, $executionId, $rootSpanId): void {
+                app(ParallelExecutionCoordinator::class)->handleBatchFailure($batch, $executionId, $e, $graphName, $rootSpanId);
             },
             'finally' => static function (Batch $batch) use ($executionId, $parallelNodes): void {
                 app(ParallelExecutionCoordinator::class)->cleanupBatchResults($executionId, $parallelNodes);
@@ -350,12 +352,33 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
             ->onQueue(config('agenticgraph.execution.queue_name'));
     }
 
-    public function handleBatchFailure(Batch $batch, string $executionId, \Throwable $e): void
-    {
+    public function handleBatchFailure(
+        Batch $batch,
+        string $executionId,
+        \Throwable $e,
+        ?string $graphName = null,
+        ?string $rootSpanId = null,
+    ): void {
         $this->repo->failed(
             $executionId,
             "Batch execution failed: {$e->getMessage()}"
         );
+
+        // Close the trace (spec I-4): the failed segment carries the root span and the error.
+        if ($graphName !== null) {
+            if ($this->container->bound(TracerExporter::class)) {
+                $this->container->make(TracerExporter::class)->resumeTrace($executionId, $graphName, 'continued');
+            }
+            $inputData = $this->cache->get($this->batchInputCacheKey($executionId));
+            $this->events->dispatch(new GraphExecutionFailed(
+                $executionId,
+                $graphName,
+                is_array($inputData) ? State::fromArray($inputData) : new State,
+                $e,
+                0,
+                $rootSpanId
+            ));
+        }
 
         if ((bool) config('agenticgraph.logging.enabled', true)) {
             $this->logger->error('Batch execution failed', [

@@ -83,7 +83,7 @@ it('completes trace with correct status', function () {
     expect($buffer['traces']['exec_789']['status'])->toBe('running');
 });
 
-it('persists and restores interrupted trace buffers across resume', function () {
+it('sends each segment with only its own spans across interrupt and resume', function () {
     config()->set('agenticgraph.tracing.enabled', true);
     config()->set('agenticgraph.tracing.api_key', 'pk_test_xxx');
     config()->set('agenticgraph.tracing.endpoint', 'https://api.test.io');
@@ -105,12 +105,11 @@ it('persists and restores interrupted trace buffers across resume', function () 
 
     expect($exporter->getBuffer()['traces'])->toBeEmpty();
 
-    $exporter->resumeTrace($traceId);
+    $exporter->resumeTrace($traceId, 'refund');
 
     $buffer = $exporter->getBuffer();
     expect($buffer['traces'][$traceId]['status'] ?? null)->toBe('running')
-        ->and($buffer['spans'])->toHaveCount(1)
-        ->and($buffer['spans'][0]['id'])->toBe('span_before');
+        ->and($buffer['spans'])->toBe([]);
 
     $exporter->addSpan([
         'id' => 'span_after',
@@ -121,6 +120,15 @@ it('persists and restores interrupted trace buffers across resume', function () 
 
     $exporter->completeTrace($traceId, ['final_decision'], 1500.0);
 
-    $buffer = $exporter->getBuffer();
-    expect($buffer['traces'])->toBeEmpty();
+    expect($exporter->getBuffer()['traces'])->toBeEmpty();
+
+    $sent = Http::recorded()->map(fn (array $pair): array => $pair[0]->data())->values()->all();
+    expect($sent)->toHaveCount(2)
+        ->and($sent[0]['segment']['kind'])->toBe('initial')
+        ->and($sent[0]['segment']['final'])->toBeFalse()
+        ->and(array_column($sent[0]['spans'], 'id'))->toBe(['span_before'])
+        ->and($sent[1]['segment']['kind'])->toBe('resumed')
+        ->and($sent[1]['segment']['final'])->toBeTrue()
+        ->and($sent[1]['trace']['status'])->toBe('completed')
+        ->and(array_column($sent[1]['spans'], 'id'))->toBe(['span_after']);
 });

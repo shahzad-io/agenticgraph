@@ -18,6 +18,7 @@ use Shahzad\AgenticGraph\Events\NodeExecutionStarted;
 use Shahzad\AgenticGraph\Execution\NodeMiddlewarePipeline;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\State\State;
+use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\ExecutionClock;
 use Shahzad\AgenticGraph\Tracing\Instrumentation\HttpClientInstrumentation;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
@@ -74,6 +75,12 @@ class ExecuteNodeJob implements ShouldQueue
         // Capture precise start time when job executes (after unserialization)
         $attemptStart = microtime(true);
         $startedAt = TraceTime::fromMicrotime($attemptStart);
+
+        // Each job sends its spans as its own segment of the parent trace.
+        $exporter = app()->bound(TracerExporter::class) ? app(TracerExporter::class) : null;
+        if ($exporter?->isEnabled()) {
+            $exporter->resumeTrace($this->executionId, $this->graphName, 'continued', $startedAt);
+        }
 
         Log::debug('ExecuteNodeJob started', [
             'execution_id' => $this->executionId,
@@ -140,6 +147,9 @@ class ExecuteNodeJob implements ShouldQueue
             throw $e;
         } finally {
             $traceContext->endSpan();
+            if ($exporter?->isEnabled()) {
+                $exporter->flush($this->executionId);
+            }
             if (app()->bound(HttpClientInstrumentation::class)) {
                 app(HttpClientInstrumentation::class)->cleanupExecution($this->executionId);
             }

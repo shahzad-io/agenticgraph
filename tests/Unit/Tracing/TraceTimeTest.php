@@ -2,7 +2,6 @@
 
 declare(strict_types=1);
 
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
 use Shahzad\AgenticGraph\Events\TokensUsed;
@@ -157,32 +156,34 @@ it('keeps a measured trace duration and does not recompute it from span times', 
         ->and($trace['ended_at'])->toBe('2026-06-27T10:00:03.100000+00:00');
 });
 
-it('sends interrupt time and duration and restores the trace start with microseconds', function () {
-    config(['agenticgraph.tracing.buffer.store' => 'trace_buffer']);
-    config(['cache.stores.trace_buffer' => ['driver' => 'array', 'serialize' => false]]);
+it('sends the interrupt as a segment ending at interrupted_at, and the resume as a new segment', function () {
     $exporter = capturingPulseExporter();
     $start = microtime(true) - 0.5;
     $exporter->startTrace('exec_pause', 'graph', [], TraceTime::fromMicrotime($start));
+    $interruptedAt = TraceTime::now();
 
-    $exporter->interruptTrace('exec_pause', 'approval');
+    $exporter->interruptTrace('exec_pause', 'approval', $interruptedAt);
 
-    $trace = $exporter->sent[0]['trace'];
-    $cacheKey = 'agenticgraph:trace_buffer:'.config('agenticgraph.cache.version', 'v1').':exec_pause';
+    $first = $exporter->sent[0];
+    expect($first['trace']['interrupted_at'])->toBe(TraceTime::format($interruptedAt))
+        ->and($first['segment']['ended_at'])->toBe($first['trace']['interrupted_at'])
+        ->and($first['segment']['final'])->toBeFalse()
+        ->and($first['trace'])->not->toHaveKey('ended_at')
+        ->and($exporter->getBuffer()['traces'])->toBe([]);
 
-    expect($trace['interrupted_at'])->toMatch(TRACE_TIME_PATTERN)
-        ->and($trace['ended_at'])->toBe($trace['interrupted_at'])
-        ->and($trace['duration_ms'])->toBeGreaterThanOrEqual(500.0)
-        ->and(Cache::store('trace_buffer')->has($cacheKey))->toBeTrue()
-        ->and(Cache::store()->has($cacheKey))->toBeFalse();
-
+    // Another process: nothing is restored, the resume opens its own segment.
     $resumed = new CapturingPulseExporter;
-    $resumed->resumeTrace('exec_pause');
+    $resumedAt = TraceTime::now();
+    $resumed->resumeTrace('exec_pause', 'graph', 'resumed', $resumedAt);
 
-    expect(TraceTime::format($resumed->getTraceStartTime('exec_pause')))->toBe(TraceTime::format($start));
+    expect(TraceTime::format($resumed->getTraceStartTime('exec_pause')))->toBe(TraceTime::format($resumedAt));
 
     $resumed->completeTrace('exec_pause', [], 0.0);
 
-    expect($resumed->sent[0]['trace']['started_at'])->toBe(TraceTime::format($start))
-        ->and($resumed->sent[0]['trace']['duration_ms'])->toBeGreaterThan($trace['duration_ms'])
-        ->and(Cache::store('trace_buffer')->has($cacheKey))->toBeFalse();
+    $last = $resumed->sent[0];
+    expect($last['segment']['kind'])->toBe('resumed')
+        ->and($last['segment']['final'])->toBeTrue()
+        ->and($last['segment']['started_at'])->toBe(TraceTime::format($resumedAt))
+        ->and($last['trace'])->not->toHaveKey('started_at')
+        ->and($last['trace']['ended_at'])->toBe($last['segment']['ended_at']);
 });

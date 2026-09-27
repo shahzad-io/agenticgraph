@@ -52,6 +52,15 @@ it('resolves null exporter when configured', function () {
         ->and($exporter->isEnabled())->toBeTrue();
 });
 
+it('resolves null exporter when the env value null reaches config as PHP null', function () {
+    config([
+        'agenticgraph.tracing.enabled' => true,
+        'agenticgraph.tracing.exporter' => null,
+    ]);
+
+    expect(TracerExporterFactory::make(app()))->toBeInstanceOf(NullExporter::class);
+});
+
 it('resolves otlp exporter when configured with endpoint', function () {
     config([
         'agenticgraph.tracing.enabled' => true,

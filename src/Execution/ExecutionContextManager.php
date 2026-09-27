@@ -163,10 +163,23 @@ final class ExecutionContextManager implements ExecutionScopeInterface
      * Tear down execution scope bindings. Trace completion is handled by
      * {@see TracingListener::onGraphCompleted()} so queued span listeners can
      * finish before flush (see T5 queue-ordering fix). Interrupt paths use
-     * {@see TracerExporter::interruptTrace()} instead.
+     * {@see TracerExporter::interruptTrace()} instead. A trace still open here
+     * (a queue hand-off) is sent as a non-final segment; otherwise flush is a no-op.
      */
     public function exit(ExecutionScope $scope, ?StateContract $finalState = null): void
     {
+        try {
+            if (($tracerExporter = $this->tracerExporter()) && $tracerExporter->isEnabled()) {
+                $tracerExporter->flush($scope->executionId);
+            }
+        } catch (\Throwable $cleanupException) {
+            $this->logger->warning('Execution cleanup failed', [
+                'execution_id' => $scope->executionId,
+                'step' => 'trace_flush',
+                'error' => $cleanupException->getMessage(),
+            ]);
+        }
+
         try {
             if ($this->httpClientInstrumentation) {
                 $this->httpClientInstrumentation->cleanupExecution($scope->executionId);

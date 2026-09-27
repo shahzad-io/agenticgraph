@@ -53,19 +53,21 @@ final class CapturingTracerExporter implements TracerExporter
         string $traceId,
         array $finalStateKeys = [],
         float $durationMs = 0,
-        ?array $finalStateData = null
+        ?array $finalStateData = null,
+        ?DateTimeInterface $at = null
     ): void {}
 
     public function failTrace(
         string $traceId,
         Throwable $exception,
         float $durationMs = 0,
-        ?array $finalStateData = null
+        ?array $finalStateData = null,
+        ?DateTimeInterface $at = null
     ): void {}
 
-    public function interruptTrace(string $traceId, string $reason): void {}
+    public function interruptTrace(string $traceId, string $reason, ?DateTimeInterface $at = null): void {}
 
-    public function resumeTrace(string $traceId): void {}
+    public function resumeTrace(string $traceId, ?string $graphName = null, string $kind = 'resumed', ?DateTimeInterface $at = null): void {}
 
     public function flush(string $traceId): void {}
 }

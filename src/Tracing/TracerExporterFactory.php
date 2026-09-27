@@ -16,7 +16,8 @@ final class TracerExporterFactory
 {
     public static function make(Container $container): TracerExporter
     {
-        $driver = (string) config('agenticgraph.tracing.exporter', 'auto');
+        // env('X') turns the string "null" into PHP null, so a null value means the null exporter.
+        $driver = (string) (config('agenticgraph.tracing.exporter', 'auto') ?? 'null');
 
         if ($driver === 'auto') {
             $driver = filled(config('agenticgraph.tracing.api_key', null))

@@ -22,18 +22,20 @@ final class TracePayloadBuilder
      * @param  array<string, mixed>  $trace
      * @param  array<int, array<string, mixed>>  $spans
      * @param  array<int, array<string, mixed>>  $llmCalls
+     * @param  array<string, mixed>|null  $segment
      * @return array<string, mixed>
      */
-    public function build(array $trace, array $spans, array $llmCalls): array
+    public function build(array $trace, array $spans, array $llmCalls, ?array $segment = null): array
     {
         $spans = $this->normalizeSpans($this->mergeById($spans));
 
-        return $this->preparePayload([
+        return $this->preparePayload(array_filter([
             'schema_version' => self::SCHEMA_VERSION,
             'trace' => $this->normalizeTraceWindow($trace, $spans),
+            'segment' => $segment,
             'spans' => $spans,
             'llm_calls' => $this->mergeById($llmCalls),
-        ]);
+        ], fn (mixed $value): bool => $value !== null));
     }
 
     /**
@@ -72,14 +74,12 @@ final class TracePayloadBuilder
      */
     private function normalizeTraceWindow(array $trace, array $spans): array
     {
-        $traceStart = TraceTime::parse($trace['started_at'] ?? null);
-        if (! $traceStart) {
-            return $trace;
-        }
-
         // duration_ms comes from raw microtime (completeTrace, failTrace, interruptTrace) and is
         // never recomputed here. Only extend ended_at if spans fall outside the existing window.
         $existingEnd = TraceTime::parse($trace['ended_at'] ?? null);
+        if (! $existingEnd) {
+            return $trace;
+        }
 
         // Find the max span end time
         $maxSpanEnd = null;
@@ -90,12 +90,10 @@ final class TracePayloadBuilder
             }
         }
 
-        // Only update trace end if spans extend beyond the existing trace window
-        // OR if no trace end is set yet
-        if ($maxSpanEnd && $maxSpanEnd > $traceStart) {
-            if (! $existingEnd || $maxSpanEnd > $existingEnd) {
-                $trace['ended_at'] = TraceTime::format($maxSpanEnd);
-            }
+        // Only a trace that has ended gets its end extended; an open (non-final) segment has no
+        // trace end, and inventing one would make the trace look finished.
+        if ($maxSpanEnd && $maxSpanEnd > $existingEnd) {
+            $trace['ended_at'] = TraceTime::format($maxSpanEnd);
         }
 
         return $trace;
@@ -396,9 +394,10 @@ final class TracePayloadBuilder
         $trace = $payload['trace'] ?? [];
         unset($trace['initial_state'], $trace['final_state']);
 
-        return [
+        return array_filter([
             'schema_version' => self::SCHEMA_VERSION,
             'trace' => $trace,
+            'segment' => $payload['segment'] ?? null,
             'spans' => [],
             'llm_calls' => [],
             '_meta' => [
@@ -412,6 +411,6 @@ final class TracePayloadBuilder
                 ],
                 'truncated_at' => TraceTime::format(TraceTime::now()),
             ],
-        ];
+        ], fn (mixed $value): bool => $value !== null);
     }
 }
