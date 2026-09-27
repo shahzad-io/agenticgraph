@@ -105,23 +105,8 @@ final class Tracer
         array $attributes,
         ?array $error,
     ): void {
-        $clock = ExecutionClock::tryGet();
-        $startedAt = $clock
-            ? $clock->spanStartedAt($startMicrotime)
-            : (\DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $startMicrotime)) ?: new \DateTimeImmutable);
-
-        if ($clock) {
-            $endedAt = $clock->spanEndedAt($startMicrotime, $durationMs);
-        } else {
-            $durationSeconds = $durationMs / 1000;
-            $wholeSeconds = intval($durationSeconds);
-            $fractionalSeconds = $durationSeconds - $wholeSeconds;
-            $interval = new \DateInterval("PT{$wholeSeconds}S");
-            if ($fractionalSeconds > 0) {
-                $interval->f = $fractionalSeconds;
-            }
-            $endedAt = $startedAt->add($interval);
-        }
+        $startedAt = TraceTime::fromMicrotime($startMicrotime);
+        $endedAt = TraceTime::addMs($startedAt, $durationMs);
 
         $span = [
             'id' => $spanId,
@@ -133,8 +118,8 @@ final class Tracer
             'status' => $status,
             'span_kind' => 'internal',
             'status_code' => $statusCode,
-            'started_at' => $startedAt->format(DATE_ATOM),
-            'ended_at' => $endedAt->format(DATE_ATOM),
+            'started_at' => TraceTime::format($startedAt),
+            'ended_at' => TraceTime::format($endedAt),
             'duration_ms' => $durationMs,
         ];
 

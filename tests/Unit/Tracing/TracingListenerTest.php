@@ -12,9 +12,9 @@ it('calculates duration correctly mixed with queued delays', function (): void {
     $exporter = new MockPulseExporter;
     $listener = new TracingListener($exporter);
 
-    // Simulate event created 1 hour ago
-    $startedAt = new \DateTimeImmutable('-1 hour');
-    $duration = 5.0; // 5 seconds
+    // Simulate event created well before the listener runs
+    $startedAt = new \DateTimeImmutable('2024-01-01 09:00:00.250000', new \DateTimeZone('UTC'));
+    $duration = 5.000123; // seconds
 
     $event = new NodeExecutionCompleted(
         executionId: 'exec_123',
@@ -36,11 +36,10 @@ it('calculates duration correctly mixed with queued delays', function (): void {
     expect($exporter->spans)->toHaveCount(1);
     $span = $exporter->spans[0];
 
-    expect($span['started_at'])->toBe($startedAt->format(DATE_ATOM));
+    expect($span['started_at'])->toBe('2024-01-01T09:00:00.250000+00:00');
 
-    // End time should be start + duration
-    $expectedEnd = $startedAt->modify('+5 seconds')->format(DATE_ATOM);
-    expect($span['ended_at'])->toBe($expectedEnd);
+    // End time should be start + duration, to the microsecond
+    expect($span['ended_at'])->toBe('2024-01-01T09:00:05.250123+00:00');
 
     // Check parent ID
     expect($span['parent_id'])->toBe('parent_1');
@@ -84,12 +83,9 @@ it('uses token event timestamps and ids', function () {
     $exporter = new MockPulseExporter;
     $listener = new TracingListener($exporter);
 
-    $startedAt = new \DateTimeImmutable('2024-01-01 10:00:00');
+    $startedAt = new \DateTimeImmutable('2024-01-01 10:00:00.100000', new \DateTimeZone('UTC'));
     $durationMs = 1500.0;
-    // Use DateInterval to properly add 1.5 seconds (modify() has a bug with fractional seconds)
-    $interval = new \DateInterval('PT1S');
-    $interval->f = 0.5;
-    $endedAt = $startedAt->add($interval);
+    $endedAt = new \DateTimeImmutable('2024-01-01 10:00:01.600000', new \DateTimeZone('UTC'));
 
     $event = new TokensUsed(
         node: 'node-a',
@@ -114,15 +110,15 @@ it('uses token event timestamps and ids', function () {
     expect($span['trace_id'])->toBe('exec_123');
     expect($span['parent_id'])->toBe('parent_1');
     expect($span['id'])->toBe('span_1');
-    expect($span['started_at'])->toBe($startedAt->format(DATE_ATOM));
-    expect($span['ended_at'])->toBe($endedAt->format(DATE_ATOM));
+    expect($span['started_at'])->toBe('2024-01-01T10:00:00.100000+00:00');
+    expect($span['ended_at'])->toBe('2024-01-01T10:00:01.600000+00:00');
 });
 
 it('starts trace with the event timestamp', function () {
     $exporter = new MockPulseExporter;
     $listener = new TracingListener($exporter);
 
-    $startedAt = new \DateTimeImmutable('2024-02-01 08:30:00');
+    $startedAt = new \DateTimeImmutable('2024-02-01 08:30:00.654321', new \DateTimeZone('UTC'));
     $event = new GraphExecutionStarted(
         executionId: 'exec_999',
         graphName: 'graph-a',
@@ -134,5 +130,5 @@ it('starts trace with the event timestamp', function () {
     $listener->onGraphStarted($event);
 
     expect($exporter->traces)->toHaveKey('exec_999');
-    expect($exporter->traces['exec_999']['started_at'])->toBe($startedAt->format(DATE_ATOM));
+    expect($exporter->traces['exec_999']['started_at'])->toBe('2024-02-01T08:30:00.654321+00:00');
 });

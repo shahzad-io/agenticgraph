@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph\Tracing;
 
+use Illuminate\Contracts\Cache\Repository;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
@@ -62,25 +63,15 @@ class PulseExporter implements TracerExporter
      */
     protected function normalizeSpanTimestamps(array $span): array
     {
-        $durationMs = array_key_exists('duration_ms', $span) ? (float) $span['duration_ms'] : null;
-        if (! $durationMs || $durationMs <= 0) {
-            return $span;
-        }
-
+        $durationMs = max((float) ($span['duration_ms'] ?? 0), 0.0);
         $startedAt = $this->parseDateTime($span['started_at'] ?? null);
         $endedAt = $this->parseDateTime($span['ended_at'] ?? null);
 
-        if ($startedAt) {
-            $expectedEndedAt = $this->addDuration($startedAt, $durationMs);
-            $span['ended_at'] = $expectedEndedAt->format(DATE_ATOM);
-
-            return $span;
-        }
-
-        if ($endedAt) {
-            $expectedStartedAt = $this->addDuration($endedAt, -$durationMs);
-            $span['started_at'] = $expectedStartedAt->format(DATE_ATOM);
-            $span['ended_at'] = $endedAt->format(DATE_ATOM);
+        // Timestamps are formatted once at the source; only fill a missing side.
+        if ($startedAt && ! $endedAt) {
+            $span['ended_at'] = TraceTime::format(TraceTime::addMs($startedAt, $durationMs));
+        } elseif ($endedAt && ! $startedAt) {
+            $span['started_at'] = TraceTime::format(TraceTime::addMs($endedAt, -$durationMs));
         }
 
         return $span;
@@ -107,9 +98,8 @@ class PulseExporter implements TracerExporter
             return $trace;
         }
 
-        // Preserve the original trace duration if already set (e.g., by completeTrace)
-        // Only extend the trace window if spans fall outside the existing window
-        $existingDuration = $trace['duration_ms'] ?? null;
+        // duration_ms comes from raw microtime (completeTrace, failTrace, interruptTrace) and is
+        // never recomputed here. Only extend ended_at if spans fall outside the existing window.
         $existingEnd = $this->parseDateTime($trace['ended_at'] ?? null);
 
         // Find the max span end time
@@ -125,10 +115,8 @@ class PulseExporter implements TracerExporter
         // OR if no trace end is set yet
         if ($maxSpanEnd && $maxSpanEnd > $traceStart) {
             if (! $existingEnd || $maxSpanEnd > $existingEnd) {
-                $trace['ended_at'] = $maxSpanEnd->format(DATE_ATOM);
-                $trace['duration_ms'] = ($this->toFloatSeconds($maxSpanEnd) - $this->toFloatSeconds($traceStart)) * 1000;
+                $trace['ended_at'] = TraceTime::format($maxSpanEnd);
             }
-            // Otherwise, keep the existing trace end and duration (don't overwrite with span times)
         }
 
         return $trace;
@@ -150,7 +138,7 @@ class PulseExporter implements TracerExporter
         if (! $traceEnd) {
             $durationMs = array_key_exists('duration_ms', $trace) ? (float) $trace['duration_ms'] : null;
             if ($durationMs && $durationMs > 0) {
-                $traceEnd = $this->addDuration($traceStart, $durationMs);
+                $traceEnd = TraceTime::addMs($traceStart, $durationMs);
             }
         }
 
@@ -243,7 +231,7 @@ class PulseExporter implements TracerExporter
             'id' => $traceId,
             'graph_name' => $graphName,
             'status' => 'running',
-            'started_at' => $startTime->toIso8601String(),
+            'started_at' => TraceTime::format($startTime),
             'initial_state_keys' => $initialStateKeys,
             'sampled' => $sampled,
             'resource' => [
@@ -326,16 +314,7 @@ class PulseExporter implements TracerExporter
         }
 
         $this->traces[$traceId]['status'] = 'completed';
-        $startedAt = $this->traceStarts[$traceId] ?? null;
-        if ($startedAt) {
-            $this->traces[$traceId]['ended_at'] = $startedAt
-                ->copy()
-                ->addMilliseconds((int) $durationMs)
-                ->toIso8601String();
-        } else {
-            $this->traces[$traceId]['ended_at'] = now()->toIso8601String();
-        }
-        $this->traces[$traceId]['duration_ms'] = $durationMs;
+        $this->markTraceEnded($traceId, $durationMs);
         $this->traces[$traceId]['final_state_keys'] = $finalStateKeys;
 
         // Add final state data if provided
@@ -370,16 +349,7 @@ class PulseExporter implements TracerExporter
         }
 
         $this->traces[$traceId]['status'] = 'failed';
-        $startedAt = $this->traceStarts[$traceId] ?? null;
-        if ($startedAt) {
-            $this->traces[$traceId]['ended_at'] = $startedAt
-                ->copy()
-                ->addMilliseconds((int) $durationMs)
-                ->toIso8601String();
-        } else {
-            $this->traces[$traceId]['ended_at'] = now()->toIso8601String();
-        }
-        $this->traces[$traceId]['duration_ms'] = $durationMs;
+        $this->markTraceEnded($traceId, $durationMs);
         $this->traces[$traceId]['error'] = [
             'type' => get_class($exception),
             'message' => $exception->getMessage(),
@@ -413,7 +383,8 @@ class PulseExporter implements TracerExporter
 
         $this->traces[$traceId]['status'] = 'interrupted';
         $this->traces[$traceId]['interrupt_reason'] = $reason;
-        $this->traces[$traceId]['interrupted_at'] = now()->toIso8601String();
+        $interruptedAt = $this->markTraceEnded($traceId, 0.0);
+        $this->traces[$traceId]['interrupted_at'] = TraceTime::format($interruptedAt);
 
         if (! $this->isSampled($traceId)) {
             $this->reset();
@@ -444,7 +415,7 @@ class PulseExporter implements TracerExporter
         }
 
         $this->traces[$traceId]['status'] = 'running';
-        $this->traces[$traceId]['resumed_at'] = now()->toIso8601String();
+        $this->traces[$traceId]['resumed_at'] = TraceTime::format(TraceTime::now());
         unset($this->traces[$traceId]['interrupt_reason'], $this->traces[$traceId]['interrupted_at']);
         unset($this->flushedTraceIds[$traceId]);
     }
@@ -529,18 +500,18 @@ class PulseExporter implements TracerExporter
                 fn (array $call): bool => ($call['trace_id'] ?? '') === $traceId
             )),
             'trace_start' => isset($this->traceStarts[$traceId])
-                ? $this->traceStarts[$traceId]->toIso8601String()
+                ? TraceTime::format($this->traceStarts[$traceId])
                 : null,
             'sampled' => $this->sampledTraces[$traceId] ?? false,
         ];
 
         $ttl = (int) config('agenticgraph.tracing.buffer.ttl_seconds', 3600);
-        Cache::put($this->bufferCacheKey($traceId), $payload, $ttl);
+        $this->bufferCache()->put($this->bufferCacheKey($traceId), $payload, $ttl);
     }
 
     private function restoreInterruptedBuffer(string $traceId): void
     {
-        $payload = Cache::get($this->bufferCacheKey($traceId));
+        $payload = $this->bufferCache()->get($this->bufferCacheKey($traceId));
         if (! is_array($payload) || ! is_array($payload['trace'] ?? null)) {
             return;
         }
@@ -568,7 +539,22 @@ class PulseExporter implements TracerExporter
 
     private function forgetInterruptedBuffer(string $traceId): void
     {
-        Cache::forget($this->bufferCacheKey($traceId));
+        $this->bufferCache()->forget($this->bufferCacheKey($traceId));
+    }
+
+    private function bufferCache(): Repository
+    {
+        return Cache::store(config('agenticgraph.tracing.buffer.store'));
+    }
+
+    private function markTraceEnded(string $traceId, float $durationMs): \DateTimeImmutable
+    {
+        [$endedAt, $durationMs] = TraceTime::traceEnd($this->traceStarts[$traceId] ?? null, $durationMs);
+
+        $this->traces[$traceId]['ended_at'] = TraceTime::format($endedAt);
+        $this->traces[$traceId]['duration_ms'] = $durationMs;
+
+        return $endedAt;
     }
 
     /**
@@ -932,7 +918,7 @@ class PulseExporter implements TracerExporter
             'truncated' => true,
             'truncation_applied' => array_values(array_unique($applied)),
             'original_size_bytes' => $originalSize,
-            'truncated_at' => now()->toIso8601String(),
+            'truncated_at' => TraceTime::format(TraceTime::now()),
         ];
 
         return $payload;
@@ -954,7 +940,7 @@ class PulseExporter implements TracerExporter
                 'graph_name' => $trace['graph_name'] ?? 'unknown',
                 'status' => 'error',
                 'error_reason' => $reason,
-                'started_at' => $trace['started_at'] ?? now()->toIso8601String(),
+                'started_at' => $trace['started_at'] ?? TraceTime::format(TraceTime::now()),
                 'resource' => $trace['resource'] ?? [],
             ],
             'spans' => [],
@@ -978,28 +964,6 @@ class PulseExporter implements TracerExporter
         } catch (\Throwable $e) {
             return null;
         }
-    }
-
-    private function addDuration(\DateTimeImmutable $startedAt, float $durationMs): \DateTimeImmutable
-    {
-        $durationSeconds = $durationMs / 1000;
-
-        // Use DateInterval instead of modify() to properly handle fractional seconds
-        // PHP's modify() ignores decimal points (e.g., "0.082563" becomes "82563" seconds)
-        $wholeSeconds = intval($durationSeconds);
-        $fractionalSeconds = $durationSeconds - $wholeSeconds;
-
-        $interval = new \DateInterval("PT{$wholeSeconds}S");
-        if ($fractionalSeconds > 0) {
-            $interval->f = $fractionalSeconds;
-        }
-
-        return $startedAt->add($interval);
-    }
-
-    private function toFloatSeconds(\DateTimeImmutable $time): float
-    {
-        return (float) $time->format('U.u');
     }
 
     private function shouldSampleTrace(): bool

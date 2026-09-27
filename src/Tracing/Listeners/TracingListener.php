@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Shahzad\AgenticGraph\Tracing\Listeners;
 
 use Illuminate\Contracts\Container\BindingResolutionException;
+use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Events\GraphExecutionCompleted;
 use Shahzad\AgenticGraph\Events\GraphExecutionFailed;
 use Shahzad\AgenticGraph\Events\GraphExecutionStarted;
@@ -18,6 +19,7 @@ use Shahzad\AgenticGraph\Execution\ExecutionContext;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\ModelPricingCalculator;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
+use Shahzad\AgenticGraph\Tracing\TraceTime;
 
 /**
  * Listens to graph execution events and forwards to the configured TracerExporter.
@@ -47,7 +49,7 @@ class TracingListener
         $this->captureState = config('agenticgraph.tracing.capture.state', 'diff');
         $this->capturePrompts = config('agenticgraph.tracing.capture.prompts', false);
         $this->captureResponses = config('agenticgraph.tracing.capture.responses', false);
-        $this->captureMaxLength = (int) config('agenticgraph.tracing.capture.max_length', 10000);
+        $this->captureMaxLength = (int) config('agenticgraph.tracing.capture.max_length', 2000);
     }
 
     /**
@@ -92,25 +94,9 @@ class TracingListener
         $spanId = $event->spanId ?? uniqid('span_', true);
         $durationMs = $event->duration * 1000;
 
-        $traceStart = $this->exporter->getTraceStartTime($event->executionId);
-        if ($traceStart) {
-            $startedAt = new \DateTimeImmutable($traceStart->toIso8601String());
-        } else {
-            // Use DateInterval subtraction instead of modify() for proper fractional second handling
-            $durationSeconds = $event->duration;
-            $wholeSeconds = intval($durationSeconds);
-            $fractionalSeconds = $durationSeconds - $wholeSeconds;
-
-            $interval = new \DateInterval("PT{$wholeSeconds}S");
-            if ($fractionalSeconds > 0) {
-                $interval->f = $fractionalSeconds;
-            }
-            $interval->invert = 1; // Invert for subtraction
-
-            $startedAt = $event->completedAt->sub($interval);
-        }
+        $traceStartDt = $this->traceStart($event->executionId);
+        $startedAt = $traceStartDt ?? TraceTime::addMs($event->completedAt, -$durationMs);
         $endedAt = $startedAt;
-        $traceStartDt = $traceStart ? new \DateTimeImmutable($traceStart->toIso8601String()) : null;
         $this->calculateSpanTimestamps($startedAt, null, $durationMs, $traceStartDt, $startedAt, $endedAt);
 
         $this->exporter->addSpan([
@@ -123,8 +109,8 @@ class TracingListener
             'status' => 'success',
             'span_kind' => 'internal',
             'status_code' => 'OK',
-            'started_at' => $startedAt->format(DATE_ATOM),
-            'ended_at' => $endedAt->format(DATE_ATOM),
+            'started_at' => TraceTime::format($startedAt),
+            'ended_at' => TraceTime::format($endedAt),
             'duration_ms' => $durationMs,
         ]);
 
@@ -155,10 +141,9 @@ class TracingListener
         $spanId = uniqid('span_', true);
         $durationMs = $event->durationMs;
 
-        $traceStart = $this->exporter->getTraceStartTime($event->executionId);
-        $startedAt = $traceStart ? new \DateTimeImmutable($traceStart->toIso8601String()) : null;
-        $endedAt = $startedAt ?? new \DateTimeImmutable;
-        $traceStartDt = $traceStart ? new \DateTimeImmutable($traceStart->toIso8601String()) : null;
+        $traceStartDt = $this->traceStart($event->executionId);
+        $startedAt = $traceStartDt;
+        $endedAt = $startedAt ?? TraceTime::now();
         $resolvedStartedAt = $endedAt;
         $resolvedEndedAt = $endedAt;
         $this->calculateSpanTimestamps($startedAt, null, $durationMs, $traceStartDt, $resolvedStartedAt, $resolvedEndedAt);
@@ -173,8 +158,8 @@ class TracingListener
             'status' => 'failed',
             'span_kind' => 'internal',
             'status_code' => 'ERROR',
-            'started_at' => $resolvedStartedAt->format(DATE_ATOM),
-            'ended_at' => $resolvedEndedAt->format(DATE_ATOM),
+            'started_at' => TraceTime::format($resolvedStartedAt),
+            'ended_at' => TraceTime::format($resolvedEndedAt),
             'duration_ms' => $durationMs,
             'error' => [
                 'type' => get_class($event->exception),
@@ -210,13 +195,9 @@ class TracingListener
         $outputKeys = array_keys($event->outputState->toArray());
 
         $durationMs = $event->duration * 1000;
-        $traceStart = $this->exporter->getTraceStartTime($event->executionId);
-        $startedAt = $event->startedAt;
-        if (! $startedAt && $traceStart) {
-            $startedAt = new \DateTimeImmutable($traceStart->toIso8601String());
-        }
-        $endedAt = $startedAt ?? new \DateTimeImmutable;
-        $traceStartDt = $traceStart ? new \DateTimeImmutable($traceStart->toIso8601String()) : null;
+        $traceStartDt = $this->traceStart($event->executionId);
+        $startedAt = $event->startedAt ?? $traceStartDt;
+        $endedAt = $startedAt ?? TraceTime::now();
         $resolvedStartedAt = $endedAt;
         $resolvedEndedAt = $endedAt;
         $this->calculateSpanTimestamps($startedAt, null, $durationMs, $traceStartDt, $resolvedStartedAt, $resolvedEndedAt);
@@ -257,8 +238,8 @@ class TracingListener
             'status' => 'success',
             'span_kind' => 'internal',
             'status_code' => 'OK',
-            'started_at' => $resolvedStartedAt->format(DATE_ATOM),
-            'ended_at' => $resolvedEndedAt->format(DATE_ATOM),
+            'started_at' => TraceTime::format($resolvedStartedAt),
+            'ended_at' => TraceTime::format($resolvedEndedAt),
             'duration_ms' => $durationMs,
             'state_diff' => [
                 'added' => array_values(array_diff($outputKeys, $inputKeys)),
@@ -278,10 +259,9 @@ class TracingListener
             return;
         }
 
-        $traceStart = $this->exporter->getTraceStartTime($event->executionId);
+        $traceStartDt = $this->traceStart($event->executionId);
         $startedAt = $event->startedAt;
-        $endedAt = $startedAt ?? new \DateTimeImmutable;
-        $traceStartDt = $traceStart ? new \DateTimeImmutable($traceStart->toIso8601String()) : null;
+        $endedAt = $startedAt ?? TraceTime::now();
         $resolvedStartedAt = $endedAt;
         $resolvedEndedAt = $endedAt;
         $this->calculateSpanTimestamps($startedAt, null, $event->durationMs, $traceStartDt, $resolvedStartedAt, $resolvedEndedAt);
@@ -295,8 +275,8 @@ class TracingListener
             'status' => 'failed',
             'span_kind' => 'internal',
             'status_code' => 'ERROR',
-            'started_at' => $resolvedStartedAt->format(DATE_ATOM),
-            'ended_at' => $resolvedEndedAt->format(DATE_ATOM),
+            'started_at' => TraceTime::format($resolvedStartedAt),
+            'ended_at' => TraceTime::format($resolvedEndedAt),
             'duration_ms' => $event->durationMs,
             'error' => [
                 'type' => get_class($event->exception),
@@ -330,13 +310,11 @@ class TracingListener
 
         $durationMs = $event->durationMs ?? 0.0;
 
-        $traceStart = $executionId ? $this->exporter->getTraceStartTime($executionId) : null;
-        $fallbackStart = $traceStart ? new \DateTimeImmutable($traceStart->toIso8601String()) : null;
+        $traceStartDt = $executionId ? $this->traceStart($executionId) : null;
         $eventStartedAt = $event->startedAt instanceof \DateTimeImmutable ? $event->startedAt : null;
         $eventEndedAt = $event->endedAt instanceof \DateTimeImmutable ? $event->endedAt : null;
-        $startedAt = $eventStartedAt ?? $eventEndedAt ?? $fallbackStart ?? new \DateTimeImmutable;
+        $startedAt = $eventStartedAt ?? $eventEndedAt ?? $traceStartDt ?? TraceTime::now();
         $endedAt = $eventEndedAt ?? $startedAt;
-        $traceStartDt = $traceStart ? new \DateTimeImmutable($traceStart->toIso8601String()) : null;
         $this->calculateSpanTimestamps($eventStartedAt, $eventEndedAt, $durationMs, $traceStartDt, $startedAt, $endedAt);
 
         $parentId = $event->parentSpanId;
@@ -351,8 +329,8 @@ class TracingListener
             'status' => 'success',
             'span_kind' => 'client',
             'status_code' => 'OK',
-            'started_at' => $startedAt->format(DATE_ATOM),
-            'ended_at' => $endedAt->format(DATE_ATOM),
+            'started_at' => TraceTime::format($startedAt),
+            'ended_at' => TraceTime::format($endedAt),
             'duration_ms' => $durationMs,
             'model' => $event->model,
             'prompt_tokens' => $event->promptTokens,
@@ -374,7 +352,7 @@ class TracingListener
             'completion_tokens' => $event->completionTokens,
             'total_tokens' => $event->totalTokens,
             'duration_ms' => $event->durationMs,
-            'created_at' => now()->toIso8601String(),
+            'created_at' => TraceTime::format(TraceTime::now()),
             'cost_usd' => $cost,
         ];
 
@@ -406,10 +384,9 @@ class TracingListener
         }
 
         $durationMs = $event->durationMs ?? 0;
-        $traceStart = $this->exporter->getTraceStartTime($event->executionId);
+        $traceStartDt = $this->traceStart($event->executionId);
         $startedAt = $event->startedAt;
         $endedAt = $startedAt;
-        $traceStartDt = $traceStart ? new \DateTimeImmutable($traceStart->toIso8601String()) : null;
         $this->calculateSpanTimestamps($startedAt, null, $durationMs, $traceStartDt, $startedAt, $endedAt);
         $status = $event->status;
         $statusCode = $status === 'success' ? 'OK' : 'ERROR';
@@ -425,8 +402,8 @@ class TracingListener
             'status' => $status,
             'span_kind' => 'internal',
             'status_code' => $statusCode,
-            'started_at' => $startedAt->format(DATE_ATOM),
-            'ended_at' => $endedAt->format(DATE_ATOM),
+            'started_at' => TraceTime::format($startedAt),
+            'ended_at' => TraceTime::format($endedAt),
             'duration_ms' => $durationMs,
             'tool_call_id' => $event->toolCallId,
             'tool_type' => $event->toolType,
@@ -461,8 +438,8 @@ class TracingListener
             'status' => 'interrupted',
             'span_kind' => 'internal',
             'status_code' => 'PAUSED',
-            'started_at' => $event->interruptedAt->format(DATE_ATOM),
-            'ended_at' => $event->interruptedAt->format(DATE_ATOM),
+            'started_at' => TraceTime::format($event->interruptedAt),
+            'ended_at' => TraceTime::format($event->interruptedAt),
             'duration_ms' => 0, // Instant event
             'interrupt_reason' => $event->reason,
             'checkpoint_id' => $event->checkpointId,
@@ -490,8 +467,8 @@ class TracingListener
             'status' => 'resumed',
             'span_kind' => 'internal',
             'status_code' => 'OK',
-            'started_at' => $event->resumedAt->format(DATE_ATOM),
-            'ended_at' => $event->resumedAt->format(DATE_ATOM),
+            'started_at' => TraceTime::format($event->resumedAt),
+            'ended_at' => TraceTime::format($event->resumedAt),
             'duration_ms' => 0, // Instant event
             'checkpoint_id' => $event->checkpointId,
             'state_snapshot' => array_keys($event->stateSnapshot), // Just keys for size
@@ -612,6 +589,13 @@ class TracingListener
         return substr($text, 0, $maxLength - 15).' [...truncated]';
     }
 
+    private function traceStart(string $executionId): ?\DateTimeImmutable
+    {
+        $traceStart = $this->exporter->getTraceStartTime($executionId);
+
+        return $traceStart ? \DateTimeImmutable::createFromInterface($traceStart) : null;
+    }
+
     private function calculateSpanTimestamps(
         ?\DateTimeImmutable $startedAt,
         ?\DateTimeImmutable $endedAt,
@@ -620,17 +604,20 @@ class TracingListener
         \DateTimeImmutable &$resolvedStartedAt,
         \DateTimeImmutable &$resolvedEndedAt
     ): void {
-        $durationSeconds = max($durationMs / 1000, 0);
+        if ($durationMs < 0) {
+            Log::debug('AgenticGraph tracing: negative span duration clamped to 0', ['duration_ms' => $durationMs]);
+            $durationMs = 0.0;
+        }
 
         if ($startedAt instanceof \DateTimeImmutable) {
             $resolvedStartedAt = $startedAt;
-            $resolvedEndedAt = $this->addSecondsToDateTime($startedAt, $durationSeconds);
+            $resolvedEndedAt = TraceTime::addMs($startedAt, $durationMs);
 
             return;
         }
 
         if ($endedAt instanceof \DateTimeImmutable) {
-            $resolvedStartedAt = $this->addSecondsToDateTime($endedAt, -$durationSeconds);
+            $resolvedStartedAt = TraceTime::addMs($endedAt, -$durationMs);
             $resolvedEndedAt = $endedAt;
 
             return;
@@ -638,28 +625,8 @@ class TracingListener
 
         // Use trace start as the base for calculating timestamps when event timestamps are missing
         // This ensures consistent timestamps even in async/queued scenarios
-        $baseTime = $traceStart ?? new \DateTimeImmutable;
+        $baseTime = $traceStart ?? TraceTime::now();
         $resolvedStartedAt = $baseTime;
-        $resolvedEndedAt = $this->addSecondsToDateTime($baseTime, $durationSeconds);
-    }
-
-    /**
-     * Add seconds to a DateTimeImmutable using DateInterval to properly handle fractional seconds.
-     * PHP's DateTime::modify() ignores decimal points in the offset string.
-     */
-    private function addSecondsToDateTime(\DateTimeImmutable $dt, float $seconds): \DateTimeImmutable
-    {
-        $wholeSeconds = intval($seconds);
-        $fractionalSeconds = $seconds - $wholeSeconds;
-
-        // Create interval with whole seconds
-        $interval = new \DateInterval("PT{$wholeSeconds}S");
-
-        // Set fractional seconds using the 'f' property (PHP 7.1+)
-        if ($fractionalSeconds > 0) {
-            $interval->f = $fractionalSeconds;
-        }
-
-        return $dt->add($interval);
+        $resolvedEndedAt = TraceTime::addMs($baseTime, $durationMs);
     }
 }

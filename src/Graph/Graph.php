@@ -132,10 +132,12 @@ class Graph
             );
         }
 
-        // 6. Warn about nodes with no outgoing edges (dead ends) that aren't exit points
+        // 6. Warn about nodes with no outgoing edges (dead ends) that aren't exit points.
+        // A join source continues through its join target, so it is not a dead end.
+        $joinSources = array_merge([], ...array_map(fn (int|string $key) => explode('|', (string) $key), array_keys($this->joins)));
         foreach ($this->nodes as $nodeName => $node) {
             $outgoing = $this->getEdgesFrom($nodeName);
-            if (empty($outgoing) && ! in_array($nodeName, $this->exitPoints, true)) {
+            if (empty($outgoing) && ! in_array($nodeName, $this->exitPoints, true) && ! in_array($nodeName, $joinSources, true)) {
                 if ((bool) config('agenticgraph.logging.enabled', true)) {
                     Log::warning("Node '{$nodeName}' has no outgoing edges and is not an exit point");
                 }

@@ -259,3 +259,27 @@ it('does not enable otlp exporter without endpoint', function (): void {
 
     expect($exporter->isEnabled())->toBeFalse();
 });
+
+it('keeps microsecond precision in otlp unix nanos', function (): void {
+    $payload = (new OtlpPayloadBuilder)->build(
+        trace: ['id' => 'exec_nanos', 'graph_name' => 'demo-graph', 'status' => 'completed'],
+        spans: [[
+            'id' => 'span_node',
+            'trace_id' => 'exec_nanos',
+            'parent_id' => null,
+            'node_name' => 'generate',
+            'span_type' => 'node',
+            'status' => 'success',
+            'status_code' => 'OK',
+            'started_at' => '2026-06-27T10:00:00.123456+00:00',
+            'ended_at' => '2026-06-27T10:00:01.654321+00:00',
+            'duration_ms' => 1530.865,
+        ]],
+    );
+
+    $span = $payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0];
+
+    expect($span['startTimeUnixNano'])->toBe('1782554400123456000')
+        ->and($span['endTimeUnixNano'])->toBe('1782554401654321000')
+        ->and((int) $span['startTimeUnixNano'] % 1_000_000_000)->toBe(123_456_000);
+});

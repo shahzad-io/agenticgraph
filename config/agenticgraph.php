@@ -232,8 +232,8 @@ return [
             'rate' => env('AGENTICGRAPH_SAMPLE_RATE', 1.0),
             'always_on_error' => true,
         ],
-        // Trace spans are buffered in-memory for the duration of a single execution
-        // and flushed once on completion. These keys are retained for compatibility only.
+        // An interrupted trace is kept in the cache until it resumes. 'store' picks the
+        // cache store (null means the default store).
         'buffer' => [
             'store' => env('AGENTICGRAPH_TRACING_BUFFER_STORE'),
             'ttl_seconds' => env('AGENTICGRAPH_TRACING_BUFFER_TTL', 3600),

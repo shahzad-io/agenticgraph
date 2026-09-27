@@ -6,13 +6,18 @@ use GuzzleHttp\Psr7\Response;
 use Illuminate\Http\Client\Events\RequestSending;
 use Illuminate\Http\Client\Events\ResponseReceived;
 use Illuminate\Http\Client\Request;
+use Illuminate\Support\Facades\Log;
 use Prism\Prism\Streaming\Events\TextDeltaEvent;
+use Shahzad\AgenticGraph\AgenticGraphServiceProvider;
+use Shahzad\AgenticGraph\Execution\ExecutionContextManager;
+use Shahzad\AgenticGraph\Execution\ExecutionOptions;
 use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
 use Shahzad\AgenticGraph\Streaming\PrismStreamAdapter;
 use Shahzad\AgenticGraph\Streaming\Sinks\MemorySink;
 use Shahzad\AgenticGraph\Streaming\StreamOptions;
 use Shahzad\AgenticGraph\Streaming\StreamSession;
 use Shahzad\AgenticGraph\Tests\Support\ConsumeOnceStream;
+use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\ExecutionClock;
 use Shahzad\AgenticGraph\Tracing\Instrumentation\HttpClientInstrumentation;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
@@ -194,4 +199,46 @@ it('keeps tracing and streaming compatible by preserving sse for prism reads', f
     expect($deltaEvents)->toHaveCount(2)
         ->and($deltaEvents[0]->payload()['delta'])->toBe('token-a')
         ->and($deltaEvents[1]->payload()['delta'])->toBe('token-b');
+});
+
+function registerTracingThroughProvider(HttpMockPulseExporter $exporter): void
+{
+    app()->instance(TracerExporter::class, $exporter);
+    app()->forgetInstance(ExecutionContextManager::class);
+    $provider = app()->getProvider(AgenticGraphServiceProvider::class);
+    (fn () => $this->registerTracing())->call($provider);
+}
+
+it('matches responses to requests through the event dispatcher', function () {
+    [, $exporter] = bindHttpInstrumentationContext('exec_http_dispatch');
+    registerTracingThroughProvider($exporter);
+    Log::spy();
+
+    $request = makeHttpRequest();
+    event(new RequestSending($request));
+    event(new ResponseReceived($request, makeBufferedHttpResponse()));
+
+    expect(app(HttpClientInstrumentation::class))->toBe(app(HttpClientInstrumentation::class))
+        ->and($exporter->spans)->toHaveCount(1)
+        ->and($exporter->spans[0]['started_at'])->toMatch(TRACE_TIME_PATTERN);
+    Log::shouldNotHaveReceived('warning', fn (string $message) => $message === 'HTTP response without matching request');
+});
+
+it('cleans up stored request starts when the execution exits', function () {
+    config()->set('agenticgraph.tracing.enabled', true);
+    config()->set('agenticgraph.tracing.capture.http', true);
+    $exporter = new HttpMockPulseExporter;
+    registerTracingThroughProvider($exporter);
+
+    $manager = app(ExecutionContextManager::class);
+    $scope = $manager->enter('exec_http_cleanup', 'graph', new ExecutionOptions);
+    event(new RequestSending(makeHttpRequest()));
+
+    $instrumentation = app(HttpClientInstrumentation::class);
+    $requestStarts = fn () => $this->requestStarts;
+    expect($requestStarts->call($instrumentation))->toHaveKey('exec_http_cleanup');
+
+    $manager->exit($scope);
+
+    expect($requestStarts->call($instrumentation))->toBe([]);
 });

@@ -130,3 +130,20 @@ it('captures read and write db span types from real queries inside a tool span',
 
     Schema::dropIfExists('tracing_db_probe');
 });
+
+it('writes db spans with microsecond timestamps that match the query time', function (): void {
+    $exporter = enableDbInstrumentationTracingExporter();
+    bindDbInstrumentationTraceContext('exec-db-precision');
+    config(['agenticgraph.tracing.capture.db' => true]);
+
+    (new DatabaseInstrumentation($exporter, 1000.0))->handleQuery(
+        new QueryExecuted('select 1', [], 1.234, DB::connection('testing'))
+    );
+
+    $span = $exporter->getBuffer()['spans'][0];
+    $micros = fn (string $at): int => (int) (new DateTimeImmutable($at))->format('Uu');
+
+    expect($span['started_at'])->toMatch(TRACE_TIME_PATTERN)
+        ->and($span['ended_at'])->toMatch(TRACE_TIME_PATTERN)
+        ->and($micros($span['ended_at']) - $micros($span['started_at']))->toBe(1234);
+});

@@ -15,6 +15,7 @@ use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\ExecutionClock;
 use Shahzad\AgenticGraph\Tracing\InstrumentationGate;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
+use Shahzad\AgenticGraph\Tracing\TraceTime;
 
 class HttpClientInstrumentation
 {
@@ -161,8 +162,8 @@ class HttpClientInstrumentation
             'status' => $event->response->successful() ? 'success' : 'failed',
             'span_kind' => 'client',
             'status_code' => (string) $event->response->status(),
-            'started_at' => $startedAt->format(DATE_ATOM),
-            'ended_at' => $endedAt->format(DATE_ATOM),
+            'started_at' => TraceTime::format($startedAt),
+            'ended_at' => TraceTime::format($endedAt),
             'duration_ms' => $durationMs,
             'http' => $http,
         ]);
@@ -243,8 +244,8 @@ class HttpClientInstrumentation
             'status' => 'failed',
             'span_kind' => 'client',
             'status_code' => '0',
-            'started_at' => $startedAt->format(DATE_ATOM),
-            'ended_at' => $endedAt->format(DATE_ATOM),
+            'started_at' => TraceTime::format($startedAt),
+            'ended_at' => TraceTime::format($endedAt),
             'duration_ms' => $durationMs,
             'http' => array_merge(
                 CaptureDepth::httpRequestFields($event->request->method(), (string) $event->request->url()),
@@ -331,8 +332,8 @@ class HttpClientInstrumentation
             'status' => $status,
             'span_kind' => 'client',
             'status_code' => $statusCode,
-            'started_at' => $startedAt->format(DATE_ATOM),
-            'ended_at' => $endedAt->format(DATE_ATOM),
+            'started_at' => TraceTime::format($startedAt),
+            'ended_at' => TraceTime::format($endedAt),
             'duration_ms' => $durationMs,
             'http' => $http,
         ]);

@@ -3,6 +3,7 @@
 namespace Shahzad\AgenticGraph\Tests\Unit\Tracing;
 
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
+use Shahzad\AgenticGraph\Tracing\TraceTime;
 
 class MockPulseExporter extends PulseExporter
 {
@@ -39,7 +40,7 @@ class MockPulseExporter extends PulseExporter
         $this->traces[$traceId] = [
             'graph_name' => $graphName,
             'initial_state_keys' => $initialStateKeys,
-            'started_at' => $startedAt?->format(DATE_ATOM),
+            'started_at' => $startedAt ? TraceTime::format($startedAt) : null,
             'initial_state' => $initialStateData,
         ];
     }

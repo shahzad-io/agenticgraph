@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\Otlp\OtlpPayloadBuilder;
+use Shahzad\AgenticGraph\Tracing\TraceTime;
 
 /**
  * OSS tracer exporter that flushes traces to an OTLP/HTTP JSON endpoint.
@@ -92,7 +93,7 @@ final class OtlpExporter implements TracerExporter
             'id' => $traceId,
             'graph_name' => $graphName,
             'status' => 'running',
-            'started_at' => $startTime->toIso8601String(),
+            'started_at' => TraceTime::format($startTime),
             'initial_state_keys' => $initialStateKeys,
             'sampled' => $sampled,
             'exporter' => 'otlp',
@@ -152,15 +153,8 @@ final class OtlpExporter implements TracerExporter
         }
 
         $this->traces[$traceId]['status'] = 'completed';
-        $startedAt = $this->traceStarts[$traceId] ?? null;
-        if ($startedAt) {
-            $this->traces[$traceId]['ended_at'] = $startedAt
-                ->copy()
-                ->addMilliseconds((int) $durationMs)
-                ->toIso8601String();
-        } else {
-            $this->traces[$traceId]['ended_at'] = now()->toIso8601String();
-        }
+        [$endedAt, $durationMs] = TraceTime::traceEnd($this->traceStarts[$traceId] ?? null, $durationMs);
+        $this->traces[$traceId]['ended_at'] = TraceTime::format($endedAt);
         $this->traces[$traceId]['duration_ms'] = $durationMs;
         $this->traces[$traceId]['final_state_keys'] = $finalStateKeys;
 
@@ -188,15 +182,8 @@ final class OtlpExporter implements TracerExporter
         }
 
         $this->traces[$traceId]['status'] = 'failed';
-        $startedAt = $this->traceStarts[$traceId] ?? null;
-        if ($startedAt) {
-            $this->traces[$traceId]['ended_at'] = $startedAt
-                ->copy()
-                ->addMilliseconds((int) $durationMs)
-                ->toIso8601String();
-        } else {
-            $this->traces[$traceId]['ended_at'] = now()->toIso8601String();
-        }
+        [$endedAt, $durationMs] = TraceTime::traceEnd($this->traceStarts[$traceId] ?? null, $durationMs);
+        $this->traces[$traceId]['ended_at'] = TraceTime::format($endedAt);
         $this->traces[$traceId]['duration_ms'] = $durationMs;
         $this->traces[$traceId]['error'] = [
             'type' => get_class($exception),
@@ -226,7 +213,7 @@ final class OtlpExporter implements TracerExporter
 
         $this->traces[$traceId]['status'] = 'interrupted';
         $this->traces[$traceId]['interrupt_reason'] = $reason;
-        $this->traces[$traceId]['interrupted_at'] = now()->toIso8601String();
+        $this->traces[$traceId]['interrupted_at'] = TraceTime::format(TraceTime::now());
 
         if (! $this->isSampled($traceId)) {
             $this->reset();
@@ -245,7 +232,7 @@ final class OtlpExporter implements TracerExporter
 
         if (isset($this->traces[$traceId])) {
             $this->traces[$traceId]['status'] = 'running';
-            $this->traces[$traceId]['resumed_at'] = now()->toIso8601String();
+            $this->traces[$traceId]['resumed_at'] = TraceTime::format(TraceTime::now());
             unset($this->traces[$traceId]['interrupt_reason']);
             unset($this->traces[$traceId]['interrupted_at']);
             unset($this->flushedTraceIds[$traceId]);

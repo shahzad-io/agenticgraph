@@ -360,6 +360,8 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
     {
         // Register event subscribers
         Event::subscribe(TracingListener::class);
+        // Singleton so RequestSending and ResponseReceived share the stored request starts.
+        $this->app->singleton(HttpClientInstrumentation::class);
         Event::subscribe(HttpClientInstrumentation::class);
 
         // Register database instrumentation as singleton

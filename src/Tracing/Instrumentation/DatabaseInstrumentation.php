@@ -11,6 +11,7 @@ use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\DbQueryType;
 use Shahzad\AgenticGraph\Tracing\InstrumentationGate;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
+use Shahzad\AgenticGraph\Tracing\TraceTime;
 
 /**
  * Database query instrumentation for tracing.
@@ -58,7 +59,8 @@ class DatabaseInstrumentation
         $durationMs = (float) $event->time;
         $status = $durationMs > $this->slowThresholdMs ? 'slow' : 'success';
         $sql = trim(preg_replace('/\s+/', ' ', $event->sql) ?? $event->sql);
-        $startedAt = now()->subMilliseconds((int) $durationMs);
+        $endedAt = TraceTime::now();
+        $startedAt = TraceTime::addMs($endedAt, -$durationMs);
 
         $span = [
             'id' => uniqid('span_', true),
@@ -70,8 +72,8 @@ class DatabaseInstrumentation
             'status' => $status,
             'span_kind' => 'client',
             'status_code' => 'OK',
-            'started_at' => $startedAt->toAtomString(),
-            'ended_at' => $startedAt->copy()->addMilliseconds((int) $durationMs)->toAtomString(),
+            'started_at' => TraceTime::format($startedAt),
+            'ended_at' => TraceTime::format($endedAt),
             'duration_ms' => $durationMs,
             'db.connection' => $event->connectionName,
             'db.type' => DbQueryType::fromSql($sql),

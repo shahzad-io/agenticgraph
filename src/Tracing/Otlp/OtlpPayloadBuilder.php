@@ -288,11 +288,12 @@ final class OtlpPayloadBuilder
         }
 
         try {
-            $seconds = (new \DateTimeImmutable($iso8601))->format('U.u');
+            $at = new \DateTimeImmutable($iso8601);
         } catch (\Exception) {
             return '0';
         }
 
-        return (string) (int) round((float) $seconds * 1_000_000_000);
+        // String math keeps every microsecond; float math loses them at current epochs.
+        return $at->format('U').$at->format('u').'000';
     }
 }
