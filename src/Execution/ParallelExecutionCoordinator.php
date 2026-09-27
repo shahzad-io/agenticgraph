@@ -11,7 +11,6 @@ use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Foundation\Bus\PendingDispatch;
 use Psr\Log\LoggerInterface;
-use Shahzad\AgenticGraph\Contracts\NodeInterface;
 use Shahzad\AgenticGraph\Contracts\ParallelExecutorInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
@@ -105,23 +104,32 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
                 StreamLifecycleEventTypes::NODE_START,
                 ['node_name' => $nodeName]
             );
+            $pipeline = new NodeMiddlewarePipeline(
+                $this->container,
+                $this->events,
+                $this->globalMiddleware,
+                $this->traceContextProvider,
+            );
             try {
-                $resultState = $this->runNodeWithMiddleware($state, $node, $executionId, $nodeName, $spanId);
+                $resultState = $pipeline->execute($state, $node, $executionId, $nodeName, $spanId);
             } finally {
                 if ($traceContext instanceof TraceContext) {
                     $traceContext->endSpan();
                 }
             }
             $nodeDuration = microtime(true) - $nodeStartTime;
+            // After retries, the completed span describes the successful attempt only.
+            $attempt = $pipeline->lastAttempt();
+            $attemptStart = $attempt['startedAt'] ?? $nodeStartTime;
             $this->events->dispatch(new NodeExecutionCompleted(
                 $executionId,
                 $nodeName,
                 $inputState,
                 $resultState,
-                $nodeDuration,
-                ['node_type' => $node::class],
-                $spanId,
-                $nodeStartDt,
+                microtime(true) - $attemptStart,
+                ['node_type' => $node::class, 'attempt' => $attempt['attempt'] ?? 1, 'attempt_of' => $spanId],
+                $attempt['spanId'] ?? $spanId,
+                TraceTime::fromMicrotime($attemptStart),
                 $parentSpanId
             ));
             $this->emitStreamLifecycleIfActive(
@@ -422,27 +430,6 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
         }
 
         $this->checkpoints->save($executionId, $checkpoint);
-    }
-
-    private function runNodeWithMiddleware(
-        StateContract $state,
-        NodeInterface $node,
-        string $executionId,
-        string $nodeName,
-        ?string $spanId
-    ): StateContract {
-        return (new NodeMiddlewarePipeline(
-            $this->container,
-            $this->events,
-            $this->globalMiddleware,
-            $this->traceContextProvider,
-        ))->execute(
-            $state,
-            $node,
-            $executionId,
-            $nodeName,
-            $spanId
-        );
     }
 
     /**

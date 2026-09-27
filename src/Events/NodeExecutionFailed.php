@@ -26,5 +26,8 @@ class NodeExecutionFailed implements ShouldQueue
         public readonly bool $willRetry,
         public readonly ?\DateTimeImmutable $startedAt = null,
         public readonly ?string $parentSpanId = null,
+        public readonly ?string $nodeType = null,
+        // Span id of attempt 1 of this step; shared by every attempt.
+        public readonly ?string $attemptOf = null,
     ) {}
 }

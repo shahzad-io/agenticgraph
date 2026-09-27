@@ -19,7 +19,9 @@ interface ExecutionLoopDelegate
      *     node: NodeInterface,
      *     duration: float,
      *     startedAt: \DateTimeImmutable,
-     *     parentSpanId: string|null
+     *     parentSpanId: string|null,
+     *     attempt: int,
+     *     attemptOf: string|null
      * }
      */
     public function executeNode(

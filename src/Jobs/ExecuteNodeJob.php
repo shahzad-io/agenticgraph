@@ -14,7 +14,6 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
-use Shahzad\AgenticGraph\Events\NodeExecutionFailed;
 use Shahzad\AgenticGraph\Events\NodeExecutionStarted;
 use Shahzad\AgenticGraph\Execution\NodeMiddlewarePipeline;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
@@ -22,6 +21,7 @@ use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Tracing\ExecutionClock;
 use Shahzad\AgenticGraph\Tracing\Instrumentation\HttpClientInstrumentation;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
+use Shahzad\AgenticGraph\Tracing\TraceTime;
 
 class ExecuteNodeJob implements ShouldQueue
 {
@@ -73,7 +73,7 @@ class ExecuteNodeJob implements ShouldQueue
 
         // Capture precise start time when job executes (after unserialization)
         $attemptStart = microtime(true);
-        $startedAt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $attemptStart)) ?: new \DateTimeImmutable;
+        $startedAt = TraceTime::fromMicrotime($attemptStart);
 
         Log::debug('ExecuteNodeJob started', [
             'execution_id' => $this->executionId,
@@ -99,16 +99,19 @@ class ExecuteNodeJob implements ShouldQueue
 
             $result = $pipeline->execute($state, $node, $this->executionId, $this->nodeName, $spanId);
             $duration = microtime(true) - $attemptStart;
+            // After retries, the completed span describes the successful attempt only.
+            $attempt = $pipeline->lastAttempt();
+            $successStart = $attempt['startedAt'] ?? $attemptStart;
 
             Event::dispatch(new NodeExecutionCompleted(
                 $this->executionId,
                 $this->nodeName,
                 $inputState,
                 $result,
-                $duration,
-                ['node_type' => $node::class],
-                $spanId,
-                $startedAt,
+                microtime(true) - $successStart,
+                ['node_type' => $node::class, 'attempt' => $attempt['attempt'] ?? 1, 'attempt_of' => $spanId],
+                $attempt['spanId'] ?? $spanId,
+                TraceTime::fromMicrotime($successStart),
                 $this->parentSpanId
             ));
 
@@ -125,30 +128,15 @@ class ExecuteNodeJob implements ShouldQueue
                 'started_at' => $startedAt->format(DATE_ATOM),
             ]);
         } catch (\Throwable $e) {
-            $durationMs = (microtime(true) - $attemptStart) * 1000;
-            $failedStartedAt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $attemptStart)) ?: new \DateTimeImmutable;
-
+            // The pipeline already dispatched NodeExecutionFailed and called onError for each attempt.
             Log::error('ExecuteNodeJob failed', [
                 'execution_id' => $this->executionId,
                 'node' => $this->nodeName,
                 'error' => $e->getMessage(),
-                'duration_ms' => $durationMs,
+                'duration_ms' => (microtime(true) - $attemptStart) * 1000,
                 'attempt' => $this->attempts(),
             ]);
 
-            Event::dispatch(new NodeExecutionFailed(
-                $this->executionId,
-                $spanId,
-                $this->nodeName,
-                $state,
-                $e,
-                $durationMs,
-                $this->attempts(),
-                false,
-                $failedStartedAt,
-                $this->parentSpanId
-            ));
-            $node->onError($e, $state);
             throw $e;
         } finally {
             $traceContext->endSpan();

@@ -202,7 +202,9 @@ class GraphExecutor implements ExecutionLoopDelegate
      *     node: NodeInterface,
      *     duration: float,
      *     startedAt: \DateTimeImmutable,
-     *     parentSpanId: string|null
+     *     parentSpanId: string|null,
+     *     attempt: int,
+     *     attemptOf: string|null
      * }
      */
     public function executeNode(Graph $graph, string $executionId, string $nodeName, StateContract $state, ?string $parentSpanId = null): array

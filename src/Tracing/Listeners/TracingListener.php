@@ -226,13 +226,16 @@ class TracingListener
             false // Not an error
         );
 
+        $spanId = $event->spanId ?? uniqid('span_', true);
         $this->exporter->addSpan([
-            'id' => $event->spanId ?? uniqid('span_', true),
+            'id' => $spanId,
             'trace_id' => $event->executionId,
             'parent_id' => $event->parentSpanId,
             'node_name' => $event->nodeName,
             'node_type' => $event->metadata['node_type'] ?? null,
             'span_type' => 'node',
+            'attempt' => $event->metadata['attempt'] ?? 1,
+            'attempt_of' => $event->metadata['attempt_of'] ?? $spanId,
             'status' => 'success',
             'span_kind' => 'internal',
             'status_code' => 'OK',
@@ -264,12 +267,16 @@ class TracingListener
         $resolvedEndedAt = $endedAt;
         $this->calculateSpanTimestamps($startedAt, null, $event->durationMs, $traceStartDt, $resolvedStartedAt, $resolvedEndedAt);
 
+        $spanId = $event->spanId ?? uniqid('span_', true);
         $this->exporter->addSpan([
-            'id' => $event->spanId ?? uniqid('span_', true),
+            'id' => $spanId,
             'trace_id' => $event->executionId,
             'parent_id' => $event->parentSpanId,
             'node_name' => $event->nodeName,
+            'node_type' => $event->nodeType,
             'span_type' => 'node',
+            'attempt' => $event->retryAttempt,
+            'attempt_of' => $event->attemptOf ?? $spanId,
             'status' => 'failed',
             'span_kind' => 'internal',
             'status_code' => 'ERROR',
@@ -280,7 +287,6 @@ class TracingListener
                 'type' => get_class($event->exception),
                 'message' => $event->exception->getMessage(),
             ],
-            'retry_count' => $event->retryAttempt,
         ]);
     }
 

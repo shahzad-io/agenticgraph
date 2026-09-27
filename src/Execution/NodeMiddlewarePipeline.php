@@ -14,9 +14,13 @@ use Shahzad\AgenticGraph\Middleware\TimingMiddleware;
 use Shahzad\AgenticGraph\Middleware\ValidationMiddleware;
 use Shahzad\AgenticGraph\Streaming\StreamContext;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
+use Shahzad\AgenticGraph\Tracing\TraceTime;
 
 final class NodeMiddlewarePipeline
 {
+    /** @var array{spanId: ?string, attempt: int, attemptOf: ?string, startedAt: float}|null */
+    private ?array $lastAttempt = null;
+
     /**
      * @param  array<int, class-string|object>|null  $globalMiddleware
      * @param  \Closure(): ?TraceContext|null  $traceContextProvider
@@ -27,6 +31,16 @@ final class NodeMiddlewarePipeline
         private readonly ?array $globalMiddleware = null,
         private readonly ?\Closure $traceContextProvider = null,
     ) {}
+
+    /**
+     * The attempt that ran last: the successful one, or the final failure.
+     *
+     * @return array{spanId: ?string, attempt: int, attemptOf: ?string, startedAt: float}|null
+     */
+    public function lastAttempt(): ?array
+    {
+        return $this->lastAttempt;
+    }
 
     public function execute(
         StateContract $state,
@@ -48,12 +62,26 @@ final class NodeMiddlewarePipeline
                 };
             },
             function (StateContract $state) use ($node, $executionId, $nodeName, $spanId) {
-                $attempts = 0;
+                $attempt = 0;
                 $max = $node->getRetryAttempts();
                 $delay = $node->getRetryDelay();
+                $traceContext = $this->resolveTraceContext();
+                $attemptSpanId = $spanId;
 
                 while (true) {
+                    $attempt++;
+                    // Each retry is its own span; children of the attempt parent it through the current span.
+                    if ($attempt > 1 && $spanId !== null && $traceContext instanceof TraceContext) {
+                        $traceContext->endSpan();
+                        $attemptSpanId = $traceContext->startSpan($nodeName);
+                    }
                     $attemptStart = microtime(true);
+                    $this->lastAttempt = [
+                        'spanId' => $attemptSpanId,
+                        'attempt' => $attempt,
+                        'attemptOf' => $spanId,
+                        'startedAt' => $attemptStart,
+                    ];
                     if ($this->container->bound(StreamContext::class)) {
                         $this->container->make(StreamContext::class)->resetNodeAttemptEmission();
                     }
@@ -65,9 +93,8 @@ final class NodeMiddlewarePipeline
 
                         return $result;
                     } catch (\Throwable $e) {
-                        $attempts++;
                         $durationMs = (microtime(true) - $attemptStart) * 1000;
-                        $willRetry = $attempts <= $max && $node->shouldRetry($e);
+                        $willRetry = $attempt <= $max && $node->shouldRetry($e);
 
                         if ($this->container->bound(StreamContext::class)) {
                             $streamContext = $this->container->make(StreamContext::class);
@@ -76,21 +103,19 @@ final class NodeMiddlewarePipeline
                             }
                         }
 
-                        $startedAt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $attemptStart)) ?: new \DateTimeImmutable;
-                        $traceContext = $this->resolveTraceContext();
-                        $parentSpanId = $traceContext instanceof TraceContext ? $traceContext->getParentSpanId() : null;
-
                         $this->events->dispatch(new NodeExecutionFailed(
                             $executionId,
-                            $spanId,
+                            $attemptSpanId,
                             $nodeName,
                             $state,
                             $e,
                             $durationMs,
-                            $attempts,
+                            $attempt,
                             $willRetry,
-                            $startedAt,
-                            $parentSpanId
+                            TraceTime::fromMicrotime($attemptStart),
+                            $traceContext instanceof TraceContext ? $traceContext->getRootSpanId() : null,
+                            $node::class,
+                            $spanId,
                         ));
                         $node->onError($e, $state);
 

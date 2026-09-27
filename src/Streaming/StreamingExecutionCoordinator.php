@@ -9,7 +9,6 @@ use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Events\Dispatcher;
 use Psr\Log\LoggerInterface;
-use Shahzad\AgenticGraph\Contracts\NodeInterface;
 use Shahzad\AgenticGraph\Contracts\ParallelExecutorInterface;
 use Shahzad\AgenticGraph\Contracts\RouterResolverInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
@@ -19,7 +18,6 @@ use Shahzad\AgenticGraph\Events\GraphExecutionCompleted;
 use Shahzad\AgenticGraph\Events\GraphExecutionFailed;
 use Shahzad\AgenticGraph\Events\GraphExecutionStarted;
 use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
-use Shahzad\AgenticGraph\Events\NodeExecutionFailed;
 use Shahzad\AgenticGraph\Events\NodeExecutionStarted;
 use Shahzad\AgenticGraph\Execution\ExecutionContext;
 use Shahzad\AgenticGraph\Execution\ExecutionContextManager;
@@ -29,15 +27,14 @@ use Shahzad\AgenticGraph\Execution\ExecutionRepository;
 use Shahzad\AgenticGraph\Execution\LoopGuard;
 use Shahzad\AgenticGraph\Execution\LoopLimitExceededException;
 use Shahzad\AgenticGraph\Execution\LoopMetadata;
+use Shahzad\AgenticGraph\Execution\NodeMiddlewarePipeline;
 use Shahzad\AgenticGraph\Graph\Graph;
-use Shahzad\AgenticGraph\Middleware\LoggingMiddleware;
-use Shahzad\AgenticGraph\Middleware\TimingMiddleware;
-use Shahzad\AgenticGraph\Middleware\ValidationMiddleware;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\State\StateManager;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
+use Shahzad\AgenticGraph\Tracing\TraceTime;
 
 class StreamingExecutionCoordinator implements StreamingExecutorInterface
 {
@@ -411,7 +408,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                     $spanId = $traceContext->startSpan($current);
                     $parentSpanId = $traceContext->getParentSpanId();
                     $nodeStartTime = microtime(true);
-                    $nodeStartDt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $nodeStartTime)) ?: new \DateTimeImmutable;
+                    $nodeStartDt = TraceTime::fromMicrotime($nodeStartTime);
                     $inputState = $state;
 
                     $this->events->dispatch(new NodeExecutionStarted(
@@ -436,23 +433,16 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                         $this->streamContext?->nextNodeSeq($current)
                     );
 
+                    $pipeline = new NodeMiddlewarePipeline(
+                        $this->container,
+                        $this->events,
+                        null,
+                        fn (): ?TraceContext => $this->container->bound(TraceContext::class) ? $this->container->make(TraceContext::class) : null,
+                    );
                     try {
-                        $state = $this->runNodeWithMiddleware($state, $node, $executionId, $current, $spanId);
+                        $state = $pipeline->execute($state, $node, $executionId, $current, $spanId);
                     } catch (\Throwable $e) {
-                        $nodeDuration = microtime(true) - $nodeStartTime;
-                        $this->events->dispatch(new NodeExecutionFailed(
-                            $executionId,
-                            $spanId,
-                            $current,
-                            $state,
-                            $e,
-                            $nodeDuration * 1000,
-                            1,
-                            false,
-                            $nodeStartDt,
-                            $parentSpanId
-                        ));
-
+                        // The pipeline already dispatched NodeExecutionFailed for each attempt.
                         $this->emitLifecycleEvent(
                             $sink,
                             $session,
@@ -480,15 +470,18 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                     }
 
                     $nodeDuration = microtime(true) - $nodeStartTime;
+                    // After retries, the completed span describes the successful attempt only.
+                    $attempt = $pipeline->lastAttempt();
+                    $attemptStart = $attempt['startedAt'] ?? $nodeStartTime;
                     $this->events->dispatch(new NodeExecutionCompleted(
                         $executionId,
                         $current,
                         $inputState,
                         $state,
-                        $nodeDuration,
-                        ['node_type' => $node::class],
-                        $spanId,
-                        $nodeStartDt,
+                        microtime(true) - $attemptStart,
+                        ['node_type' => $node::class, 'attempt' => $attempt['attempt'] ?? 1, 'attempt_of' => $spanId],
+                        $attempt['spanId'] ?? $spanId,
+                        TraceTime::fromMicrotime($attemptStart),
                         $parentSpanId
                     ));
 
@@ -589,69 +582,6 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
 
             throw $e;
         }
-    }
-
-    protected function runNodeWithMiddleware(StateContract $state, NodeInterface $node, string $executionId, string $nodeName, ?string $spanId): StateContract
-    {
-        $stack = [];
-        foreach (config('agenticgraph.middleware.global', [
-            LoggingMiddleware::class,
-            TimingMiddleware::class,
-            ValidationMiddleware::class,
-        ]) as $mw) {
-            $stack[] = is_string($mw) ? $this->container->make($mw) : $mw;
-        }
-        $pipeline = array_reduce(
-            array_reverse($stack),
-            function ($next, $mw) use ($node) {
-                return function (StateContract $state) use ($mw, $node, $next) {
-                    return $mw->handle($state, $node, $next);
-                };
-            },
-            function (StateContract $state) use ($node, $executionId, $nodeName, $spanId) {
-                $attempts = 0;
-                $max = $node->getRetryAttempts();
-                $delay = $node->getRetryDelay();
-                while (true) {
-                    $attemptStart = microtime(true);
-                    $this->streamContext?->resetNodeAttemptEmission();
-                    try {
-                        $node->onBefore($state);
-                        $result = $node->execute($state);
-                        $node->onAfter($state, $result);
-
-                        return $result;
-                    } catch (\Throwable $e) {
-                        $attempts++;
-                        $durationMs = (microtime(true) - $attemptStart) * 1000;
-                        $willRetry = $attempts <= $max && $node->shouldRetry($e);
-                        if ($this->streamContext?->isStreamingActive() && $this->streamContext->nodeAttemptHasContentEmission()) {
-                            $willRetry = false;
-                        }
-                        $startedAt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $attemptStart)) ?: new \DateTimeImmutable;
-                        $this->events->dispatch(new NodeExecutionFailed(
-                            $executionId,
-                            $spanId,
-                            $nodeName,
-                            $state,
-                            $e,
-                            $durationMs,
-                            $attempts,
-                            $willRetry,
-                            $startedAt,
-                            $this->container->make(TraceContext::class)->getParentSpanId()
-                        ));
-                        $node->onError($e, $state);
-                        if (! $willRetry) {
-                            throw $e;
-                        }
-                        usleep($delay * 1000);
-                    }
-                }
-            }
-        );
-
-        return $pipeline($state);
     }
 
     private function createStreamSink(StreamSession $session, StreamOptions $options): StreamSinkInterface

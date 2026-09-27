@@ -217,7 +217,7 @@ class ExecutionCoordinator
                         $nodeResult['inputState'],
                         $state,
                         $nodeResult['duration'],
-                        ['node_type' => $nodeResult['node']::class],
+                        ['node_type' => $nodeResult['node']::class, 'attempt' => $nodeResult['attempt'], 'attempt_of' => $nodeResult['attemptOf']],
                         $spanId,
                         $nodeResult['startedAt'],
                         $nodeResult['parentSpanId'] ?? null
@@ -569,7 +569,7 @@ class ExecutionCoordinator
                         $nodeResult['inputState'],
                         $state,
                         $nodeResult['duration'],
-                        ['node_type' => $nodeResult['node']::class],
+                        ['node_type' => $nodeResult['node']::class, 'attempt' => $nodeResult['attempt'], 'attempt_of' => $nodeResult['attemptOf']],
                         $nodeResult['spanId'],
                         $nodeResult['startedAt'],
                         $nodeResult['parentSpanId'] ?? null
@@ -670,7 +670,7 @@ class ExecutionCoordinator
                         $nodeResult['inputState'],
                         $state,
                         $nodeResult['duration'],
-                        ['node_type' => $nodeResult['node']::class],
+                        ['node_type' => $nodeResult['node']::class, 'attempt' => $nodeResult['attempt'], 'attempt_of' => $nodeResult['attemptOf']],
                         $nodeResult['spanId'],
                         $nodeResult['startedAt'],
                         $nodeResult['parentSpanId'] ?? null
@@ -755,7 +755,9 @@ class ExecutionCoordinator
      *     node: NodeInterface,
      *     duration: float,
      *     startedAt: \DateTimeImmutable,
-     *     parentSpanId: string|null
+     *     parentSpanId: string|null,
+     *     attempt: int,
+     *     attemptOf: string|null
      * }
      */
     public function executeNode(Graph $graph, string $executionId, string $nodeName, StateContract $state, ?string $parentSpanId = null): array
@@ -771,39 +773,33 @@ class ExecutionCoordinator
             $executionId,
             $nodeName,
             $state,
-            new \DateTimeImmutable,
+            TraceTime::fromMicrotime($nodeStartTime),
             $spanId,
             $effectiveParentSpanId
         ));
 
-        $state = $this->runNodeWithMiddleware($state, $node, $executionId, $nodeName, $spanId);
-        $nodeDuration = microtime(true) - $nodeStartTime;
-
-        return [
-            'state' => $state,
-            'spanId' => $spanId,
-            'inputState' => $inputState,
-            'node' => $node,
-            'duration' => $nodeDuration,
-            'startedAt' => \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $nodeStartTime)) ?: new \DateTimeImmutable,
-            'parentSpanId' => $effectiveParentSpanId,
-        ];
-    }
-
-    private function runNodeWithMiddleware(StateContract $state, NodeInterface $node, string $executionId, string $nodeName, ?string $spanId): StateContract
-    {
-        return (new NodeMiddlewarePipeline(
+        $pipeline = new NodeMiddlewarePipeline(
             $this->container,
             $this->events,
             $this->globalMiddleware,
             static fn (): ?TraceContext => app()->bound(TraceContext::class) ? app(TraceContext::class) : null,
-        ))->execute(
-            $state,
-            $node,
-            $executionId,
-            $nodeName,
-            $spanId
         );
+        $state = $pipeline->execute($state, $node, $executionId, $nodeName, $spanId);
+        // After retries, the completed span describes the successful attempt only.
+        $attempt = $pipeline->lastAttempt();
+        $attemptStart = $attempt['startedAt'] ?? $nodeStartTime;
+
+        return [
+            'state' => $state,
+            'spanId' => $attempt['spanId'] ?? $spanId,
+            'inputState' => $inputState,
+            'node' => $node,
+            'duration' => microtime(true) - $attemptStart,
+            'startedAt' => TraceTime::fromMicrotime($attemptStart),
+            'parentSpanId' => $effectiveParentSpanId,
+            'attempt' => $attempt['attempt'] ?? 1,
+            'attemptOf' => $attempt['attemptOf'] ?? $spanId,
+        ];
     }
 
     public function streamContext(): ?StreamContext
