@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph\Tracing;
 
+use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
+use Shahzad\AgenticGraph\Tracing\Exporters\BufferedTraceExporter;
+
 /**
  * Decides whether broad HTTP/DB auto-instrumentation should emit spans.
  *
@@ -19,6 +22,27 @@ final class InstrumentationGate
         }
 
         return TraceContext::tryGet()?->isInsideToolSpan() ?? false;
+    }
+
+    /**
+     * Runs package bookkeeping I/O (execution store, checkpoints, interrupts, batch dispatch)
+     * under the exporter's isCapturing() guard, so it never becomes an http or db span. Only
+     * node bodies and tools produce those spans.
+     *
+     * @template TReturn
+     *
+     * @param  callable(): TReturn  $callback
+     * @return TReturn
+     */
+    public static function internal(callable $callback): mixed
+    {
+        if (! (bool) config('agenticgraph.tracing.enabled', false)) {
+            return $callback();
+        }
+
+        $exporter = app(TracerExporter::class);
+
+        return $exporter instanceof BufferedTraceExporter ? $exporter->whileCapturing($callback) : $callback();
     }
 
     public static function shouldCaptureDb(): bool

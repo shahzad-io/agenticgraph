@@ -34,7 +34,7 @@ class ReconstructSyncResumeNode extends PrismNode
 
     public function getInterruptReason(StateContract $state): string
     {
-        return 'P2-T2 sync reconstruction resume';
+        return 'sync reconstruction resume';
     }
 
     public function onResume(StateContract $state, mixed $humanInput): StateContract
@@ -69,7 +69,7 @@ class ReconstructAsyncResumeNode extends PrismNode
 
     public function getInterruptReason(StateContract $state): string
     {
-        return 'P2-T2 async reconstruction resume';
+        return 'async reconstruction resume';
     }
 
     public function onResume(StateContract $state, mixed $humanInput): StateContract

@@ -46,8 +46,8 @@ class PulseExporter extends BufferedTraceExporter
     protected function send(array $payload): void
     {
         try {
-            // Encoded here so float fields keep their zero fraction on the wire (spec G-3).
-            // Spec I-5: short timeouts and one retry on a connection error or 5xx, never on 4xx.
+            // Encoded here so float fields keep their zero fraction on the wire.
+            // Short timeouts and one retry on a connection error or 5xx, never on 4xx.
             /** @var Response $response */
             $response = Http::withToken($this->apiKey)
                 ->connectTimeout((float) config('agenticgraph.tracing.transport.connect_timeout', 1))

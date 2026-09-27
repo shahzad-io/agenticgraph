@@ -30,7 +30,7 @@ it('resolves log exporter when tracing is enabled without api key', function () 
         ->and($exporter->isEnabled())->toBeTrue();
 });
 
-it('applies J-1: auto is null in unit tests, an explicit driver still sends', function () {
+it('auto is null in unit tests, an explicit driver still sends', function () {
     Http::fake(['*' => Http::response(['status' => 'captured'], 202)]);
     config([
         'agenticgraph.tracing.enabled' => true,

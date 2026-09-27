@@ -10,7 +10,7 @@ namespace Shahzad\AgenticGraph\Tracing;
 final class CaptureDepth
 {
     /**
-     * Query parameters whose values url.full never carries (spec N-3): ours plus the OTel list at
+     * Query parameters whose values url.full never carries: ours plus the OTel list at
      * semantic-conventions v1.44.0. Matched case-insensitively, a superset of OTel's case-sensitive rule.
      */
     private const SENSITIVE_QUERY_KEYS = [

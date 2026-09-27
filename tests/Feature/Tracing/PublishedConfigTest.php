@@ -15,9 +15,9 @@ use Shahzad\AgenticGraph\Tracing\Exporters\OtlpExporter;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
 
 /**
- * An app that published config/agenticgraph.php before T8 lacks every key added since (spec M-6).
+ * An app that published config/agenticgraph.php before the tracing rework lacks every key added since.
  * Each missing key must resolve to its code default, not null. The guard tests cover keys
- * that already resolved correctly before T8 (spec N-1).
+ * that already resolved correctly before the rework.
  */
 beforeEach(function (): void {
     config()->set('agenticgraph', [

@@ -703,7 +703,7 @@ it('resume in a new process after the cache is flushed sends the resumed segment
     $checkpointId = $state->getInterruptCheckpointId();
     $interrupted = $first->sent;
 
-    // Only the checkpoint survives; before G-F the resume found no buffered trace and sent nothing.
+    // Only the checkpoint survives; with the old cache buffer the resume found no buffered trace and sent nothing.
     $checkpoint = app(StorageInterface::class)->load($checkpointId);
     Cache::flush();
     app(StorageInterface::class)->save($checkpoint);
@@ -725,7 +725,7 @@ it('resume in a new process after the cache is flushed sends the resumed segment
         ->and($merged['trace'])->not->toHaveKey('interrupt_reason');
 })->with(['cache flushed' => false, 'after the old buffer TTL' => true]);
 
-it('the interrupt segment ends at the same instant as the interrupted root span (H-2)', function () {
+it('the interrupt segment ends at the same instant as the interrupted root span', function () {
     $exporter = rlExporter();
     $graph = rlLinearGraph('rl-h2', [['start', RlStart::class], ['approve', RlApproval::class], ['end', RlEnd::class]]);
 

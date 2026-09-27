@@ -41,7 +41,7 @@ final class StreamEventEnvelope
 
     /**
      * Frozen v1.0 wire-body field names emitted by {@see toWireArray()}.
-     * `type` is intentionally excluded — it is carried by the transport event name.
+     * `type` is intentionally excluded: it is carried by the transport event name.
      *
      * @var list<string>
      */

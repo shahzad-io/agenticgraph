@@ -27,7 +27,7 @@ final class ExecutionContextManager implements ExecutionScopeInterface
     ) {}
 
     /**
-     * The exporter is resolved per call, never pinned at construction (spec G-1).
+     * The exporter is resolved per call, never pinned at construction.
      */
     private function tracerExporter(): ?TracerExporter
     {
@@ -161,8 +161,8 @@ final class ExecutionContextManager implements ExecutionScopeInterface
 
     /**
      * Tear down execution scope bindings. Trace completion is handled by
-     * {@see TracingListener::onGraphCompleted()} so queued span listeners can
-     * finish before flush (see T5 queue-ordering fix). Interrupt paths use
+     * {@see TracingListener::onGraphCompleted()}, which runs synchronously when the
+     * completion event is dispatched. Interrupt paths use
      * {@see TracerExporter::interruptTrace()} instead. A trace still open here
      * (a queue hand-off) is sent as a non-final segment; otherwise flush is a no-op.
      */

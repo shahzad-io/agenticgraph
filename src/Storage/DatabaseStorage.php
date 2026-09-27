@@ -9,6 +9,7 @@ use Shahzad\AgenticGraph\Contracts\StorageInterface;
 use Shahzad\AgenticGraph\Execution\Checkpoint;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Support\CheckpointVersionOrdering;
+use Shahzad\AgenticGraph\Tracing\InstrumentationGate;
 
 class DatabaseStorage implements StorageInterface
 {
@@ -33,14 +34,14 @@ class DatabaseStorage implements StorageInterface
             'metadata' => json_encode($checkpoint->metadata),
             'created_at' => $checkpoint->createdAt->format('Y-m-d H:i:s.u'),
         ];
-        $this->db->table($this->table)->updateOrInsert(['id' => $checkpoint->id], $payload);
+        InstrumentationGate::internal(fn () => $this->db->table($this->table)->updateOrInsert(['id' => $checkpoint->id], $payload));
 
         return $checkpoint->id;
     }
 
     public function load(string $id): ?Checkpoint
     {
-        $row = $this->db->table($this->table)->where('id', $id)->first();
+        $row = InstrumentationGate::internal(fn () => $this->db->table($this->table)->where('id', $id)->first());
         if (! $row) {
             return null;
         }
@@ -65,9 +66,9 @@ class DatabaseStorage implements StorageInterface
      */
     public function listForExecution(string $executionId): array
     {
-        $rows = $this->db->table($this->table)
+        $rows = InstrumentationGate::internal(fn () => $this->db->table($this->table)
             ->where('execution_id', $executionId)
-            ->get()
+            ->get())
             ->map(function ($row): array {
                 $metadata = json_decode($row->metadata, true) ?? [];
 

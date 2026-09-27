@@ -70,7 +70,7 @@ it('makes the same sampling decision for a trace id in every exporter instance',
         ->and(array_filter($first, fn (bool $sampled): bool => ! $sampled))->not->toBeEmpty();
 });
 
-it('writes immediately in the console even when a request is bound (H-1)', function () {
+it('writes immediately in the console even when a request is bound', function () {
     app()->instance('request', Request::create('/'));
 
     $exporter = new FileExporter($this->traceDir);

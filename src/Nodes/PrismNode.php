@@ -1079,7 +1079,7 @@ abstract class PrismNode extends AbstractNode
      * Wrap each Prism tool closure with Trace::span so tool-internal HTTP/DB nests
      * under the tool span. Applied to tools(), withMcp(), and streaming tool paths.
      *
-     * Raw Prism tool usage (bypassing these paths) is not wrapped — use agenticgraph's
+     * Raw Prism tool usage (bypassing these paths) is not wrapped; use agenticgraph's
      * tools()/withMcp() to get tool-scoped tracing.
      *
      * @param  array<int, mixed>  $tools

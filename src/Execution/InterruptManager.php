@@ -24,6 +24,7 @@ use Shahzad\AgenticGraph\Streaming\StreamLifecycleEventTypes;
 use Shahzad\AgenticGraph\Streaming\StreamSession;
 use Shahzad\AgenticGraph\Streaming\StreamStatus;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
+use Shahzad\AgenticGraph\Tracing\InstrumentationGate;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 use Shahzad\AgenticGraph\Tracing\TraceTime;
 
@@ -48,7 +49,7 @@ final class InterruptManager implements InterruptServiceInterface
     ) {}
 
     /**
-     * The exporter is resolved per call, never pinned at construction (spec G-1).
+     * The exporter is resolved per call, never pinned at construction.
      */
     private function tracerExporter(): ?TracerExporter
     {
@@ -105,7 +106,7 @@ final class InterruptManager implements InterruptServiceInterface
         if ($traceContext) {
             $checkpoint->metadata['trace_context'] = $traceContext->toArray();
         }
-        // The loop context already counts this node, so a resume continues its counts (K-5).
+        // The loop context already counts this node, so a resume continues its counts.
         if ($this->container->bound(ExecutionContext::class)) {
             $checkpoint->metadata['loop'] = LoopMetadata::fromExecutionContext($this->container->make(ExecutionContext::class))->toArray();
         }
@@ -116,7 +117,7 @@ final class InterruptManager implements InterruptServiceInterface
 
         $this->repo->interrupted($executionId);
 
-        // One instant for the root span end, the interrupt span, and the segment end (spec H-2).
+        // One instant for the root span end, the interrupt span, and the segment end.
         $interruptedAt = TraceTime::now();
 
         $this->events->dispatch(new NodeInterrupted(
@@ -139,7 +140,7 @@ final class InterruptManager implements InterruptServiceInterface
         }
 
         if ($this->interruptPersistenceEnabled) {
-            $interruptRecord = InterruptRecord::query()->create([
+            $interruptRecord = InstrumentationGate::internal(fn () => InterruptRecord::query()->create([
                 'execution_id' => $executionId,
                 'checkpoint_id' => $checkpointId,
                 'graph_name' => $graph->name,
@@ -151,7 +152,7 @@ final class InterruptManager implements InterruptServiceInterface
                     ? now()->addDays($this->interruptDefaultExpiryDays)
                     : null,
                 'metadata' => $metadata,
-            ]);
+            ]));
 
             $handler = ($this->interruptHandlerResolver)();
             if ($handler) {
@@ -236,7 +237,7 @@ final class InterruptManager implements InterruptServiceInterface
 
             if ($this->interruptPersistenceEnabled) {
                 $metadata['stream_last_seq'] = $session->seq;
-                $interruptRecord->update(['metadata' => $metadata]);
+                InstrumentationGate::internal(fn () => $interruptRecord->update(['metadata' => $metadata]));
             }
         }
 

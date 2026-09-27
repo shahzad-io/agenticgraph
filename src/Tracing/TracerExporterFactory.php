@@ -19,7 +19,7 @@ final class TracerExporterFactory
         // env('X') turns the string "null" into PHP null, so a null value means the null exporter.
         $driver = (string) (config('agenticgraph.tracing.exporter', 'auto') ?? 'null');
 
-        // auto never sends from a test run (spec J-1); an explicit driver still applies.
+        // auto never sends from a test run; an explicit driver still applies.
         if ($driver === 'auto') {
             $driver = match (true) {
                 app()->runningUnitTests() => 'null',

@@ -147,7 +147,7 @@ it('routes streaming nodes through middleware and preserves output state', funct
     Log::shouldHaveReceived('debug')->with('Completed node', Mockery::any());
 });
 
-it('does not retry streaming nodes after content emission (D27)', function () {
+it('does not retry streaming nodes after content emission', function () {
     Event::fake([NodeExecutionFailed::class]);
     registerCollapseGraph('collapse-emit-then-throw', CollapseEmitThenThrowNode::class);
 
@@ -165,7 +165,7 @@ it('does not retry streaming nodes after content emission (D27)', function () {
     });
 });
 
-it('retries streaming nodes on retriable failure before any content emission (D27)', function () {
+it('retries streaming nodes on retriable failure before any content emission', function () {
     registerCollapseGraph('collapse-pre-emit-throw', CollapsePreEmitThrowNode::class);
 
     $handle = AgenticGraph::execute('collapse-pre-emit-throw', new State, collapseStreamingOptions());

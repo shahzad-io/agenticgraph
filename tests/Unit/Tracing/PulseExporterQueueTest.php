@@ -50,7 +50,7 @@ it('dispatches trace after response in HTTP context', function () {
         'api.example.com/*' => Http::response(['success' => true], 200),
     ]);
 
-    // Simulate HTTP context: a bound request outside the console (spec H-1)
+    // Simulate HTTP context: a bound request outside the console
     $request = Request::create('/test', 'GET');
     app()->instance('request', $request);
     (fn () => $this->isRunningInConsole = false)->call(app());
@@ -88,7 +88,7 @@ it('sends synchronously in the console even when a request is bound', function (
         'api.example.com/*' => Http::response(['success' => true], 200),
     ]);
 
-    // Artisan commands and workers have a bound request too (spec H-1)
+    // Artisan commands and workers have a bound request too
     app()->instance('request', Request::create('/test', 'GET'));
 
     $exporter = new PulseExporter;

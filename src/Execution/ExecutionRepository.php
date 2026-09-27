@@ -6,6 +6,7 @@ namespace Shahzad\AgenticGraph\Execution;
 
 use Illuminate\Database\DatabaseManager;
 use Psr\Log\LoggerInterface;
+use Shahzad\AgenticGraph\Tracing\InstrumentationGate;
 
 class ExecutionRepository implements ExecutionStore
 {
@@ -44,7 +45,7 @@ class ExecutionRepository implements ExecutionStore
         ?string $streamId = null,
         ?ExecutionOptions $executionOptions = null
     ): void {
-        $this->db->transaction(function () use ($id, $graphName, $initialState, $streamId, $executionOptions) {
+        InstrumentationGate::internal(fn () => $this->db->transaction(function () use ($id, $graphName, $initialState, $streamId, $executionOptions) {
             $payload = [
                 'graph_name' => $graphName,
                 'status' => 'queued',
@@ -61,7 +62,7 @@ class ExecutionRepository implements ExecutionStore
                 $payload['execution_options'] = json_encode($executionOptions->toArray(), JSON_UNESCAPED_SLASHES);
             }
             $this->db->table($this->table)->updateOrInsert(['id' => $id], $payload);
-        });
+        }));
 
         if ((bool) config('agenticgraph.logging.enabled', true)) {
             $this->logger->debug('Execution queued', [
@@ -81,7 +82,7 @@ class ExecutionRepository implements ExecutionStore
         ?string $streamId = null,
         ?ExecutionOptions $executionOptions = null
     ): void {
-        $this->db->transaction(function () use ($id, $graphName, $initialState, $streamId, $executionOptions) {
+        InstrumentationGate::internal(fn () => $this->db->transaction(function () use ($id, $graphName, $initialState, $streamId, $executionOptions) {
             // Verify the record exists and get current status with lock
             $current = $this->db->table($this->table)
                 ->where('id', $id)
@@ -130,7 +131,7 @@ class ExecutionRepository implements ExecutionStore
                     'previous_status' => $current->status ?? 'new',
                 ]);
             }
-        });
+        }));
     }
 
     /**
@@ -138,7 +139,7 @@ class ExecutionRepository implements ExecutionStore
      */
     public function completed(string $id, array $finalState, float $duration): void
     {
-        $this->db->transaction(function () use ($id, $finalState, $duration) {
+        InstrumentationGate::internal(fn () => $this->db->transaction(function () use ($id, $finalState, $duration) {
             // Verify state transition with lock
             if (! $this->canTransitionTo($id, 'completed')) {
                 $current = $this->db->table($this->table)
@@ -160,7 +161,7 @@ class ExecutionRepository implements ExecutionStore
                 'completed_at' => now(),
                 'updated_at' => now(),
             ]);
-        });
+        }));
 
         if ((bool) config('agenticgraph.logging.enabled', true)) {
             $this->logger->debug('Execution completed', [
@@ -172,7 +173,7 @@ class ExecutionRepository implements ExecutionStore
 
     public function failed(string $id, string $error): void
     {
-        $updated = $this->db->transaction(function () use ($id, $error) {
+        $updated = InstrumentationGate::internal(fn () => $this->db->transaction(function () use ($id, $error) {
             $current = $this->db->table($this->table)
                 ->where('id', $id)
                 ->lockForUpdate()
@@ -211,7 +212,7 @@ class ExecutionRepository implements ExecutionStore
             ]);
 
             return true;
-        });
+        }));
 
         if ($updated && (bool) config('agenticgraph.logging.enabled', true)) {
             $this->logger->error('Execution failed', [
@@ -226,7 +227,7 @@ class ExecutionRepository implements ExecutionStore
      */
     public function canTransitionTo(string $id, string $newStatus): bool
     {
-        $current = $this->db->table($this->table)->where('id', $id)->value('status');
+        $current = InstrumentationGate::internal(fn () => $this->db->table($this->table)->where('id', $id)->value('status'));
 
         if (! $current) {
             // New execution can transition to any valid status
@@ -243,26 +244,26 @@ class ExecutionRepository implements ExecutionStore
      */
     public function getStatus(string $id): ?string
     {
-        return $this->db->table($this->table)->where('id', $id)->value('status');
+        return InstrumentationGate::internal(fn () => $this->db->table($this->table)->where('id', $id)->value('status'));
     }
 
     public function getCheckpointNodeCount(string $executionId): int
     {
-        $count = $this->db->table($this->table)
+        $count = InstrumentationGate::internal(fn () => $this->db->table($this->table)
             ->where('id', $executionId)
-            ->value('checkpoint_node_count');
+            ->value('checkpoint_node_count'));
 
         return (int) ($count ?? 0);
     }
 
     public function setCheckpointNodeCount(string $executionId, int $count): void
     {
-        $this->db->table($this->table)
+        InstrumentationGate::internal(fn () => $this->db->table($this->table)
             ->where('id', $executionId)
             ->update([
                 'checkpoint_node_count' => $count,
                 'updated_at' => now(),
-            ]);
+            ]));
     }
 
     public function resetCheckpointNodeCount(string $executionId): void
@@ -272,7 +273,7 @@ class ExecutionRepository implements ExecutionStore
 
     public function get(string $executionId): ?ExecutionRecord
     {
-        $row = $this->db->table($this->table)->where('id', $executionId)->first();
+        $row = InstrumentationGate::internal(fn () => $this->db->table($this->table)->where('id', $executionId)->first());
         if (! $row) {
             return null;
         }
@@ -340,7 +341,7 @@ class ExecutionRepository implements ExecutionStore
 
     public function store(ExecutionRecord $record): void
     {
-        $this->db->table($this->table)->updateOrInsert(
+        InstrumentationGate::internal(fn () => $this->db->table($this->table)->updateOrInsert(
             ['id' => $record->executionId],
             [
                 'graph_name' => $record->graphName,
@@ -354,7 +355,7 @@ class ExecutionRepository implements ExecutionStore
                 'updated_at' => now(),
                 'created_at' => now(),
             ]
-        );
+        ));
     }
 
     public function updateStatus(string $executionId, ExecutionStatus $status, mixed $finalState = null): void
@@ -372,7 +373,7 @@ class ExecutionRepository implements ExecutionStore
         if ($status === ExecutionStatus::INTERRUPTED) {
             $payload['interrupted_at'] = now();
         }
-        $this->db->table($this->table)->where('id', $executionId)->update($payload);
+        InstrumentationGate::internal(fn () => $this->db->table($this->table)->where('id', $executionId)->update($payload));
     }
 
     public function interrupted(string $id): void

@@ -10,7 +10,7 @@ use Illuminate\Support\Carbon;
  * Contract for exporting graph execution traces and spans.
  *
  * All tracing emit paths (TracingListener, HTTP/DB instrumentation, execution
- * lifecycle) depend on this interface — not on a concrete exporter implementation.
+ * lifecycle) depend on this interface, not on a concrete exporter implementation.
  */
 interface TracerExporter
 {

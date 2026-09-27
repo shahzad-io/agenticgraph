@@ -511,7 +511,7 @@ class TracingListener
     }
 
     /**
-     * Handle a routing decision (spec T8.9, K-1): a child of the root graph span.
+     * Handle a routing decision: a child of the root graph span.
      */
     public function onRouteDecided(RouteDecided $event): void
     {

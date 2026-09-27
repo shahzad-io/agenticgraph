@@ -12,7 +12,7 @@ use Shahzad\AgenticGraph\Tracing\OpenRouterPricingMapper;
 /**
  * Maintainer tooling: fetch OpenRouter pricing and regenerate config/model_pricing.php.
  *
- * Requires egress to https://openrouter.ai — run on a dev machine or CI job, not in
+ * Requires egress to https://openrouter.ai; run on a dev machine or CI job, not in
  * locked-down sandboxes. Use --fixture for offline mapping tests.
  */
 final class SyncModelPricingCommand extends Command

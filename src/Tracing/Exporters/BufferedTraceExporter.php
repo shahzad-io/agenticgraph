@@ -22,7 +22,7 @@ abstract class BufferedTraceExporter implements TracerExporter
     /**
      * Open segments by trace id.
      *
-     * @var array<string, array{trace: array<string, mixed>, segment: array<string, mixed>, start: \DateTimeImmutable, spans: list<array<string, mixed>>, llm_calls: list<array<string, mixed>>}>
+     * @var array<string, array{trace: array<string, mixed>, segment: array<string, mixed>, start: \DateTimeImmutable, spans: list<array<string, mixed>>, llm_calls: list<array<string, mixed>>, implicit?: bool}>
      */
     private array $open = [];
 
@@ -68,7 +68,7 @@ abstract class BufferedTraceExporter implements TracerExporter
      * @param  callable(): TReturn  $callback
      * @return TReturn
      */
-    protected function whileCapturing(callable $callback): mixed
+    public function whileCapturing(callable $callback): mixed
     {
         $this->captureDepth++;
 
@@ -92,11 +92,25 @@ abstract class BufferedTraceExporter implements TracerExporter
         ?\DateTimeImmutable $startedAt = null,
         ?array $initialStateData = null
     ): void {
-        if (! $this->isEnabled() || isset($this->open[$traceId])) {
+        if (! $this->isEnabled()) {
             return;
         }
 
-        $this->openSegment($traceId, $graphName, 'initial', $startedAt);
+        // Data that arrived before the start opened an implicit continued segment in this
+        // process. That segment is the trace start: reopen it as initial and keep its items.
+        $early = $this->open[$traceId] ?? null;
+        if ($early !== null && ! ($early['implicit'] ?? false)) {
+            return;
+        }
+
+        if ($early !== null && $startedAt !== null && $early['start'] < $startedAt) {
+            $startedAt = $early['start'];
+        }
+        $this->openSegment($traceId, $graphName, 'initial', $startedAt ?? $early['start'] ?? null);
+        if ($early !== null) {
+            $this->open[$traceId]['spans'] = $early['spans'];
+            $this->open[$traceId]['llm_calls'] = $early['llm_calls'];
+        }
         $this->open[$traceId]['trace']['started_at'] = $this->open[$traceId]['segment']['started_at'];
         $this->open[$traceId]['trace']['initial_state_keys'] = $initialStateKeys;
 
@@ -279,6 +293,7 @@ abstract class BufferedTraceExporter implements TracerExporter
                     Log::debug('AgenticGraph tracing: data for a trace with no open segment', ['trace_id' => $traceId]);
                 }
                 $this->openSegment($traceId, null, 'continued', null);
+                $this->open[$traceId]['implicit'] = true;
             }
 
             $this->open[$traceId][$bucket][] = $item;
@@ -317,7 +332,7 @@ abstract class BufferedTraceExporter implements TracerExporter
     }
 
     /**
-     * Close the open segment at one instant (spec H-2): $at when the caller has it (the same
+     * Close the open segment at one instant: $at when the caller has it (the same
      * value as the root span end), otherwise start + measured duration, otherwise now.
      */
     private function endSegment(string $traceId, string $status, ?\DateTimeInterface $at, float $durationMs, bool $final): \DateTimeImmutable

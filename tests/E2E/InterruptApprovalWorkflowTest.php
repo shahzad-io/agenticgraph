@@ -70,7 +70,7 @@ class PublishNode extends PrismNode
 }
 
 /**
- * D17: onResume deliberately does not satisfy shouldInterrupt — entry gate is skipped on resume.
+ * onResume deliberately does not satisfy shouldInterrupt: the entry gate is skipped on resume.
  */
 class ApprovalInterruptNodeWithoutGateSatisfaction extends PrismNode
 {
@@ -256,8 +256,8 @@ it('dispatches interrupt and resume events during execution', function () {
     });
 });
 
-it('resumes past entry without re-gating when onResume does not satisfy shouldInterrupt (D17)', function () {
-    $graph = GraphBuilder::create('approval-workflow-d17-mechanism')
+it('resumes past entry without re-gating when onResume does not satisfy shouldInterrupt', function () {
+    $graph = GraphBuilder::create('approval-workflow-resume-gate-mechanism')
         ->addNode('generate', GenerateContentNode::class)
         ->addNode('approve', ApprovalInterruptNodeWithoutGateSatisfaction::class)
         ->addNode('publish', PublishNode::class)
@@ -267,9 +267,9 @@ it('resumes past entry without re-gating when onResume does not satisfy shouldIn
         ->addExitPoint('publish')
         ->build();
 
-    AgenticGraph::register('approval-workflow-d17-mechanism', $graph);
+    AgenticGraph::register('approval-workflow-resume-gate-mechanism', $graph);
 
-    $handle = AgenticGraph::execute('approval-workflow-d17-mechanism', new State(['topic' => 'D17']));
+    $handle = AgenticGraph::execute('approval-workflow-resume-gate-mechanism', new State(['topic' => 'resume gate']));
     $checkpointId = $handle->getFinalState()->getInterruptCheckpointId();
 
     expect($handle->getFinalState()->has('approved'))->toBeFalse();

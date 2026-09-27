@@ -149,7 +149,7 @@ it('leaves graph-level lifecycle events with null node_seq', function () {
 it('populates coherent node_seq on Prism streaming text_delta events via real provider', function () {
     $apiKey = env('OPENAI_API_KEY');
     if (! is_string($apiKey) || $apiKey === '') {
-        expect(true)->toBeTrue('OPENAI_API_KEY not configured — skipping real-provider Prism node_seq test');
+        expect(true)->toBeTrue('OPENAI_API_KEY not configured, skipping real-provider Prism node_seq test');
 
         return;
     }

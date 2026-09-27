@@ -6,7 +6,7 @@ use Shahzad\AgenticGraph\State\State;
 it('returns a valid registered route via real OpenAI structured output', function () {
     $apiKey = env('OPENAI_API_KEY');
     if (! is_string($apiKey) || $apiKey === '') {
-        expect(true)->toBeTrue('OPENAI_API_KEY not configured — skipping real-provider routing test');
+        expect(true)->toBeTrue('OPENAI_API_KEY not configured, skipping real-provider routing test');
 
         return;
     }

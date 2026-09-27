@@ -396,7 +396,7 @@ function otlpExportedSpans(): array
     return $spans;
 }
 
-it('exports the resumed segment of an interrupted trace, in the same process and in a new one (F-7)', function (bool $newProcess): void {
+it('exports the resumed segment of an interrupted trace, in the same process and in a new one', function (bool $newProcess): void {
     Http::fake(['localhost:4318/*' => Http::response([], 200)]);
     config([
         'agenticgraph.tracing.enabled' => true,
@@ -419,7 +419,7 @@ it('exports the resumed segment of an interrupted trace, in the same process and
     expect($names)->toBe(['0:before', '1:after']);
 })->with(['same process' => false, 'new process' => true]);
 
-it('exports exactly one root span for an interrupted then resumed trace, in the final segment (I-6)', function (): void {
+it('exports exactly one root span for an interrupted then resumed trace, in the final segment', function (): void {
     Http::fake(['localhost:4318/*' => Http::response([], 200)]);
     config([
         'agenticgraph.tracing.enabled' => true,

@@ -347,7 +347,7 @@ it('queue: ExecuteNodeJob on one worker emits one span per attempt under the roo
     } catch (RuntimeException) {
     }
 
-    // The job sends its spans as a segment when it ends (spec G-F).
+    // The job sends its spans as a segment when it ends.
     expect($exporter->sent)->toHaveCount(1);
     $attempts = raAttempts($exporter->sent[0]['spans']);
     if ($failures > 3) {
@@ -377,7 +377,7 @@ it('streaming: retries emit one span per attempt under the root', function (int 
     }
 })->with(['fails 4 times' => 99, 'fails twice, then succeeds' => 2]);
 
-it('streaming: a node that fails after emitting content is not retried (D27)', function () {
+it('streaming: a node that fails after emitting content is not retried', function () {
     $exporter = raExporter();
     AgenticGraph::register('ra-stream-d27', raGraph('ra-stream-d27', RaStreamThenThrowNode::class));
     $options = new ExecutionOptions(mode: ExecutionMode::SYNC, streaming: StreamingMode::ITERATOR);

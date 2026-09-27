@@ -173,7 +173,8 @@ return [
     'tracing' => [
         'enabled' => env('AGENTICGRAPH_TRACING', false),
 
-        // Exporter driver: auto (pulse when api_key set, else log), pulse, log, file, null, otlp
+        // Exporter driver: auto, pulse, log, file, null, otlp. auto is null in unit tests,
+        // pulse when api_key is set, otherwise log.
         'exporter' => env('AGENTICGRAPH_TRACING_EXPORTER', 'auto'),
 
         // exporter=file writes {path}/{trace_id}/{Ymd-His-u}.json, one file per segment
@@ -225,7 +226,7 @@ return [
             'slow_threshold_ms' => env('AGENTICGRAPH_DB_SLOW_THRESHOLD_MS', 1000),
         ],
 
-        // OTLP exporter (OSS reach — Jaeger, Tempo, Honeycomb, Datadog, etc.)
+        // OTLP exporter (OSS reach: Jaeger, Tempo, Honeycomb, Datadog, etc.)
         // Set AGENTICGRAPH_TRACING_EXPORTER=otlp and point at your collector.
         'otlp' => [
             'endpoint' => env('AGENTICGRAPH_OTLP_ENDPOINT', 'http://localhost:4318/v1/traces'),

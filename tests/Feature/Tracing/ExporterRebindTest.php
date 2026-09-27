@@ -30,7 +30,7 @@ class RebindCapturingExporter extends PulseExporter
 }
 
 /**
- * Spec G-1: the instrumentation singletons are resolved at boot (Event::subscribe and
+ * The instrumentation singletons are resolved at boot (Event::subscribe and
  * DatabaseInstrumentation::register). Rebinding TracerExporter afterwards must still
  * route their spans to the new exporter.
  */

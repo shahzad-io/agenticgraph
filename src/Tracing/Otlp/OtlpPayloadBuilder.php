@@ -134,7 +134,7 @@ final class OtlpPayloadBuilder
 
     /**
      * Wire v1 attributes pass through under their own names; promoted llm fields map to
-     * gen_ai.* only where the OTel meaning matches (spec M-3, names in spec/tracing-wire-v1.md).
+     * gen_ai.* only where the OTel meaning matches (names in spec/tracing-wire-v1.md).
      *
      * @param  array<string, mixed>  $span
      * @param  array<string, mixed>|null  $llmCall

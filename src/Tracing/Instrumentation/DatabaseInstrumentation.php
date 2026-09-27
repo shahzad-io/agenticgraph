@@ -25,7 +25,7 @@ class DatabaseInstrumentation
     ) {}
 
     /**
-     * The exporter is resolved per call, never pinned at construction (spec G-1),
+     * The exporter is resolved per call, never pinned at construction,
      * so a TracerExporter rebound at runtime receives the spans.
      */
     private function exporter(): TracerExporter
@@ -84,7 +84,7 @@ class DatabaseInstrumentation
             'started_at' => TraceTime::format($startedAt),
             'ended_at' => TraceTime::format($endedAt),
             'duration_ms' => $durationMs,
-            // Wire v1 (spec M-3): a Laravel connection name is not an OTel db.namespace, and the
+            // Wire v1 (spec/tracing-wire-v1.md): a Laravel connection name is not an OTel db.namespace, and the
             // read/write class is not an operation, so both use laravel.db.*.
             'attributes' => array_filter([
                 'laravel.db.connection' => $event->connectionName,

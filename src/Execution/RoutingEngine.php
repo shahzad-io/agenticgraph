@@ -83,7 +83,7 @@ final class RoutingEngine implements RouterResolverInterface
     }
 
     /**
-     * Runs one routing decision inside a route span (spec T8.9, K-1). The span's parent is the
+     * Runs one routing decision inside a route span. The span's parent is the
      * root graph span, and a router's own LLM call nests under the route span.
      * A null router means a join.
      *

@@ -571,7 +571,7 @@ it('handles multiple interrupts in sequence', function () {
     $resumeEvents = iterator_to_array($resumeHandle->stream()->inline ?? new ArrayIterator([]));
     $resumeTypes = array_map(fn ($event) => $event->type(), $resumeEvents);
 
-    // D17: resume-entry skips the gate once even though interrupt_count (1) still satisfies shouldInterrupt.
+    // Resume-entry skips the gate once even though interrupt_count (1) still satisfies shouldInterrupt.
     expect($resumeTypes)->toContain('stream_resume')
         ->and($resumeTypes)->not->toContain('node_interrupt')
         ->and($resumeHandle->getFinalState()->hasInterrupt())->toBeFalse()

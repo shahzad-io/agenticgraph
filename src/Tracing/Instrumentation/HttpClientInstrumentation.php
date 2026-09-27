@@ -32,7 +32,7 @@ class HttpClientInstrumentation
     ) {}
 
     /**
-     * The exporter is resolved per call, never pinned at construction (spec G-1),
+     * The exporter is resolved per call, never pinned at construction,
      * so a TracerExporter rebound at runtime receives the spans.
      */
     private function exporter(): TracerExporter
@@ -321,7 +321,7 @@ class HttpClientInstrumentation
     }
 
     /**
-     * Wire v1 http attributes (spec M-3: OTel names only where the meaning matches exactly).
+     * Wire v1 http attributes (spec/tracing-wire-v1.md: OTel names only where the meaning matches exactly).
      *
      * @return array<string, int|string>
      */

@@ -13,7 +13,7 @@ use Shahzad\AgenticGraph\State\State;
 /**
  * Regression tests for GraphRegistry P0: built graphs must never pass through a
  * serializing Laravel cache. These tests intentionally use serialize=true on
- * the array cache driver — the opposite of TestCase's serialize=false default.
+ * the array cache driver, the opposite of TestCase's serialize=false default.
  */
 beforeEach(function () {
     config([
@@ -90,7 +90,7 @@ it('does not read graphs from Laravel cache on get', function () {
     expect(app(GraphRegistry::class)->get('stale-cache'))->toBeNull();
 });
 
-it('resolves a healthy graph for the T14 batch-completion registry lookup site', function () {
+it('resolves a healthy graph for the batch-completion registry lookup site', function () {
     $graph = buildGraphRegistrySerializationGraph('p14-registry-get');
     app(GraphRegistry::class)->register('p14-registry-get', $graph);
 

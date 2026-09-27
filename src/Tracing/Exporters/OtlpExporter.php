@@ -44,7 +44,7 @@ final class OtlpExporter extends BufferedTraceExporter
 
     /**
      * OTLP spans are immutable once exported, so the root graph span is only exported with the
-     * final segment (spec I-6). Earlier segments carry their child spans only.
+     * final segment. Earlier segments carry their child spans only.
      */
     protected function buildPayload(array $trace, array $segment, array $spans, array $llmCalls): array
     {

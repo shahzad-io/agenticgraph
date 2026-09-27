@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Shahzad\AgenticGraph\Streaming;
 
 /**
- * Lifecycle and framework stream event types excluded from D27 content-emission retry gating.
+ * Lifecycle and framework stream event types excluded from the content-emission retry gate.
  */
 final class StreamLifecycleEventTypes
 {

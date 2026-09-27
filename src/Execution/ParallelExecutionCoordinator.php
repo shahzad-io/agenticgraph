@@ -30,6 +30,7 @@ use Shahzad\AgenticGraph\Streaming\StreamLifecycleEventEmitter;
 use Shahzad\AgenticGraph\Streaming\StreamLifecycleEventTypes;
 use Shahzad\AgenticGraph\Streaming\StreamNodeCompletePayloadBuilder;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
+use Shahzad\AgenticGraph\Tracing\InstrumentationGate;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 use Shahzad\AgenticGraph\Tracing\TraceTime;
 
@@ -205,7 +206,7 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
             $parentSpanId
         );
 
-        $this->bus->batch($jobs)
+        InstrumentationGate::internal(fn () => $this->bus->batch($jobs)
             ->name("agenticgraph-parallel-{$executionId}")
             ->onConnection(config('agenticgraph.execution.queue_connection', 'redis'))
             ->onQueue(config('agenticgraph.execution.queue_name', 'agenticgraph'))
@@ -213,7 +214,7 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
             ->then($callbacks['then'])
             ->catch($callbacks['catch'])
             ->finally($callbacks['finally'])
-            ->dispatch();
+            ->dispatch());
 
         return new ParallelResult($state, $sourceNode, true);
     }
@@ -407,7 +408,7 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
             "Batch execution failed: {$e->getMessage()}"
         );
 
-        // Close the trace (spec I-4): the failed segment carries the root span and the error.
+        // Close the trace: the failed segment carries the root span and the error.
         if ($graphName !== null) {
             if ($this->container->bound(TracerExporter::class)) {
                 $this->container->make(TracerExporter::class)->resumeTrace($executionId, $graphName, 'continued');

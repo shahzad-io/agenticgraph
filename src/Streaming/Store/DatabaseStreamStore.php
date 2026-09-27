@@ -9,6 +9,7 @@ use Illuminate\Database\Query\Builder;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamEvent;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
 use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
+use Shahzad\AgenticGraph\Tracing\InstrumentationGate;
 
 final class DatabaseStreamStore implements StreamStoreInterface
 {
@@ -41,17 +42,17 @@ final class DatabaseStreamStore implements StreamStoreInterface
             'created_at' => now()->format('Y-m-d H:i:s'),
             'updated_at' => now()->format('Y-m-d H:i:s'),
         ];
-        $this->query()->insert($payload);
+        InstrumentationGate::internal(fn () => $this->query()->insert($payload));
     }
 
     public function readFrom(string $streamId, int $fromSeq, int $limit = 200): \Generator
     {
-        $rows = $this->query()
+        $rows = InstrumentationGate::internal(fn () => $this->query()
             ->where('stream_id', $streamId)
             ->where('seq', '>=', $fromSeq)
             ->orderBy('seq')
             ->limit($limit)
-            ->get();
+            ->get());
 
         $events = [];
         foreach ($rows as $row) {
@@ -73,21 +74,21 @@ final class DatabaseStreamStore implements StreamStoreInterface
 
     public function lastSeq(string $streamId): ?int
     {
-        $row = $this->query()
+        $row = InstrumentationGate::internal(fn () => $this->query()
             ->where('stream_id', $streamId)
             ->orderByDesc('seq')
             ->limit(1)
-            ->first();
+            ->first());
 
         return $row ? (int) $row->seq : null;
     }
 
     public function truncate(string $streamId, int $beforeSeq): void
     {
-        $this->query()
+        InstrumentationGate::internal(fn () => $this->query()
             ->where('stream_id', $streamId)
             ->where('seq', '<', $beforeSeq)
-            ->delete();
+            ->delete());
     }
 
     private function query(): Builder

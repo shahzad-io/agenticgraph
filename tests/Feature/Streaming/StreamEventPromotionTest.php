@@ -135,7 +135,7 @@ it('matches hand-built StreamEventImpl for type payload and monotonic seq', func
     app()->forgetInstance(TraceContext::class);
 });
 
-it('applies D27 gate when failing after streamEvent emission', function () {
+it('applies the content-emission retry gate when failing after streamEvent emission', function () {
     Event::fake([NodeExecutionFailed::class]);
 
     $graph = GraphBuilder::create('stream-event-d27')

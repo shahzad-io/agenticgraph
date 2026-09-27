@@ -10,7 +10,7 @@ declare(strict_types=1);
  * SOURCE: Baked from OpenRouter model catalog (https://openrouter.ai/api/v1/models).
  * OpenRouter returns USD per token; the sync command converts to per-1M-tokens.
  *
- * REGENERATE (maintainer/dev machine with egress — not at consumer runtime):
+ * REGENERATE (maintainer/dev machine with egress, not at consumer runtime):
  *   php artisan agenticgraph:pricing:sync
  *   php artisan agenticgraph:pricing:sync --fixture=tests/fixtures/openrouter-models-sample.json
  *

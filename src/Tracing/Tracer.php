@@ -10,8 +10,8 @@ use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
  * Public tracing API for deliberate, context-conditional span emission.
  *
  * Span ID unification: the ID returned by {@see TraceContext::startSpan()} is the
- * same ID passed to {@see TracerExporter::addSpan()} — the stack span and the
- * exported span are one identity (T3 tool-wrap will align to this pattern).
+ * same ID passed to {@see TracerExporter::addSpan()}: the stack span and the
+ * exported span are one identity.
  */
 final class Tracer
 {
@@ -20,7 +20,7 @@ final class Tracer
     ) {}
 
     /**
-     * The exporter is resolved per call, never pinned at construction (spec G-1),
+     * The exporter is resolved per call, never pinned at construction,
      * so a TracerExporter rebound at runtime receives the spans.
      */
     private function exporter(): TracerExporter
@@ -146,7 +146,7 @@ final class Tracer
     }
 
     /**
-     * Honor capture.max_length for string attribute values (full capture-depth is T5).
+     * Honor capture.max_length for string attribute values.
      *
      * @param  array<string, mixed>  $attributes
      * @return array<string, mixed>
