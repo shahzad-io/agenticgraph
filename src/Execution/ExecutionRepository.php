@@ -171,7 +171,10 @@ class ExecutionRepository implements ExecutionStore
         }
     }
 
-    public function failed(string $id, string $error): void
+    /**
+     * Marks the execution failed. Returns false when the row is missing or already terminal.
+     */
+    public function failed(string $id, string $error): bool
     {
         $updated = InstrumentationGate::internal(fn () => $this->db->transaction(function () use ($id, $error) {
             $current = $this->db->table($this->table)
@@ -220,6 +223,8 @@ class ExecutionRepository implements ExecutionStore
                 'error' => $error,
             ]);
         }
+
+        return $updated === true;
     }
 
     /**

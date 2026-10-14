@@ -465,14 +465,9 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                             $this->streamContext?->nextNodeSeq($current)
                         );
 
-                        $sink->close(StreamStatus::ERROR, [
-                            'error_type' => $e::class,
-                            'message' => $e->getMessage(),
-                            'final_state' => State::toStoragePayload($state),
-                        ]);
-
                         $traceContext->endSpan();
 
+                        // The outer catch emits graph_failed, then closes the stream once.
                         throw $e;
                     }
 
@@ -568,6 +563,22 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
             $duration = microtime(true) - $start;
             $this->events->dispatch(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000, $traceContext->getRootSpanId()));
 
+            $this->endFailedStream($sink, $session, $traceContext, $e, $state);
+
+            $this->repo->failed($executionId, $e->getMessage());
+
+            throw $e;
+        }
+    }
+
+    /**
+     * graph_failed, then one close (execution_terminal + broadcast stream_close), always in that order.
+     * Delivery errors here are dropped: the original failure is what the caller rethrows, and a
+     * broken transport must not skip the close. The store is written before the transport.
+     */
+    private function endFailedStream(StreamSinkInterface $sink, StreamSession $session, TraceContext $traceContext, \Throwable $e, StateContract $state): void
+    {
+        try {
             $this->emitLifecycleEvent(
                 $sink,
                 $session,
@@ -580,16 +591,16 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                     'message' => $e->getMessage(),
                 ]
             );
+        } catch (\Throwable) {
+        }
 
+        try {
             $sink->close(StreamStatus::ERROR, [
                 'error_type' => $e::class,
                 'message' => $e->getMessage(),
                 'final_state' => State::toStoragePayload($state),
             ]);
-
-            $this->repo->failed($executionId, $e->getMessage());
-
-            throw $e;
+        } catch (\Throwable) {
         }
     }
 
@@ -644,24 +655,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
         $this->events->dispatch(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000, $traceContext->getRootSpanId()));
 
         if ($sink !== null && $session !== null) {
-            $this->emitLifecycleEvent(
-                $sink,
-                $session,
-                null,
-                $traceContext->getSpanId(),
-                $traceContext->getParentSpanId(),
-                StreamLifecycleEventTypes::GRAPH_FAILED,
-                [
-                    'error_type' => $e::class,
-                    'message' => $e->getMessage(),
-                ]
-            );
-
-            $sink->close(StreamStatus::ERROR, [
-                'error_type' => $e::class,
-                'message' => $e->getMessage(),
-                'final_state' => State::toStoragePayload($state),
-            ]);
+            $this->endFailedStream($sink, $session, $traceContext, $e, $state);
         }
 
         $this->repo->failed($executionId, $e->getMessage());

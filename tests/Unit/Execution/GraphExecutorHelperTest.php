@@ -310,7 +310,8 @@ it('marks execution failed and logs on batch failure', function () {
 
     $repo->shouldReceive('failed')
         ->once()
-        ->with($executionId, 'Batch execution failed: '.$error->getMessage());
+        ->with($executionId, 'Batch execution failed: '.$error->getMessage())
+        ->andReturn(true);
 
     $logger->shouldReceive('error')
         ->once()

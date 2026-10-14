@@ -261,7 +261,8 @@ test('wrapped sink treats store failure as fatal when configured', function () {
         ->and($events[0]->type())->toBe('stream_error')
         ->and($payload)->toBeInstanceOf(StreamErrorPayload::class)
         ->and($payload->stage)->toBe('store')
-        ->and($baseSink->status()?->value)->toBe('error');
+        // F12: a fatal error rethrows without closing; the coordinator closes once, after graph_failed.
+        ->and($baseSink->status())->toBeNull();
 });
 
 test('wrapped sink emits stream_error on database store failure', function () {
@@ -403,7 +404,8 @@ test('wrapped sink handles client disconnect mid-stream', function () {
         ->and($baseSink->events[0]->type())->toBe('stream_error')
         ->and($payload)->toBeInstanceOf(StreamErrorPayload::class)
         ->and($payload->stage)->toBe('transport')
-        ->and($baseSink->status?->value)->toBe('error');
+        // F12: a fatal error rethrows without closing; the coordinator closes once, after graph_failed.
+        ->and($baseSink->status)->toBeNull();
 });
 
 test('wrapped sink enforces retention and emits metrics on close', function () {
@@ -1057,7 +1059,8 @@ test('wrapped stream sink handles fatal store failure by rethrowing', function (
     } catch (RuntimeException) {
     }
 
-    expect($sink->status()?->value)->toBe('error');
+    // F12: a fatal error rethrows without closing; the coordinator closes once, after graph_failed.
+    expect($sink->status())->toBeNull();
 });
 
 test('wrapped stream sink handles sink failure correctly', function () {
@@ -1146,4 +1149,36 @@ test('wrapped stream sink flushes observer on close', function () {
     Event::assertDispatched(StreamStatsUpdated::class, function (StreamStatsUpdated $event) {
         return $event->streamId === 'stream-close' && $event->executionId === 'exec-close';
     });
+});
+
+test('wrapped stream sink closes once and drops events after close', function () {
+    $sink = new MemorySink;
+    $wrapped = new WrappedStreamSink(
+        $sink,
+        null,
+        null,
+        null,
+        null,
+        new StreamObserver(new StreamMetrics, 'stream-once', 'exec-once', (float) time()),
+        new StreamErrorHandler,
+        null
+    );
+
+    $wrapped->close(StreamStatus::ERROR);
+    $wrapped->close(StreamStatus::SUCCESS);
+    $wrapped->emit(new StreamEventImpl(
+        streamId: 'stream-once',
+        executionId: 'exec-once',
+        nodeName: null,
+        spanId: null,
+        parentSpanId: null,
+        type: 'graph_failed',
+        payload: [],
+        seq: 9,
+        nodeSeq: null,
+        occurredAt: new DateTimeImmutable('now')
+    ));
+
+    expect($sink->status()?->value)->toBe('error')
+        ->and(iterator_to_array($sink->events()))->toBe([]);
 });

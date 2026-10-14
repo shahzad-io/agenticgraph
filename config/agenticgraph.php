@@ -39,7 +39,6 @@ return [
     'interrupts' => [
         'persistence_enabled' => env('AGENTICGRAPH_INTERRUPT_PERSISTENCE', true),
         'default_expiry_days' => env('AGENTICGRAPH_INTERRUPT_EXPIRY_DAYS', 7),
-        'auto_cleanup_days' => env('AGENTICGRAPH_INTERRUPT_CLEANUP_DAYS', 30),
         'broadcast_enabled' => env('AGENTICGRAPH_INTERRUPT_BROADCAST', true),
         'handler' => env('AGENTICGRAPH_INTERRUPT_HANDLER'),
     ],
@@ -47,6 +46,10 @@ return [
     'execution' => [
         'queue_connection' => env('AGENTICGRAPH_QUEUE_CONNECTION', 'redis'),
         'queue_name' => env('AGENTICGRAPH_QUEUE_NAME', 'agenticgraph'),
+        'tries' => env('AGENTICGRAPH_EXECUTION_TRIES', 1), // ExecuteGraphJob attempts
+        'timeout' => env('AGENTICGRAPH_EXECUTION_TIMEOUT', 0), // ExecuteGraphJob seconds; 0 = worker default
+        'resume_tries' => env('AGENTICGRAPH_RESUME_TRIES', 1), // ResumeExecutionJob attempts
+        'resume_timeout' => env('AGENTICGRAPH_RESUME_TIMEOUT', 0), // ResumeExecutionJob seconds; 0 = worker default
         'max_iterations' => env('AGENTICGRAPH_MAX_ITERATIONS', 1000), // existing - used when loop.enabled = false
 
         // Loop support configuration (opt-in, backward compatible)
@@ -81,6 +84,7 @@ return [
         'model' => env('AGENTICGRAPH_PRISM_MODEL', 'anthropic:claude-sonnet-4'),
         'cache_enabled' => env('AGENTICGRAPH_PRISM_CACHE', true),
         'cache_ttl' => env('AGENTICGRAPH_PRISM_CACHE_TTL', 60),
+        'max_tokens' => env('AGENTICGRAPH_PRISM_MAX_TOKENS', null), // max output tokens per PrismNode call; null = no limit sent
         'embeddings' => [
             'provider' => env('AGENTICGRAPH_PRISM_EMBEDDINGS_PROVIDER'),
             'model' => env('AGENTICGRAPH_PRISM_EMBEDDINGS_MODEL'),
@@ -146,13 +150,22 @@ return [
         'routes' => [
             'enabled' => env('AGENTICGRAPH_STREAMING_ROUTES', true),
             'prefix' => env('AGENTICGRAPH_STREAMING_PREFIX', 'agentic-graph/streams'),
-            'middleware' => ['api'],
+            // AGENTICGRAPH_STREAMING_MIDDLEWARE: comma-separated, e.g. "api,throttle:60,1". A comma before a
+            // number stays with the previous middleware's parameters; use a middleware group for other parameters.
+            'middleware' => array_values(array_filter(array_map('trim', preg_split('/,(?!\s*\d+\s*(?:,|$))/', (string) env('AGENTICGRAPH_STREAMING_MIDDLEWARE', 'api')) ?: []), fn (string $middleware) => $middleware !== '')) ?: ['api'],
         ],
         'capture' => [
             'state' => env('AGENTICGRAPH_STREAM_CAPTURE_STATE', 'none'),
             // 'none' = lifecycle payload unchanged (default for stream store)
             // 'diff' = attach input→output state diff on node_complete
             // 'full' = attach full output state (toStoragePayload shape) on node_complete
+        ],
+        // final_state in execution_terminal, stream_close meta and stream_replay_unavailable.
+        // expose=false sends null. keys = list of top-level state keys to send, null = all.
+        // AGENTICGRAPH_STREAM_FINAL_STATE_KEYS: comma-separated, e.g. "response,status"; empty = null.
+        'final_state' => [
+            'expose' => env('AGENTICGRAPH_STREAM_EXPOSE_FINAL_STATE', false),
+            'keys' => array_values(array_filter(array_map('trim', explode(',', (string) env('AGENTICGRAPH_STREAM_FINAL_STATE_KEYS', ''))), fn (string $key) => $key !== '')) ?: null,
         ],
     ],
 

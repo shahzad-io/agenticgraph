@@ -14,6 +14,9 @@ final class WrappedStreamSink implements StreamSinkInterface
 {
     private bool $terminalAppended = false;
 
+    /** Set by the first close(); later closes and emits are dropped, so execution_terminal and stream_close stay last. */
+    private bool $closed = false;
+
     public function __construct(
         private readonly StreamSinkInterface $sink,
         private readonly ?StreamStoreInterface $store,
@@ -27,7 +30,7 @@ final class WrappedStreamSink implements StreamSinkInterface
 
     public function emit(StreamEvent $event): void
     {
-        if (! $this->shouldEmit($event)) {
+        if ($this->closed || ! $this->shouldEmit($event)) {
             return;
         }
         if ($this->store) {
@@ -71,6 +74,11 @@ final class WrappedStreamSink implements StreamSinkInterface
 
     public function close(StreamStatus $status, mixed $meta = null): void
     {
+        if ($this->closed) {
+            return;
+        }
+        $this->closed = true;
+
         $this->appendStoreTerminalIfNeeded($status, $meta);
         $this->sink->close($status, $meta);
         $this->observer->flush();
@@ -162,10 +170,7 @@ final class WrappedStreamSink implements StreamSinkInterface
         } catch (\Throwable) {
         }
         if ($decision->fatal) {
-            try {
-                $this->sink->close(StreamStatus::ERROR, $decision->payload);
-            } catch (\Throwable) {
-            }
+            // No close here: the coordinator's failure path emits graph_failed, then closes once.
             throw $error;
         }
 

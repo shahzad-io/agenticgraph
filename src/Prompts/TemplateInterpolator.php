@@ -43,7 +43,7 @@ final class TemplateInterpolator
                 $key = $matches[1];
 
                 if (! array_key_exists($key, $variables)) {
-                    throw new TemplateException("Missing template variable: {$key}");
+                    throw new TemplateException('Missing template variable: '.substr($key, 0, 64));
                 }
 
                 $result .= self::formatValue($variables[$key]);

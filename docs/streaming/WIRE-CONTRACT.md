@@ -1,6 +1,6 @@
-# Stream Wire Contract v1.0
+# Stream Wire Contract v1.1
 
-**Status:** FROZEN (public API). Changing frozen fields, event type strings, or delivery semantics is a **breaking change** requiring a major version bump.
+**Status:** FROZEN (public API). Versioning rule: before the first public release, amendments are recorded in the [version history](#version-history) as v1.1. After the first public release, changing frozen fields, event type strings, or delivery semantics is a **breaking change** requiring a major version bump.
 
 **Source of truth:** `Shahzad\AgenticGraph\Streaming\StreamEventEnvelope` (`src/Streaming/StreamEventEnvelope.php`).
 
@@ -82,7 +82,7 @@ Enumeratable constants in `StreamLifecycleEventTypes` and `StreamEventEnvelope`.
 | `node_error` | node | increments | `{ node_name: string, error_type: string, message: string }` |
 | `node_interrupt` | node | `null` | `{ node_name: string, reason: string, checkpoint_id: string }` + optional review payload |
 | `stream_resume` | resume node | `null` | `{ from_seq, resumed_at_seq, gap_events, checkpoint_id }` |
-| `execution_terminal` | `null` | `null` | `{ status: 'completed'\|'interrupted'\|'failed', final_state: object, meta?: object }` |
+| `execution_terminal` | `null` | `null` | `{ status: 'completed'\|'interrupted'\|'failed', final_state: object \| null, meta?: object }`. See [final_state](#final_state-exposure) |
 | `stream_close` | — | — | **Not a 9-field body** — see [Terminals](#terminals-two-vocabularies) |
 | `stream_error` | varies | varies | See [stream_error](#stream_error) |
 
@@ -253,7 +253,7 @@ Client fallback: `{ eventType: string, payload: unknown }` for non-enumerated ty
 | Resolver | `ExecutionHandle::broadcastChannel()` |
 | Event name | The `type` string (e.g. `text_delta`, `node_complete`) |
 | Payload | 9-field wire body (**no `type` inside**) |
-| Terminal | `stream_close` with `{ status: 'success'\|'cancelled'\|'error', meta: unknown }` |
+| Terminal | `stream_close` with `{ status: 'success'\|'cancelled'\|'error', meta: unknown }`. When `meta.final_state` is present it follows [final_state](#final_state-exposure) (null by default); other `meta` keys are unchanged |
 
 **Laravel Echo example** (dot-prefix is driver-dependent):
 
@@ -273,16 +273,37 @@ Package tests assert raw event name `'text_delta'` on the broadcaster; confirm d
 | Route | `GET {prefix}/{streamId}` — default `agentic-graph/streams/{streamId}` |
 | Cursor | `?cursor=` query or `Last-Event-ID` header |
 | Frame | `id: {seq}\nevent: {type}\ndata: {json wire body}\n\n` |
-| Terminal | `execution_terminal` with full 9-field envelope; payload `{ status: 'completed'\|'interrupted'\|'failed', final_state, meta? }` |
+| Terminal | `execution_terminal` with full 9-field envelope; payload `{ status: 'completed'\|'interrupted'\|'failed', final_state: object \| null, meta? }`. Always emitted, even when `nodeFilter` or `eventTypeFilter` would exclude it (filters apply only to emitted events), because clients need it to end the stream |
 
 #### Transport-only SSE events (NOT frozen graph semantics)
 
 | `type` | Purpose |
 |--------|---------|
 | `stream_heartbeat` | Keep-alive `{ timestamp }` |
-| `stream_replay_unavailable` | Cursor miss `{ cursor, final_state? }` |
+| `stream_replay_unavailable` | Cursor miss `{ cursor, final_state? }`. `final_state` is present only when `execution_id` is passed and the execution has a stored final state; it follows [final_state](#final_state-exposure) and is never more than the terminal event would send |
 
 Do not build graph logic against these.
+
+### final_state exposure
+
+`final_state` in `execution_terminal`, broadcast `stream_close.meta` and `stream_replay_unavailable` is built by one helper, `StreamEventEnvelope::clientFinalState()`, from this config:
+
+```php
+'streaming' => [
+    'final_state' => [
+        'expose' => env('AGENTICGRAPH_STREAM_EXPOSE_FINAL_STATE', false),
+        'keys' => null, // null = all keys when exposed; array = allowlist of top-level state keys
+    ],
+],
+```
+
+| Config | `final_state` on the wire |
+|--------|---------------------------|
+| `expose` false, or the key missing from a published config | `null` |
+| `expose` true, `keys` a list | Plain state object with only the listed top-level keys |
+| `expose` true, `keys` null | Plain state object with every top-level key |
+
+The value is the plain state data (`{ "response": "..." }`), not the internal storage envelope. Clients must handle `null`.
 
 ### Iterator (in-process only)
 
@@ -308,6 +329,8 @@ Delivery mode determines the terminal event. This is **by design**, not a bug.
 | `error` | `failed` |
 
 `stream_close` uses a **minimal** payload (not the 9-field envelope). `execution_terminal` uses the full envelope.
+
+**Ordering rule:** nothing follows `execution_terminal` in a run. It is the last stored event, `stream_close` is the last broadcast, and each run closes exactly once. On a failure, `graph_failed` comes before the terminal (a node error gives `node_error`, `graph_failed`, `execution_terminal`). A resumed run continues the same stream: it starts with `stream_resume` after the previous run's `interrupted` terminal and ends with its own terminal.
 
 ---
 
@@ -372,6 +395,12 @@ export type PrismContentEventType =
 export type StreamEvent = {
   eventType: FrameworkEventType | PrismContentEventType | (string & {});
 } & StreamWireBody;
+
+export type ExecutionTerminalPayload = {
+  status: 'completed' | 'interrupted' | 'failed';
+  final_state: Record<string, unknown> | null; // null unless the server exposes it
+  meta?: Record<string, unknown>;
+};
 ```
 
 ---
@@ -381,3 +410,4 @@ export type StreamEvent = {
 | Version | Date | Notes |
 |---------|------|-------|
 | **1.0** | 2026-06 | Initial freeze after prefreeze fixes (coherent `node_seq`, `StreamErrorPayload` wire serialization, `NODE_INTERRUPT` constant) |
+| **1.1** | 2026-10 | Pre-release amendment (allowed only because the contract was not yet publicly released). `final_state` is nullable and `null` by default in `execution_terminal`, broadcast `stream_close.meta` and `stream_replay_unavailable`; opt in with `AGENTICGRAPH_STREAM_EXPOSE_FINAL_STATE=true` and an optional `keys` allowlist. When exposed it is the plain state object, not the storage envelope. `execution_terminal` is documented as always emitted regardless of stream filters, and as the last event of a run (`graph_failed` before it, one `stream_close`). Breaking for clients that assume an object |

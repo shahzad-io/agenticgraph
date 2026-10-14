@@ -18,7 +18,7 @@ use Shahzad\AgenticGraph\Prompts\Exceptions\TemplateException;
 final class ChatPromptMessages
 {
     /**
-     * @param  array<int, array{role: string, content: string}>  $formatted
+     * @param  array<int, array{role: string, content: string, message?: Message}>  $formatted
      * @param  array<int, Media|Text>  $additionalContent
      * @return array<int, Message>
      */
@@ -37,6 +37,16 @@ final class ChatPromptMessages
         foreach ($formatted as $index => $message) {
             $content = $message['content'];
             $media = ($index === $lastUserIndex && $additionalContent !== []) ? $additionalContent : [];
+
+            // Placeholder messages given as Prism objects pass through unchanged.
+            if (isset($message['message'])) {
+                $original = $message['message'];
+                $messages[] = $original instanceof UserMessage && $media !== []
+                    ? new UserMessage($original->content, [...$original->additionalContent, ...$media], $original->additionalAttributes)
+                    : $original;
+
+                continue;
+            }
 
             $messages[] = match ($message['role']) {
                 'system' => new SystemMessage($content),

@@ -187,7 +187,10 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
         if (! is_array($structured) || ! isset($structured['route']) || ! is_string($structured['route'])) {
             if ((bool) config('agenticgraph.logging.enabled', true)) {
                 $this->logger->warning('PrismRouter structured response missing route key', [
-                    'response' => $structured,
+                    'router' => static::class,
+                    'response_type' => get_debug_type($structured),
+                    'response_keys' => is_array($structured) ? array_keys($structured) : [],
+                    'route_valid' => false,
                     'expected_routes' => $this->getAvailableRoutes(),
                 ]);
             }
@@ -251,9 +254,12 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
     {
         if ((bool) config('agenticgraph.logging.enabled', true)) {
             $this->logger->error('PrismRouter failed after retries', [
+                'router' => static::class,
+                'exception_class' => $e !== null ? $e::class : null,
                 'exception' => $e?->getMessage(),
-                'trace' => $e?->getTraceAsString(),
-                'state' => $state->toArray(),
+                'file' => $e?->getFile(),
+                'line' => $e?->getLine(),
+                'state_keys' => array_keys($state->toArray()),
                 'available_routes' => $this->getAvailableRoutes(),
             ]);
         }

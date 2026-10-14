@@ -45,6 +45,8 @@ final class RedisStreamStore implements StreamStoreInterface
             'occurred_at' => $event->occurredAt()->format('c'),
             'payload' => json_encode($event->payload(), JSON_UNESCAPED_SLASHES),
         ];
+        // XADD would store null as ""; leave null fields out so they read back as null.
+        $fields = array_filter($fields, fn ($value) => $value !== null);
         if ($this->maxLen > 0) {
             $this->connection->command('xadd', [$key, $id, $fields, $this->maxLen]);
         } else {
@@ -129,7 +131,9 @@ final class RedisStreamStore implements StreamStoreInterface
     {
         $data = $this->normalizeFields($fields);
         $seq = isset($data['seq']) ? (int) $data['seq'] : (int) explode('-', $id)[0];
-        $nodeSeq = $data['node_seq'] ?? null;
+        // Absent means null. "" is how entries written before null-skipping stored null.
+        $nullable = fn (string $field): ?string => isset($data[$field]) && $data[$field] !== '' ? (string) $data[$field] : null;
+        $nodeSeq = $nullable('node_seq');
         $nodeSeq = $nodeSeq === null ? null : (int) $nodeSeq;
         $payload = json_decode((string) ($data['payload'] ?? '[]'), true) ?? [];
         $occurredAt = new \DateTimeImmutable((string) ($data['occurred_at'] ?? 'now'));
@@ -137,9 +141,9 @@ final class RedisStreamStore implements StreamStoreInterface
         return new StreamEventImpl(
             $streamId,
             (string) ($data['execution_id'] ?? ''),
-            $data['node_name'] ?? null,
-            $data['span_id'] ?? null,
-            $data['parent_span_id'] ?? null,
+            $nullable('node_name'),
+            $nullable('span_id'),
+            $nullable('parent_span_id'),
             (string) ($data['type'] ?? ''),
             $payload,
             $seq,

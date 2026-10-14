@@ -21,6 +21,7 @@ use Prism\Prism\Images\PendingRequest as PendingImageRequest;
 use Prism\Prism\Images\Response as ImageResponse;
 use Prism\Prism\Streaming\Events\StreamEndEvent;
 use Prism\Prism\Streaming\Events\ToolCallEvent;
+use Prism\Prism\Structured\PendingRequest as PendingStructuredRequest;
 use Prism\Prism\Text\PendingRequest as PendingTextRequest;
 use Prism\Prism\Text\Response as TextResponse;
 use Prism\Prism\Tool;
@@ -47,30 +48,10 @@ use Shahzad\AgenticGraph\Tracing\TraceContext;
 /**
  * Abstract node with integrated PrismPHP AI capabilities.
  *
- * @method PendingTextRequest prism() Create a text generation request
- * @method PendingEmbeddingsRequest embeddings() Create an embeddings request
- * @method PendingImageRequest image() Create an image generation request
- * @method PendingAudioRequest audio() Create an audio processing request
- * @method string prompt(string $template, array<string, mixed> $variables = [], array<int, \Prism\Prism\ValueObjects\Media\Media|\Prism\Prism\ValueObjects\Media\Text> $additionalContent = []) Generate text from a template
- * @method string promptMessages(array<int, Message> $messages) Generate text from message array
- * @method EmbeddingsResponse embeddingsFromInput(string|array<int, string> $inputs, array<string, mixed> $providerOptions = []) Generate embeddings from input
- * @method ImageResponse generateImage(string $prompt, array<int, \Prism\Prism\ValueObjects\Media\Media|\Prism\Prism\ValueObjects\Media\Text> $additionalContent = [], array<string, mixed> $providerOptions = []) Generate an image
- * @method AudioTextResponse audioToText(AudioMedia $audio, array<string, mixed> $providerOptions = []) Transcribe audio to text
- * @method AudioResponse textToAudio(string $text, ?string $voice = null, array<string, mixed> $providerOptions = []) Convert text to audio
- * @method mixed structured(string $prompt, mixed $schema) Generate structured output using a schema
- * @method array<int, \Prism\Prism\ValueObjects\ToolCall> tools(string $prompt, array<int, \Prism\Prism\Tool> $tools) Execute with tool calling (tools are tracing-wrapped)
- * @method \Prism\Prism\Text\Response agent(string $prompt, array<int, \Prism\Prism\Tool> $tools, array<string, mixed> $options = []) Traced multi-step agent with local Prism tools
- * @method McpRequest withMcp(string $serverName, array<string, mixed> $options = []) Create MCP tool request (tools are tracing-wrapped)
- * @method static withModel(string $model) Set the model for this node
- * @method static withCache(int $ttlMinutes) Enable caching with TTL
- * @method static withoutCache() Disable caching
- * @method string promptTemplate(PromptTemplate $template, array<string, mixed> $variables = [], array<int, \Prism\Prism\ValueObjects\Media\Media|\Prism\Prism\ValueObjects\Media\Text> $additionalContent = []) Use a prompt template
- * @method string chatPrompt(ChatPromptTemplate $template, array<string, mixed> $variables = [], array<int, \Prism\Prism\ValueObjects\Media\Media|\Prism\Prism\ValueObjects\Media\Text> $additionalContent = []) Use a chat prompt template
- * @method bool shouldInterrupt(StateContract $state) Check if execution should pause
- * @method string getInterruptReason(StateContract $state) Get human-readable interrupt reason
- * @method mixed getInterruptPayload(StateContract $state) Get structured interrupt payload for UI
- * @method StateContract onResume(StateContract $state, mixed $humanInput) Process human input when resuming
- * @method StateContract handleApproval(StateContract $state, bool $approved, ?string $comments = null) Handle approval workflows
+ * Helpers for subclasses (protected, call them from execute()): prism(), prompt(), promptTemplate(),
+ * chatPrompt(), promptMessages(), structured(), tools(), agent(), withMcp(), embeddings(),
+ * embeddingsFromInput(), image(), generateImage(), audio(), audioToText(), textToAudio(),
+ * withModel(), withCache(), withoutCache(), handleApproval(). Set $maxTokens or $model to configure the node.
  */
 abstract class PrismNode extends AbstractNode
 {
@@ -81,6 +62,9 @@ abstract class PrismNode extends AbstractNode
     protected ?PrismClient $prismClient = null;
 
     protected ?string $model = null;
+
+    /** Max output tokens for this node's LLM calls; null falls back to agenticgraph.prism.max_tokens. */
+    protected ?int $maxTokens = null;
 
     protected ?int $cacheTtl = null;
 
@@ -99,12 +83,32 @@ abstract class PrismNode extends AbstractNode
         $timeout = (int) config('agenticgraph.api.timeout', 30);
         $connectTimeout = (int) config('agenticgraph.api.connect_timeout', 10);
 
-        return $this->prismClient()->text()
+        return $this->withMaxTokensLimit($this->prismClient()->text())
             ->using($provider, $model)
             ->withClientOptions([
                 'timeout' => $timeout,
                 'connect_timeout' => $connectTimeout,
             ]);
+    }
+
+    /**
+     * Applies the output token limit: $maxTokens, then agenticgraph.prism.max_tokens, else none sent.
+     *
+     * @template T of PendingTextRequest|PendingStructuredRequest
+     *
+     * @param  T  $request
+     * @return T
+     */
+    private function withMaxTokensLimit(PendingTextRequest|PendingStructuredRequest $request): PendingTextRequest|PendingStructuredRequest
+    {
+        $configured = config('agenticgraph.prism.max_tokens', null);
+        $limit = $this->maxTokens ?? (is_numeric($configured) ? (int) $configured : null);
+
+        if ($limit !== null) {
+            $request->withMaxTokens($limit);
+        }
+
+        return $request;
     }
 
     protected function buildStreamingRequest(StateContract $state): PendingTextRequest
@@ -416,7 +420,7 @@ abstract class PrismNode extends AbstractNode
             try {
                 return $this->decodeStructuredResponseText($text);
             } catch (PrismStructuredDecodingException) {
-                $response = $this->prismClient()->structured()
+                $response = $this->withMaxTokensLimit($this->prismClient()->structured())
                     ->using($provider, $model)
                     ->withSchema($schema)
                     ->withPrompt($prompt)
@@ -444,7 +448,7 @@ abstract class PrismNode extends AbstractNode
             }
         }
 
-        $response = $this->prismClient()->structured()
+        $response = $this->withMaxTokensLimit($this->prismClient()->structured())
             ->using($provider, $model)
             ->withSchema($schema)
             ->withPrompt($prompt)
@@ -639,7 +643,7 @@ abstract class PrismNode extends AbstractNode
         $tools = $this->wrapToolsForTracing($tools, 'mcp');
         $captureToolCalls = ! $this->toolsTracingWrapped;
         // Raw Prism request; McpRequest handles TokensUsed dispatch after asText().
-        $request = $this->prismClient()->text()->using($provider, $model)->withTools($tools);
+        $request = $this->withMaxTokensLimit($this->prismClient()->text())->using($provider, $model)->withTools($tools);
 
         $toolChoice = $options['toolChoice'] ?? ToolChoice::Any;
         $request->withToolChoice($toolChoice);

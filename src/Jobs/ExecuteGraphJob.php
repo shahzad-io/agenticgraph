@@ -26,7 +26,12 @@ use Shahzad\AgenticGraph\Tracing\TraceContext;
 
 class ExecuteGraphJob implements ShouldBeUnique, ShouldQueue
 {
-    use Batchable, Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use Batchable, Dispatchable, EndsFailedExecution, InteractsWithQueue, Queueable, SerializesModels;
+
+    public int $tries;
+
+    /** Seconds; null leaves the worker's --timeout in charge. */
+    public ?int $timeout;
 
     /**
      * @param  array<string, mixed>  $stateData
@@ -43,6 +48,8 @@ class ExecuteGraphJob implements ShouldBeUnique, ShouldQueue
     ) {
         $this->onConnection(config('agenticgraph.execution.queue_connection', 'redis'));
         $this->onQueue(config('agenticgraph.execution.queue_name', 'agenticgraph'));
+        $this->tries = max(1, (int) config('agenticgraph.execution.tries', 1));
+        $this->timeout = ((int) config('agenticgraph.execution.timeout', 0)) ?: null;
     }
 
     public function uniqueId(): string
@@ -112,5 +119,24 @@ class ExecuteGraphJob implements ShouldBeUnique, ShouldQueue
             app()->forgetInstance(ExecutionContext::class);
             app()->forgetInstance(StreamContext::class);
         }
+    }
+
+    /**
+     * Ends the execution and its stream when the job fails, for example when the graph is
+     * not registered on the worker.
+     */
+    public function failed(\Throwable $e): void
+    {
+        $this->endFailedExecution(
+            $e,
+            $this->executionId,
+            $this->graphName,
+            $this->stateData,
+            $this->streamId,
+            $this->executionOptions?->streaming,
+            $this->executionOptions,
+            $this->rootSpanId,
+            $this->streamSeq,
+        );
     }
 }

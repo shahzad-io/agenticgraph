@@ -21,11 +21,11 @@ class DocBlockValidationTest extends TestCase
             'PrismNode must have a docblock for IDE support'
         );
 
-        // Check for @method annotations
-        $this->assertMatchesRegularExpression(
+        // PrismNode has no magic methods, so no @method tags (F9); helpers are listed in prose.
+        $this->assertDoesNotMatchRegularExpression(
             '/@method/',
             $docComment,
-            'PrismNode should document available methods with @method tags'
+            'PrismNode must not use @method tags for real methods'
         );
     }
 
@@ -52,14 +52,19 @@ class DocBlockValidationTest extends TestCase
         $reflection = new ReflectionClass(PrismNode::class);
         $docComment = $reflection->getDocComment();
 
+        // The helpers are protected, so they are listed in prose, not as @method tags (F9).
         $requiredMethods = ['prism', 'structured', 'tools', 'embeddings', 'prompt', 'withMcp'];
 
         foreach ($requiredMethods as $method) {
-            $pattern = '/@method\s+.*\s+'.preg_quote($method, '/').'\(/';
-            $this->assertMatchesRegularExpression(
-                $pattern,
+            $this->assertStringContainsString(
+                $method.'()',
                 $docComment,
                 "PrismNode must document helper method: {$method}"
+            );
+            $this->assertDoesNotMatchRegularExpression(
+                '/@method\s+.*\s+'.preg_quote($method, '/').'\(/',
+                $docComment,
+                "PrismNode must not tag protected helper {$method} as @method"
             );
         }
     }

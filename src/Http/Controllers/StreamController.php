@@ -63,7 +63,7 @@ final class StreamController
                     if ($executionId !== '') {
                         $record = $executionStore->get($executionId);
                         if ($record?->finalState !== null) {
-                            $payload['final_state'] = $record->finalState;
+                            $payload['final_state'] = StreamEventEnvelope::clientFinalState($record->finalState);
                         }
                     }
                     echo $this->formatEvent(new StreamEventImpl(

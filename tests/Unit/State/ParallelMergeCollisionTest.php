@@ -101,7 +101,7 @@ it('logs a warning for detected collisions without changing merge output', funct
             Mockery::type('string'),
             Mockery::on(function (array $context) {
                 return ($context['key'] ?? null) === 'result'
-                    && ($context['branch_values'] ?? null) === ['branch_a' => 'alpha', 'branch_b' => 'beta']
+                    && ! array_key_exists('branch_values', $context)
                     && ($context['kept_branch'] ?? null) === 'branch_b';
             })
         );

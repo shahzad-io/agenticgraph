@@ -428,8 +428,10 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
             $this->logger->error('Batch execution failed', [
                 'execution_id' => $executionId,
                 'batch_id' => $batch->id,
+                'exception_class' => $e::class,
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
             ]);
         }
     }

@@ -232,7 +232,6 @@ class StateManager
                 .'Use unique keys per parallel branch to avoid silent data loss.',
                 [
                     'key' => $collision['key'],
-                    'branch_values' => $branchValues,
                     'kept_branch' => $keptBranch,
                     'colliding_branches' => array_keys($branchValues),
                 ]

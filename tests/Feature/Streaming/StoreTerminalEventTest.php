@@ -88,7 +88,9 @@ beforeEach(function () {
     config()->set('agenticgraph.checkpoint.enabled', true);
 });
 
-it('writes exactly one completed terminal event with embedded final_state', function () {
+it('writes exactly one completed terminal event with embedded final_state when exposed', function () {
+    config()->set('agenticgraph.streaming.final_state.expose', true);
+
     $graph = GraphBuilder::create('store-terminal-complete')
         ->addNode('alpha', StoreTerminalCompleteNode::class)
         ->setEntryPoint('alpha')
@@ -103,8 +105,7 @@ it('writes exactly one completed terminal event with embedded final_state', func
 
     expect($terminals)->toHaveCount(1)
         ->and($terminals[0]->payload()['status'])->toBe('completed')
-        ->and($terminals[0]->payload()['final_state'])->toBeArray()
-        ->and($terminals[0]->payload()['final_state']['__agenticgraph_state']['data']['done'] ?? null)->toBeTrue();
+        ->and($terminals[0]->payload()['final_state'])->toBe(['done' => true]);
 });
 
 it('writes exactly one interrupted terminal event with honest status and final_state', function () {
@@ -124,7 +125,8 @@ it('writes exactly one interrupted terminal event with honest status and final_s
         ->and($terminals)->toHaveCount(1)
         ->and($terminals[0]->payload()['status'])->toBe('interrupted')
         ->and($terminals[0]->payload()['status'])->not->toBe('completed')
-        ->and($terminals[0]->payload()['final_state'])->toBeArray();
+        ->and($terminals[0]->payload())->toHaveKey('final_state')
+        ->and($terminals[0]->payload()['final_state'])->toBeNull();
 });
 
 it('writes exactly one failed terminal event for streaming failures', function () {
@@ -155,7 +157,8 @@ it('writes exactly one failed terminal event for streaming failures', function (
 
     expect($terminals)->toHaveCount(1)
         ->and($terminals[0]->payload()['status'])->toBe('failed')
-        ->and($terminals[0]->payload()['final_state'])->toBeArray();
+        ->and($terminals[0]->payload())->toHaveKey('final_state')
+        ->and($terminals[0]->payload()['final_state'])->toBeNull();
 });
 
 it('stream controller serializes unified envelope without duplicate type field', function () {

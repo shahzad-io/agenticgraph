@@ -4,6 +4,36 @@
 
 `agenticgraph.trace.v1` is frozen; later changes are additive. The contract is `spec/tracing-wire-v1.md`, locked by `TraceWireContractFreezeTest`.
 
+### BREAKING (stream wire contract v1.1)
+- `final_state` is now `null` by default in `execution_terminal`, broadcast `stream_close.meta` and `stream_replay_unavailable`. Apps that read it on the client must set `AGENTICGRAPH_STREAM_EXPOSE_FINAL_STATE=true`, ideally with an allowlist in `AGENTICGRAPH_STREAM_FINAL_STATE_KEYS`.
+- When exposed, `final_state` is the plain state object (top-level keys), not the internal `__agenticgraph_state` wrapper.
+- `execution_terminal` is the last event of a run, and `stream_close` the last broadcast. On a failure, `graph_failed` comes before the terminal. Each run closes once.
+
+### Pre-release fixes
+- Logs no longer carry state values, model output or stack traces. PrismRouter logs state keys, router class, exception class, message, file and line. Parallel merge collisions log keys and branch names only.
+- `ChatPromptTemplate::messagesPlaceholder($variable)` inserts a list of messages (arrays or Prism message objects) without interpolation. Use it for chat history and any other untrusted text.
+- `ExecuteGraphJob` failures (for example a graph not registered on the worker) mark the execution failed, append `graph_failed` and a failed `execution_terminal`, send the broadcast `stream_close`, and fire `GraphExecutionFailed` once.
+- `ResumeExecutionJob` failures do the same, and the interrupt is resolved with resolution `failed` (error in its metadata), so a later resume returns "already resolved".
+- `PrismNode::$maxTokens` sets max output tokens for every helper (prompt, promptTemplate, chatPrompt, promptMessages, structured, tools, agent, withMcp). Falls back to `agenticgraph.prism.max_tokens`. PrismRouter keeps its own 100.
+- Provider note (Prism OpenAI handler): a reply that hits the limit throws in non-streamed and `structured()` calls, and a streamed reply stops at the limit with usage reported as 0. Treat `$maxTokens` as a ceiling and ask for short replies in the prompt.
+- Stream route middleware is configurable through `AGENTICGRAPH_STREAMING_MIDDLEWARE`.
+- `@method` docblock tags that described real methods (mostly protected PrismNode helpers) are removed. PrismNode lists its helpers in prose.
+- The Redis stream store keeps `null` for `node_name`, `span_id`, `parent_span_id` and `node_seq`. Older entries that stored `""` read back as `null`.
+
+### New config keys
+Apps with a published `config/agenticgraph.php` keep their old copy, because the package merges config shallowly. Add these keys or republish the config. The package uses the defaults below when a key is missing.
+
+| Key | Env | Default |
+|---|---|---|
+| `streaming.final_state.expose` | `AGENTICGRAPH_STREAM_EXPOSE_FINAL_STATE` | `false` |
+| `streaming.final_state.keys` | `AGENTICGRAPH_STREAM_FINAL_STATE_KEYS` (comma-separated) | `null` (all keys when exposed) |
+| `streaming.routes.middleware` | `AGENTICGRAPH_STREAMING_MIDDLEWARE` (comma-separated; `throttle:5,1` stays together) | `['api']` |
+| `execution.tries` | `AGENTICGRAPH_EXECUTION_TRIES` | `1` |
+| `execution.timeout` | `AGENTICGRAPH_EXECUTION_TIMEOUT` | `0` (worker default) |
+| `execution.resume_tries` | `AGENTICGRAPH_RESUME_TRIES` | `1` |
+| `execution.resume_timeout` | `AGENTICGRAPH_RESUME_TIMEOUT` | `0` (worker default) |
+| `prism.max_tokens` | `AGENTICGRAPH_PRISM_MAX_TOKENS` | `null` (no limit sent) |
+
 ### BREAKING for exporter implementers
 - `TracerExporter` signatures changed. `completeTrace`, `failTrace` and `interruptTrace` take an optional `?\DateTimeInterface $at`; `resumeTrace` takes `?string $graphName`, `string $kind` and `?\DateTimeInterface $at`. Third-party exporters must update.
 - `PulseExporter::sendIngestPayload()` is renamed to `send()`.
@@ -90,6 +120,7 @@
 - Span truncation could drop the root graph span when it was not among the first or last 50 spans. The root graph span now always stays; the first 50 and last 50 of the other spans are kept. After truncation a `parent_id` may name a dropped span; receivers attach such spans to the root.
 
 ### Removed
+- `interrupts.auto_cleanup_days`: nothing read it.
 - The duplicate failure events and second `onError` in the streaming path and `ExecuteNodeJob`.
 - `db.rows_affected` on db spans (always null).
 - The trace buffer in the cache and its config (`tracing.buffer.store`, `tracing.buffer.ttl_seconds`). A resume no longer depends on the cache.

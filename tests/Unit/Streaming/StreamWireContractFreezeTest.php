@@ -1,11 +1,13 @@
 <?php
 
 /**
- * Contract-freeze guard tests (v1.0).
+ * Contract-freeze guard tests (v1.1).
  *
  * These tests exist to fail loudly when a frozen wire-contract field or framework
- * event type string changes accidentally. Any intentional breaking change requires
- * a major version bump and updating docs/streaming/WIRE-CONTRACT.md.
+ * event type string changes accidentally. Versioning rule: before the first public
+ * release, amendments are recorded in the docs/streaming/WIRE-CONTRACT.md version
+ * history as v1.1. After the first public release, any breaking change requires a
+ * major version bump and updating docs/streaming/WIRE-CONTRACT.md.
  */
 
 use Illuminate\Contracts\Broadcasting\Broadcaster;
@@ -13,6 +15,10 @@ use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
 use Shahzad\AgenticGraph\Streaming\Sinks\BroadcastSink;
 use Shahzad\AgenticGraph\Streaming\StreamEventEnvelope;
 use Shahzad\AgenticGraph\Streaming\StreamLifecycleEventTypes;
+use Shahzad\AgenticGraph\Streaming\StreamOptions;
+use Shahzad\AgenticGraph\Streaming\StreamSession;
+use Shahzad\AgenticGraph\Streaming\StreamStatus;
+use Shahzad\AgenticGraph\Streaming\StreamTerminalStatus;
 
 test('contract freeze guard: toWireArray emits exactly the nine frozen snake_case keys', function () {
     $event = new StreamEventImpl(
@@ -92,4 +98,24 @@ test('contract freeze guard: broadcast delivery uses event name as type and body
 
     $sink = new BroadcastSink($broadcaster, 'stream-broadcast-freeze');
     $sink->emit($event);
+});
+
+test('contract freeze guard: execution_terminal final_state is nullable and null by default (v1.1)', function () {
+    $session = new StreamSession(
+        streamId: 'stream-final-state-freeze',
+        executionId: 'exec-final-state-freeze',
+        options: new StreamOptions,
+        startedAtUnix: 0,
+    );
+
+    $payload = StreamEventEnvelope::executionTerminal(
+        $session,
+        StreamTerminalStatus::COMPLETED,
+        ['secret' => 'value']
+    )->toWireArray()['payload'];
+
+    expect($payload)->toHaveKey('final_state')
+        ->and($payload['final_state'])->toBeNull()
+        ->and(StreamEventEnvelope::streamCloseWirePayload(StreamStatus::SUCCESS, ['final_state' => ['secret' => 'value']]))
+        ->toBe(['status' => 'success', 'meta' => ['final_state' => null]]);
 });

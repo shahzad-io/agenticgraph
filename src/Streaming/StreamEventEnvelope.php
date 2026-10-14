@@ -4,15 +4,18 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph\Streaming;
 
+use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamEvent;
 use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
 
 /**
- * FROZEN PUBLIC WIRE CONTRACT (v1.0).
+ * FROZEN PUBLIC WIRE CONTRACT (v1.1).
  *
  * The shapes below are stable public API for NPM clients, AgenticPulse, and other
- * stream consumers. Changing frozen fields, event type strings, or delivery semantics
- * is a breaking change requiring a major version bump.
+ * stream consumers. Before the first public release, amendments are recorded in the
+ * WIRE-CONTRACT.md version history (v1.1). After it, changing frozen fields, event
+ * type strings, or delivery semantics is a breaking change requiring a major version bump.
  *
  * Canonical spec: docs/streaming/WIRE-CONTRACT.md
  *
@@ -95,7 +98,7 @@ final class StreamEventEnvelope
         $seq = ++$session->seq;
         $payload = [
             'status' => $status->value,
-            'final_state' => $finalState,
+            'final_state' => self::clientFinalState($finalState),
         ];
         if ($meta !== null && $meta !== []) {
             $payload['meta'] = $meta;
@@ -176,6 +179,39 @@ final class StreamEventEnvelope
      */
     public static function streamCloseWirePayload(StreamStatus $status, mixed $meta = null): array
     {
+        if (is_array($meta) && array_key_exists('final_state', $meta)) {
+            $meta['final_state'] = self::clientFinalState($meta['final_state']);
+        }
+
         return ['status' => $status->value, 'meta' => $meta];
+    }
+
+    /**
+     * The only place that turns graph state into client-facing final_state
+     * (execution_terminal, stream_close meta, stream_replay_unavailable).
+     *
+     * Returns null unless streaming.final_state.expose is true. Accepts the storage
+     * payload, a plain array, or a state object; returns plain state data, limited to
+     * streaming.final_state.keys when that is a list.
+     *
+     * @return array<string, mixed>|null
+     */
+    public static function clientFinalState(mixed $finalState): ?array
+    {
+        if (! (bool) config('agenticgraph.streaming.final_state.expose', false)) {
+            return null;
+        }
+
+        $data = match (true) {
+            $finalState instanceof StateContract => $finalState->toArray(),
+            is_array($finalState) => State::fromArray($finalState)->toArray(),
+            default => null,
+        };
+
+        $keys = config('agenticgraph.streaming.final_state.keys', null);
+
+        return $data !== null && is_array($keys)
+            ? array_intersect_key($data, array_flip($keys))
+            : $data;
     }
 }

@@ -17,12 +17,18 @@ use Shahzad\AgenticGraph\Contracts\InterruptServiceInterface;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
 use Shahzad\AgenticGraph\Execution\ExecutionStore;
 use Shahzad\AgenticGraph\Execution\InterruptRecord;
+use Shahzad\AgenticGraph\Execution\StreamingMode;
 use Shahzad\AgenticGraph\Streaming\StreamOptions;
 use Shahzad\AgenticGraph\Streaming\StreamResumption;
 
 class ResumeExecutionJob implements ShouldBeUnique, ShouldQueue
 {
-    use Batchable, Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use Batchable, Dispatchable, EndsFailedExecution, InteractsWithQueue, Queueable, SerializesModels;
+
+    public int $tries;
+
+    /** Seconds; null leaves the worker's --timeout in charge. */
+    public ?int $timeout;
 
     public function __construct(
         public readonly int $interruptId,
@@ -30,6 +36,8 @@ class ResumeExecutionJob implements ShouldBeUnique, ShouldQueue
     ) {
         $this->onConnection(config('agenticgraph.execution.queue_connection', 'redis'));
         $this->onQueue(config('agenticgraph.execution.queue_name', 'agenticgraph'));
+        $this->tries = max(1, (int) config('agenticgraph.execution.resume_tries', 1));
+        $this->timeout = ((int) config('agenticgraph.execution.resume_timeout', 0)) ?: null;
     }
 
     public function uniqueId(): string
@@ -121,5 +129,49 @@ class ResumeExecutionJob implements ShouldBeUnique, ShouldQueue
         }
 
         return $instance;
+    }
+
+    /**
+     * Ends the execution and its stream when the resume fails, for example when the graph is
+     * not registered on the worker. A resumed run that failed inside the graph has already
+     * been ended by its coordinator, so this then changes nothing.
+     */
+    public function failed(\Throwable $e): void
+    {
+        $interrupt = InterruptRecord::find($this->interruptId);
+        $executionId = $interrupt?->executionId();
+        if ($interrupt === null || ! is_string($executionId) || $executionId === '') {
+            return;
+        }
+
+        $record = app(ExecutionStore::class)->get($executionId);
+        $metadata = $interrupt->metadata();
+        $metadata = is_array($metadata) ? $metadata : [];
+        $delivery = $metadata['stream_delivery'] ?? null;
+        $streamId = ($record !== null ? $record->streamId : null) ?? ($metadata['stream_id'] ?? null);
+        $lastSeq = $metadata['stream_last_seq'] ?? null;
+        $finalState = $record?->finalState;
+
+        $this->endFailedExecution(
+            $e,
+            $executionId,
+            $record !== null ? $record->graphName : (string) $interrupt->graphName(),
+            is_array($finalState) ? $finalState : [],
+            is_string($streamId) ? $streamId : null,
+            is_string($delivery) ? StreamingMode::tryFrom($delivery) : null,
+            $record?->executionOptions,
+            fallbackSeq: is_int($lastSeq) ? $lastSeq : null,
+        );
+
+        // The execution is failed, so the interrupt must not stay pending: a later resolve
+        // attempt then gets the existing "already resolved" result instead of a new run.
+        if ($interrupt->status() !== 'resolved') {
+            $interrupt->update(['metadata' => array_merge($metadata, ['resume_error' => [
+                'type' => $e::class,
+                'message' => $e->getMessage(),
+                'occurred_at' => now()->toIsoString(),
+            ]])]);
+            $interrupt->resolve(['outcome' => 'failed']);
+        }
     }
 }
