@@ -1,72 +1,78 @@
 ---
-name: "agenticgraph-core"
-description: "Guides AgenticGraph graphs, nodes, execution, streaming helpers, interrupts, and MCP usage. Invoke when building or modifying AgenticGraph workflows."
+name: agenticgraph-core
+description: "Build AgenticGraph agent graphs in Laravel: GraphBuilder, nodes (AbstractNode, PrismNode), state, edges, routers, cyclic and parallel graphs, interrupts and checkpoints, MCP tools, middleware, lifecycle events, the CLI, and testing graphs and nodes."
 ---
 
 # AgenticGraph Core
 
-Use this skill when building or modifying AgenticGraph graphs, nodes, execution, interrupts, streaming, or MCP tooling.
+docs-sha: 301ce71
 
-## Installation
+Condensed from the AgenticGraph docs (`/docs/...` paths below) at that commit. When a detail here and the package source disagree, the source wins.
+
+Other skills, use them when installed: `agenticgraph-streaming` for `stream()`, `broadcast()`, SSE and the JS clients. `agenticgraph-tracing` for traces, spans and AgenticPulse. `agenticgraph-vector` for retrieval and vector stores, if `shahzad/agenticgraph-vector` is installed.
+
+## Install
 
 ```bash
 composer require shahzad/agenticgraph
-php artisan vendor:publish --provider="Shahzad\\AgenticGraph\\AgenticGraphServiceProvider"
-php artisan vendor:publish --tag=prism-config
-php artisan vendor:publish --tag=relay-config
+php artisan vendor:publish --tag=agenticgraph-config
+php artisan vendor:publish --tag=agenticgraph-migrations
 php artisan migrate
-```
-
-Verify:
-
-```bash
 php artisan agenticgraph:list
 ```
 
-## Configuration
+- Migrations are required before the first run. Every run writes a row to `agenticgraph_executions`. They create `agenticgraph_executions`, `agenticgraph_checkpoints`, `agenticgraph_interrupts` and `stream_events`.
+- Package discovery registers the provider and the `AgenticGraph` and `Trace` facades. Prism and Relay come with it.
+- There is no `agenticgraph:install`.
 
-Common `.env` keys:
+Docs: `/docs/getting-started`
 
-```env
+## Env basics
+
+```dotenv
+AGENTICGRAPH_PRISM_MODEL=openai:gpt-4o-mini
 AGENTICGRAPH_STORAGE=database
+AGENTICGRAPH_CHECKPOINT_ENABLED=true
 AGENTICGRAPH_QUEUE_CONNECTION=database
 AGENTICGRAPH_QUEUE_NAME=agenticgraph
-AGENTICGRAPH_MAX_ITERATIONS=1000
-AGENTICGRAPH_LOCK_TIMEOUT=10
-AGENTICGRAPH_PRISM_MODEL=anthropic:claude-sonnet-4
-AGENTICGRAPH_PRISM_CACHE=true
-AGENTICGRAPH_PRISM_CACHE_TTL=60
-AGENTICGRAPH_TRACING=false
-AGENTICPULSE_API_KEY=
 ```
 
-## Core Concepts
+- `AGENTICGRAPH_PRISM_MODEL` defaults to `anthropic:claude-sonnet-4`. Format `provider:model`; no colon means `openai`. The provider key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) is Prism's env.
+- `AGENTICGRAPH_STORAGE`: `database` (default), `redis` or `file`. Same value in every environment, or resume cannot find snapshots.
+- `AGENTICGRAPH_QUEUE_CONNECTION` defaults to `redis`. It matters only for async runs, async fan-out and async resume. Run a worker on the graph queue: `php artisan queue:work --queue=agenticgraph`.
+- `AGENTICGRAPH_MAX_ITERATIONS` (1000) caps a run.
 
-- **State** is immutable data flowing through nodes.
-- **Nodes** transform state. Use `AbstractNode` for non-LLM and `PrismNode` for LLM calls.
-- **Graphs** are built with `GraphBuilder` and registered in `config/agenticgraph.php`.
-- **Routers** control branching with deterministic or Prism-based logic.
-- **ExecutionHandle** exposes status, streaming, final state, and resume.
+Docs: `/docs/getting-started`
 
-## Build and Register a Graph
+## The model
 
-Create a graph class with `GraphBuilder`:
+- **State** is an immutable bag of keys. `set()` returns a new instance.
+- A **node** does one job: state in, new state out. It never picks the next node.
+- An **edge** names the next node. A **router** picks it from state.
+- The **coordinator** loops: interrupt check, run node, checkpoint, exit or route.
+- `AgenticGraph::execute()` is the one entry point. `run()`, `dispatch()`, `stream()` and `broadcast()` are presets of `ExecutionOptions`.
+
+Docs: `/docs/graph`, `/docs/execution`
+
+## Build and register a graph
+
+A graph in config is a class with a static `build()` that returns a `Graph`.
 
 ```php
 namespace App\Graphs;
 
-use Shahzad\AgenticGraph\Graph\GraphBuilder;
-use Shahzad\AgenticGraph\Graph\Graph;
 use App\Nodes\DraftNode;
 use App\Nodes\PublishNode;
 use App\Routers\QualityRouter;
+use Shahzad\AgenticGraph\Graph\Graph;
+use Shahzad\AgenticGraph\Graph\GraphBuilder;
 
 final class ContentGraph
 {
     public static function build(): Graph
     {
-        return GraphBuilder::create('content-approval')
-            ->description('Draft, review, and publish content')
+        return GraphBuilder::create('content')
+            ->description('Draft, review, publish')
             ->addNode('draft', DraftNode::class)
             ->addNode('publish', PublishNode::class)
             ->setEntryPoint('draft')
@@ -77,482 +83,261 @@ final class ContentGraph
 }
 ```
 
-Register in `config/agenticgraph.php`:
-
 ```php
-return [
-    'graphs' => [
-        'content-approval' => \App\Graphs\ContentGraph::class,
-    ],
-];
+// config/agenticgraph.php
+'graphs' => [
+    'content' => \App\Graphs\ContentGraph::class,
+],
 ```
 
-## Node Types: AbstractNode vs PrismNode
+- `build()` throws `InvalidGraphException` without an entry point or an exit, when a node is unreachable from the entry, or when no exit is reachable. Reachability follows each router's `getAvailableRoutes()`, so list every node a router can return.
+- `AgenticGraph::register($name, $graph)` registers at runtime (tests, service providers). Config graphs are built on first use by `AgenticGraph::getOrBuild()`.
+- Resume and async jobs rebuild graphs by name. Keep production graphs in config.
 
-Choose based on whether you need LLM reasoning:
+Docs: `/docs/graph`, `/docs/api/graph`
 
-- **AbstractNode** for deterministic logic, validation, API calls, DB reads/writes.
-- **PrismNode** for text generation, classification, extraction, and tool calling.
+## Nodes
 
-Example `AbstractNode`:
+Use `AbstractNode` for deterministic work (validation, math, DB, HTTP). Use `PrismNode` when language is the point.
 
 ```php
-namespace App\Nodes;
-
-use Shahzad\AgenticGraph\Nodes\AbstractNode;
 use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Nodes\AbstractNode;
 
 final class ValidateOrderNode extends AbstractNode
 {
+    public function __construct(private \App\Services\Inventory $inventory) {}
+
     public function execute(StateContract $state): StateContract
     {
-        $total = $state->get('order.total');
-        if ($total < 0) {
-            throw new \RuntimeException('Order total cannot be negative');
-        }
+        $inStock = $this->inventory->has((string) $state->get('order.sku'));
 
-        return $state->set('order.is_valid', true);
+        return $state->set('order.in_stock', $inStock);
     }
 }
 ```
 
-Example `PrismNode`:
+- Nodes are resolved from the container, so constructor injection works.
+- `protected ?string $name` overrides the node name used in events and spans.
+- Retries: `getRetryAttempts()` (3), `getRetryDelay()` (1000 ms), `shouldRetry($e)`. Override them on the node.
+- Hooks: `onBefore`, `onAfter`, `onError`. Retries wrap `onBefore → execute → onAfter`.
+- `getTimeout()` exists on the interface, but the coordinator never reads it.
+
+`PrismNode` helpers (all `protected`):
+
+| Helper | Returns | Use |
+|---|---|---|
+| `prompt($template, $vars, $additionalContent)` | `string` | One-off text. Streams when the run streams. |
+| `promptTemplate(PromptTemplate, ...)` / `chatPrompt(ChatPromptTemplate, ...)` / `promptMessages($messages)` | `string` | Reusable templates and role messages |
+| `structured($prompt, $schema)` | `mixed` | Root schema should be an `ObjectSchema`. Pass a string, not a template. |
+| `tools($prompt, $tools)` | `ToolCall[]` | One step. Not a chat reply. |
+| `agent($prompt, $tools, $options)` | `TextResponse` | Multi-step tool loop. `maxSteps` defaults to 5; `systemPrompt` option. Read `->text`. |
+| `withMcp($server, $options)` | `McpRequest` | Tools from a Relay MCP server |
+| `prism()` | `PendingTextRequest` | Raw Prism request. Tools added with `withTools()` here are not traced. |
+| `embeddingsFromInput`, `generateImage`, `audioToText`, `textToAudio` | Prism responses | Media |
+| `withModel($model)`, `withCache($ttlMinutes)`, `withoutCache()` | `static` | Per-call overrides |
+
+- `protected ?string $model` sets the node's default model. `protected bool $trackTokens = false` stops `TokensUsed`.
+- Full `structured()` and `agent()` examples: [references/prism-nodes.md](references/prism-nodes.md).
+
+Docs: `/docs/nodes`, `/docs/api/nodes`
+
+## Prompts
+
+- `{word}` is a placeholder. `{{` and `}}` are literal braces. `{user.name}` is not a path; flatten in PHP.
+- A missing variable throws `TemplateException`.
+- `PromptTemplate::create($template)->withDefaults([...])->withRequired([...])`, then `format($vars)`.
+- `ChatPromptTemplate` keeps role messages. `formatAsString()` is for cache keys and logs, not the request.
+
+Docs: `/docs/prompts`, `/docs/api/prompts`
+
+## State
 
 ```php
-namespace App\Nodes;
-
-use Shahzad\AgenticGraph\Nodes\PrismNode;
-use Shahzad\AgenticGraph\Contracts\StateContract;
-
-final class DraftNode extends PrismNode
-{
-    public function execute(StateContract $state): StateContract
-    {
-        $draft = $this->prompt('Write about: {topic}', [
-            'topic' => $state->get('topic'),
-        ]);
-
-        return $state->set('draft', $draft);
-    }
-}
-```
-
-## PrismNode Method Cheat Sheet
-
-Use these helpers inside any `PrismNode`:
-
-- `prism()`: get a raw Prism text request
-- `prompt(string $template, array $variables = [], array $additionalContent = [])`
-- `promptMessages(array $messages)`
-- `promptTemplate(PromptTemplate $template, array $variables = [], array $additionalContent = [])`
-- `chatPrompt(ChatPromptTemplate $template, array $variables = [], array $additionalContent = [])`
-- `structured(string $prompt, mixed $schema)`
-- `tools(string $prompt, array $tools)` — returns `ToolCall[]` (single-step; no toolChoice/maxSteps)
-- `agent(string $prompt, array $tools, array $options = [])` — traced multi-step agent with local tools
-- `embeddingsFromInput(string|array $inputs, array $providerOptions = [])`
-- `embeddings()`, `image()`, `audio()`
-- `generateImage(string $prompt, array $additionalContent = [], array $providerOptions = [])`
-- `audioToText(Audio $audio, array $providerOptions = [])`
-- `textToAudio(string $text, ?string $voice = null, array $providerOptions = [])`
-- `withMcp(string $serverName, array $options = [])`
-- `withModel(string $model)`, `withCache(int $ttlMinutes)`, `withoutCache()`
-- `shouldInterrupt(StateContract $state)`, `getInterruptReason(StateContract $state)`
-- `onResume(StateContract $state, mixed $humanInput)`
-- `handleApproval(StateContract $state, bool $approved, ?string $comments = null)`
-
-## Schemas and Tools Examples
-
-Structured extraction with `ObjectSchema` (root schema should be an object):
-
-```php
-use Prism\Prism\Schema\ArraySchema;
-use Prism\Prism\Schema\ObjectSchema;
-use Prism\Prism\Schema\StringSchema;
-use Shahzad\AgenticGraph\Contracts\StateContract;
-use Shahzad\AgenticGraph\Nodes\PrismNode;
-
-final class DataExtractorNode extends PrismNode
-{
-    public function execute(StateContract $state): StateContract
-    {
-        $signup = $state->get('input.signup', []);
-        if (! is_array($signup)) {
-            $signup = [];
-        }
-        $signupJson = json_encode($signup, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '{}';
-
-        $prompt = <<<PROMPT
-You are a customer onboarding assistant. Normalize the signup payload into a clean lead profile.
-
-Signup payload: {$signupJson}
-
-Return only the structured result.
-PROMPT;
-
-        $schema = new ObjectSchema(
-            name: 'lead_profile',
-            description: 'Normalized lead profile for onboarding',
-            properties: [
-                new StringSchema('name', 'Customer full name', nullable: true),
-                new StringSchema('email', 'Customer email', nullable: true),
-                new StringSchema('company', 'Company name', nullable: true),
-                new StringSchema('role', 'Job title or role', nullable: true),
-                new StringSchema('goal', 'Primary onboarding goal', nullable: true),
-                new ArraySchema(
-                    name: 'pain_points',
-                    description: 'Key pains or needs',
-                    items: new StringSchema('pain', 'A pain point'),
-                    nullable: true
-                ),
-            ],
-            requiredFields: ['name', 'email', 'company', 'role', 'goal', 'pain_points']
-        );
-
-        $result = $this->structured($prompt, $schema);
-
-        return $state->set('lead', is_array($result) ? $result : []);
-    }
-}
-```
-
-Tool usage with object parameters and a Prism prompt:
-
-```php
-use Illuminate\Support\Facades\Http;
-use Prism\Prism\Schema\ObjectSchema;
-use Prism\Prism\Schema\StringSchema;
-use Prism\Prism\Schema\NumberSchema;
-use Prism\Prism\Facades\Tool;
-use Shahzad\AgenticGraph\Contracts\StateContract;
-use Shahzad\AgenticGraph\Nodes\PrismNode;
-
-final class CurrencyToolNode extends PrismNode
-{
-    public function execute(StateContract $state): StateContract
-    {
-        $tools = [
-            Tool::as('get_exchange_rate')
-                ->for('Get exchange rate and convert currency')
-                ->withParameter(new ObjectSchema(
-                    name: 'input',
-                    description: 'Input for currency conversion',
-                    properties: [
-                        new StringSchema('from', 'The currency code to convert from (e.g., USD)'),
-                        new StringSchema('to', 'The currency code to convert to (e.g., EUR)'),
-                        new NumberSchema('amount', 'The amount to convert'),
-                    ],
-                    requiredFields: ['from', 'to', 'amount']
-                ))
-                ->using(function (array $input) {
-                    $response = Http::get('https://api.currencylayer.com/convert', [
-                        'access_key' => config('services.currencylayer.key'),
-                        'amount' => $input['amount'],
-                        'from' => $input['from'],
-                        'to' => $input['to'],
-                    ]);
-
-                    $result = $response->json();
-
-                    if ($result['success'] ?? false) {
-                        return json_encode([
-                            'result' => $result['result'],
-                            'rate' => $result['info']['quote'] ?? null,
-                            'from' => $input['from'],
-                            'to' => $input['to'],
-                            'amount' => $input['amount'],
-                        ]);
-                    }
-
-                    return json_encode(['error' => 'Conversion failed', 'details' => $result]);
-                }),
-        ];
-
-        $response = $this->agent(
-            (string) $state->get('message'),
-            $tools,
-            [
-                'systemPrompt' => 'You are a Currency Conversion Agent.',
-                'maxSteps' => 5,
-            ],
-        );
-
-        return $state->set('response', $response->text);
-    }
-}
-```
-
-## Routers (Conditional Edges)
-
-Use routers to choose the next node at runtime.
-
-Abstract router example:
-
-```php
-namespace App\Routers;
-
-use Shahzad\AgenticGraph\Routers\AbstractRouter;
-use Shahzad\AgenticGraph\Contracts\StateContract;
-
-final class ScoreRouter extends AbstractRouter
-{
-    public function __construct()
-    {
-        $this->routes = [
-            'high' => 'High score path',
-            'low' => 'Low score path',
-        ];
-        $this->defaultRoute = 'low';
-    }
-
-    public function route(StateContract $state): string
-    {
-        return $state->get('score', 0) >= 80 ? 'high' : 'low';
-    }
-}
-```
-
-Prism router example:
-
-```php
-use Shahzad\AgenticGraph\Routers\PrismRouter;
-
-$router = new PrismRouter([
-    'billing' => 'Questions about payment and invoices',
-    'technical' => 'Errors, bugs, failures',
-], defaultRoute: 'technical');
-```
-
-Class-based PrismRouter (recommended for reuse and cleaner graphs):
-
-```php
-namespace App\Routers;
-
-use Shahzad\AgenticGraph\Routers\PrismRouter;
-
-final class CustomerIntentRouter extends PrismRouter
-{
-    public function __construct()
-    {
-        parent::__construct(
-            routes: [
-                'billing' => 'Invoices, refunds, payment failures',
-                'technical' => 'Errors, bugs, outages',
-                'general' => 'Everything else',
-            ],
-            defaultRoute: 'general'
-        );
-    }
-}
-```
-
-Loop-aware routing for cyclic graphs:
-
-```php
-use Shahzad\AgenticGraph\Contracts\LoopAwareRouterInterface;
-use Shahzad\AgenticGraph\Contracts\StateContract;
-use Shahzad\AgenticGraph\Execution\ExecutionContext;
-
-final class QualityRouter implements LoopAwareRouterInterface
-{
-    public function route(StateContract $state): string|array
-    {
-        return $state->get('quality', 0) > 0.9 ? 'publish' : 'draft';
-    }
-
-    public function routeWithContext(StateContract $state, ExecutionContext $context): string|array
-    {
-        if ($context->getNodeVisitCount('draft') >= 5) {
-            return 'publish';
-        }
-
-        return $state->get('quality', 0) > 0.9 ? 'publish' : 'draft';
-    }
-}
-```
-
-## Cyclic Graphs (Loops)
-
-Loop by adding edges that return to earlier nodes and use a router to exit.
-
-```php
-use Shahzad\AgenticGraph\Graph\GraphBuilder;
-
-$graph = GraphBuilder::create('self-improving-writer')
-    ->addNode('draft', DraftNode::class)
-    ->addNode('critique', CritiqueNode::class)
-    ->addNode('publish', PublishNode::class)
-    ->addEdge('draft', 'critique')
-    ->addConditionalEdge('critique', QualityRouter::class)
-    ->setEntryPoint('draft')
-    ->addExitPoint('publish')
-    ->build();
-```
-
-## Parallel Execution (Fan-Out / Fan-In)
-
-Return an array of node names from a router to run branches in parallel, then merge with `addJoin`.
-
-```php
-use Shahzad\AgenticGraph\Graph\GraphBuilder;
-
-$graph = GraphBuilder::create('parallel-work')
-    ->addNode('start', StartNode::class)
-    ->addNode('write', WriteNode::class)
-    ->addNode('seo', SeoNode::class)
-    ->addNode('merge', MergeNode::class)
-    ->addConditionalEdge('start', ParallelRouter::class)
-    ->addJoin(['write', 'seo'], 'merge')
-    ->setEntryPoint('start')
-    ->addExitPoint('merge')
-    ->build();
-```
-
-## Execution Methods
-
-AgenticGraph uses a single entry point with `ExecutionOptions`.
-
-```php
-use Shahzad\AgenticGraph\Facades\AgenticGraph;
-use Shahzad\AgenticGraph\Execution\ExecutionOptions;
-use Shahzad\AgenticGraph\Execution\ExecutionMode;
-use Shahzad\AgenticGraph\Execution\StreamingMode;
 use Shahzad\AgenticGraph\State\State;
 
-$handle = AgenticGraph::execute(
-    'graph-name',
-    new State(['input' => 'value']),
-    new ExecutionOptions(
-        mode: ExecutionMode::SYNC,
-        streaming: StreamingMode::NONE,
-        interrupts: false
-    )
-);
-
-$finalState = $handle->getFinalState();
+$state = new State(['topic' => 'Laravel']);
+$state = $state->set('draft', $text);   // capture the return
+$state->get('missing', 'default');
 ```
 
-Key handle methods: `id()`, `status()`, `streamId()`, `stream()`, `getFinalState()`, `isInterrupted()`, `resume()`.
+- `set()`, `forget()` and `merge()` return new instances. A discarded return is a lost write.
+- `merge()` takes another `StateContract`, not an array. Lists replace, nested maps combine.
+- `State` is `final`. Put structure in keys, not a subclass.
+- Store plain data. Mutating objects in place breaks diffs and checkpoints.
 
-## Interrupts
+Docs: `/docs/state`, `/docs/api/state`
 
-Enable interrupts in options, then resume through the handle:
+## Edges and routers
+
+- `addEdge($from, $to)`: a fixed next hop. Only the first outgoing edge of a node is used, so two `addEdge` calls are not a fork.
+- `addConditionalEdge($from, $router)`: a `RouterInterface` instance or class name. A closure is not accepted.
+- One decision per node. Put a second decision on a later node.
+- Every route key must be a node id. `build()` follows `getAvailableRoutes()` to decide which nodes are reachable.
 
 ```php
-$handle = AgenticGraph::execute(
-    'graph-name',
-    $state,
-    new ExecutionOptions(interrupts: true)
-);
+use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Routers\AbstractRouter;
 
-if ($handle->isInterrupted()) {
-    $handle = $handle->resume(['approved' => true]);
+final class QualityRouter extends AbstractRouter
+{
+    protected array $routes = [
+        'publish' => 'Good enough',
+        'draft' => 'Needs another pass',
+    ];
+
+    protected ?string $defaultRoute = 'draft';
+
+    public function route(StateContract $state): string|array
+    {
+        return $state->get('score', 0) >= 80 ? 'publish' : 'draft';
+    }
 }
 ```
 
-## Streaming
+- `$routes` is `node id => description`, not a list of names.
+- `PrismRouter` asks the model to pick one route from the descriptions. It never fans out. To add rules, override `buildPrompt()`, not `route()`.
+- More router shapes (PrismRouter subclass, loop-aware, fan-out): [references/routers.md](references/routers.md).
 
-- Modes: `SSE`, `BROADCAST`, `ITERATOR`, `NONE`.
-- Recommended pairing: sync + SSE, async + broadcast.
-- SSE route: `GET /agentic-graph/streams/{streamId}`.
+Docs: `/docs/edges`, `/docs/routing`
 
-Domain-specific events:
+## Cyclic graphs
+
+- A loop is an edge or route that points back.
+- The exit must be a separate node the router can name. Do not mark the looping node as the exit: after it runs, the graph ends.
+- Count iterations in state, or implement `LoopAwareRouterInterface` and read `$context->getNodeVisitCount('draft')` in `routeWithContext()`.
+- Without a cap the loop runs until the iteration limit throws, and the run fails.
+- `cycle_detection=error` rejects cycles at `build()`. Leave it `silent` for graphs meant to loop.
+
+Docs: `/docs/cyclic`
+
+## Parallel execution
+
+- A router returns an array of node ids to fan out. Then `addJoin(['write', 'seo'], 'merge')` waits for all of them.
+- Without `addJoin`, nothing waits for every branch.
+- Each branch starts from the same snapshot. Write unique keys per branch. Colliding scalar keys are last-write-wins, with a warning.
+- Sync runs branches one after another in this process. Async sends one job per branch on the graph queue.
+
+Docs: `/docs/parallel`
+
+## Run a graph
 
 ```php
-$this->streamEvent('keywords_item', ['keyword' => $keyword, 'index' => $index]);
-$this->whenStreaming(function () use ($payload) {
-    $this->streamEvent('meta_partial', $payload);
-});
+use Shahzad\AgenticGraph\Execution\ExecutionMode;
+use Shahzad\AgenticGraph\Execution\ExecutionOptions;
+use Shahzad\AgenticGraph\Facades\AgenticGraph;
+use Shahzad\AgenticGraph\State\State;
+
+$handle = AgenticGraph::run('content', new State(['topic' => 'Laravel']));   // sync
+$final = $handle->getFinalState();
+
+$handle = AgenticGraph::dispatch('content', new State(['topic' => 'Laravel'])); // async ticket
+$handle = AgenticGraph::execute('content', new State, new ExecutionOptions(mode: ExecutionMode::ASYNC, interrupts: false));
 ```
 
-Raw Prism events include `text_start`, `text_delta`, `text_complete`.
+- `interrupts` defaults to `true`. A graph with a gate pauses unless you pass `interrupts: false`.
+- An async handle is a ticket. `getFinalState()` throws `NotYetCompleteException` until it finishes. Use `wait()`, or `AgenticGraph::getExecution($id)` later.
+- Handle: `id()`, `status()` (`ExecutionStatus`), `isCompleted()`, `isInterrupted()`, `isFailed()`, `error()`, `latestState()`, `refresh()`.
+- There is no timeout on `ExecutionOptions`. Limits live in config.
+- Streaming presets and `StreamingMode`: use the `agenticgraph-streaming` skill.
 
-## MCP Tooling
+Docs: `/docs/execution`, `/docs/api/execution`
 
-Relay servers are configured in `config/relay.php`:
+## Interrupts (human in the loop)
+
+- A gate is a `PrismNode` that overrides `shouldInterrupt()`. It is checked before `execute()`, so the gate pauses on data earlier nodes wrote. `AbstractNode` gates are never asked.
+- The run stops with status `INTERRUPTED`, which is not a failure. Override `getInterruptReason()` and `getInterruptPayload()` for the reviewer, and `onResume($state, $humanInput)` to apply the answer. `handleApproval()` writes `approved` and `approval_comments`.
+- Same request: `$handle->resume($input)`. Later request: `AgenticGraph::resume($executionId, $input)`, which returns a `ResumeResult` (`->handle`, `->interrupt`). It needs interrupt persistence (on by default) and throws without it.
+- `AgenticGraph::interruptDetails($executionId)` returns the pending interrupt and latest state for your UI.
+- Gate and controller example: [references/interrupts.md](references/interrupts.md).
+
+Docs: `/docs/interrupts`
+
+## Checkpoints
+
+- The coordinator writes a snapshot after each node (`checkpoint.frequency`) and before a gate. Nodes never call it.
+- `checkpoint.enabled` (snapshots) and `interrupts.persistence_enabled` (resume in a later request) are separate settings.
+- `$handle->checkpoint()` returns the latest `Checkpoint`. `StateManager::rollback($executionId, $checkpointId)` returns that snapshot's `State`; the graph does not walk backwards.
+- A worker restart retries the job. It does not load the latest checkpoint by itself.
+
+Docs: `/docs/checkpoints`
+
+## MCP tools
 
 ```php
-return [
-    'servers' => [
-        'context7' => [
-            'command' => ['npx', '-y', '@modelcontextprotocol/server-context7'],
-            'timeout' => 30,
-            'env' => [],
-            'transport' => \Prism\Relay\Enums\Transport::Stdio,
-        ],
-    ],
-];
+use Prism\Prism\Enums\ToolChoice;
+
+$mcp = $this->withMcp('context7', ['toolChoice' => ToolChoice::Any, 'maxSteps' => 5])
+    ->withSystemPrompt($systemPrompt)
+    ->withPrompt($question)
+    ->asMcp();
+
+return $state->set('answer', $mcp->cleanText())->set('tool_calls', $mcp->toolCalls());
 ```
 
-Use Prism or AgenticGraph APIs to call tools rather than ad-hoc HTTP calls.
+- The server name is a key in `config/relay.php` (`vendor:publish --tag=relay-config`).
+- Prism's default `maxSteps` is 1 and `withMcp` does not raise it. Without `maxSteps` the model cannot call a tool and then answer.
+- `McpResponse` lives in `Shahzad\AgenticGraph\Mcp`. `withMcp` always uses `asText()`; it never streams.
+- On servers, set `RELAY_NPX_PATH` and `PATH` in the env.
+
+Docs: `/docs/mcp`, `/docs/api/mcp`
+
+## Middleware
+
+- Configured only in `config('agenticgraph.middleware.global')`, never on `GraphBuilder`. The first entry is outermost.
+- No interface. A class with `handle(StateContract $state, NodeInterface $node, Closure $next): StateContract`. Not Laravel HTTP middleware.
+- The defaults are logging, timing and validation. `ValidationMiddleware` calls `$state->validate()` before and after each node.
+- `CachingMiddleware` and `CircuitBreakerMiddleware` are opt-in and apply to every node name. Nodes without `isCacheable()` get cached, including LLM nodes. The circuit breaker is per node name, process-wide.
+- Retries loop inside `$next`. Your `handle()` runs once per node, not once per attempt.
+
+Docs: `/docs/guide-middleware`
+
+## Lifecycle events
+
+Ordinary Laravel events in `Shahzad\AgenticGraph\Events`. Not stream events, not spans.
+
+- The ones to listen for: `GraphExecutionFailed` (`exception`), `TokensUsed` (`model`, `totalTokens`, `callType`), `InterruptPending` (`interruptId`, `checkpointId`, `payload`).
+- Also: `GraphExecutionStarted`, `GraphExecutionCompleted`, `NodeExecutionStarted`, `NodeExecutionCompleted`, `NodeExecutionFailed` (each attempt), `NodeInterrupted`, `NodeResumed`, `CheckpointCreated`, `RouteDecided`, `ToolCallCaptured`, `CycleCompleted`.
+- Listeners run in the process that dispatched the event. To queue one, put `ShouldQueue` on the listener; on the event class it does nothing.
+- `InterruptPending` needs interrupt persistence. `AGENTICGRAPH_INTERRUPT_BROADCAST` only toggles whether it is dispatched. It is not Echo.
+- Do not add `broadcastOn()` to package events. Broadcast from your listener.
+
+Docs: `/docs/guide-events`
+
+## CLI
+
+| Command | Notes |
+|---|---|
+| `agenticgraph:list` | Builds config graphs (`getOrBuild`) and lists them |
+| `agenticgraph:execute {name} --state='{...}'` | Sync. Prints the final state as JSON. Uses `get`, so a never-built config graph is "not found". Bad JSON becomes `[]`. |
+| `agenticgraph:visualize {name} --output=` | Mermaid only. `--format` is ignored. |
+| `agenticgraph:executions --graph= --status= --limit=` | Recent runs |
+| `agenticgraph:checkpoint:list`, `:delete {id}`, `:cleanup --days=30` | Snapshots |
+| `agenticgraph:checkpoint:resume {id}` | Replays from a snapshot. Not human-in-the-loop resume. |
+| `agenticgraph:pricing:sync` | Rewrites package model pricing. Not a daily command. |
+
+Docs: `/docs/guide-cli`
 
 ## Testing
 
-Use unit tests for nodes and routers, and feature tests for full graphs.
+- Test node logic by calling `execute()` on the node with a `State`. No graph needed.
+- Fake the model: `Prism::fake([TextResponseFake::make()->withText('...')])`. One fake per model call, in order.
+- Test a graph with `AgenticGraph::run()`. Assert `status()` and `getFinalState()`. `GraphExecutor::execute()` returns `State`, not a handle.
+- Interrupts: sync run, assert `isInterrupted()` and `interruptedAtNode()`, then `$handle->resume([...])`.
+- Async: `Bus::fake()`, `AgenticGraph::dispatch()`, assert the job. `Event::fake()` swallows every listener.
+- Examples: [references/testing.md](references/testing.md). Trace tests: use the `agenticgraph-tracing` skill.
 
-Node unit test:
+Docs: `/docs/guide-testing`
 
-```php
-use Shahzad\AgenticGraph\Nodes\AbstractNode;
-use Shahzad\AgenticGraph\Contracts\StateContract;
-use Shahzad\AgenticGraph\State\State;
+## Troubleshooting
 
-final class CalculateTaxNode extends AbstractNode
-{
-    public function execute(StateContract $state): StateContract
-    {
-        $subtotal = (int) $state->get('subtotal', 0);
+| Symptom | Cause |
+|---|---|
+| `no such table: agenticgraph_executions` | Migrations not run |
+| `Graph '...' not found in registry or config` | Not in `config('agenticgraph.graphs')`, or the class has no static `build()` |
+| Run stops with `Max iterations reached` | A loop has no reachable exit or no cap |
+| One parallel branch's output missing | Same key written by two branches |
+| Async run never finishes | No worker on the graph queue and connection |
+| Resume finds nothing after deploy | Different `AGENTICGRAPH_STORAGE`, or persistence off |
 
-        return $state->set('total', $subtotal + 10);
-    }
-}
-
-it('calculates tax', function () {
-    $node = new CalculateTaxNode;
-    $result = $node->execute(new State(['subtotal' => 100]));
-
-    expect($result->get('total'))->toBe(110);
-});
-```
-
-Graph feature test:
-
-```php
-use Shahzad\AgenticGraph\Facades\AgenticGraph;
-use Shahzad\AgenticGraph\Graph\GraphBuilder;
-use Shahzad\AgenticGraph\Nodes\AbstractNode;
-use Shahzad\AgenticGraph\Contracts\StateContract;
-use Shahzad\AgenticGraph\State\State;
-
-final class StartNode extends AbstractNode
-{
-    public function execute(StateContract $state): StateContract
-    {
-        return $state->set('started', true);
-    }
-}
-
-final class EndNode extends AbstractNode
-{
-    public function execute(StateContract $state): StateContract
-    {
-        return $state->set('status', 'completed');
-    }
-}
-
-it('executes a graph end-to-end', function () {
-    $graph = GraphBuilder::create('order-flow')
-        ->addNode('start', StartNode::class)
-        ->addNode('end', EndNode::class)
-        ->addEdge('start', 'end')
-        ->setEntryPoint('start')
-        ->addExitPoint('end')
-        ->build();
-
-    AgenticGraph::register('order-flow', $graph);
-
-    $handle = AgenticGraph::execute('order-flow', new State);
-    $finalState = $handle->getFinalState();
-
-    expect($finalState->get('status'))->toBe('completed');
-});
-```
+Docs: `/docs/guide-troubleshooting`

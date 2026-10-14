@@ -95,6 +95,10 @@
 - The trace buffer in the cache and its config (`tracing.buffer.store`, `tracing.buffer.ttl_seconds`). A resume no longer depends on the cache.
 - The unused protected helper `PulseExporter::findSpansOutsideTraceWindow()`.
 
+### Docs
+- `spec/tracing-wire-v1.md` named the sampling keys `tracing.sample_rate` and `tracing.always_on_error`. They are `tracing.sampling.rate` and `tracing.sampling.always_on_error`, as in the config. Prose only; the wire format is unchanged.
+- Boost: the single `agenticgraph-core` skill is replaced by three skills, `agenticgraph-core`, `agenticgraph-tracing` and `agenticgraph-streaming`, plus a guideline that names them. `BoostSkillsDriftTest` checks that every class, method and env key the skills name exists.
+
 ### Known limitation
 - With `sampling.always_on_error` and a rate below 1.0, a failed trace that was not sampled is sent with its header and status but no spans. A later version adds them.
 
