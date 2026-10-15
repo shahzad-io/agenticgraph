@@ -76,7 +76,7 @@ Enumeratable constants in `StreamLifecycleEventTypes` and `StreamEventEnvelope`.
 |--------|-------------|------------|-----------------------------------------------|
 | `graph_start` | `null` | `null` | `{ graph_name: string }` |
 | `graph_complete` | `null` | `null` | `{ duration_ms: number }` |
-| `graph_failed` | `null` | `null` | `{ error_type: string, message: string }` |
+| `graph_failed` | `null` | `null` | `{ error_type: string, message: string, reason?: string }`. `reason` is optional; `interrupt_expired` when `agenticgraph:interrupt:expire` ended the execution |
 | `node_start` | node | `1` | `{ node_name: string }` |
 | `node_complete` | node | increments | `{ node_name: string, duration_ms: number }` + optional state capture |
 | `node_error` | node | increments | `{ node_name: string, error_type: string, message: string }` |
@@ -411,3 +411,4 @@ export type ExecutionTerminalPayload = {
 |---------|------|-------|
 | **1.0** | 2026-06 | Initial freeze after prefreeze fixes (coherent `node_seq`, `StreamErrorPayload` wire serialization, `NODE_INTERRUPT` constant) |
 | **1.1** | 2026-10 | Pre-release amendment (allowed only because the contract was not yet publicly released). `final_state` is nullable and `null` by default in `execution_terminal`, broadcast `stream_close.meta` and `stream_replay_unavailable`; opt in with `AGENTICGRAPH_STREAM_EXPOSE_FINAL_STATE=true` and an optional `keys` allowlist. When exposed it is the plain state object, not the storage envelope. `execution_terminal` is documented as always emitted regardless of stream filters, and as the last event of a run (`graph_failed` before it, one `stream_close`). Breaking for clients that assume an object |
+| **1.1** | 2026-10 | Additive (B1): `graph_failed` has an optional `reason` string. `agenticgraph:interrupt:expire` sets `interrupt_expired`, then the failed `execution_terminal` follows as for any failure. Clients that ignore unknown payload keys need no change. |

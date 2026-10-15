@@ -28,7 +28,7 @@ use Shahzad\AgenticGraph\Tracing\TraceTime;
  */
 class TracingListener
 {
-    protected TracerExporter $exporter;
+    protected ?TracerExporter $exporter;
 
     /** Capture configuration */
     protected string $captureState;
@@ -41,7 +41,7 @@ class TracingListener
 
     protected ModelPricingCalculator $pricingCalculator;
 
-    public function __construct(TracerExporter $exporter, ?ModelPricingCalculator $pricingCalculator = null)
+    public function __construct(?TracerExporter $exporter = null, ?ModelPricingCalculator $pricingCalculator = null)
     {
         $this->exporter = $exporter;
         $this->pricingCalculator = $pricingCalculator ?? new ModelPricingCalculator;
@@ -58,7 +58,7 @@ class TracingListener
      */
     public function onGraphStarted(GraphExecutionStarted $event): void
     {
-        if (! $this->exporter->isEnabled()) {
+        if (! $this->exporter()->isEnabled()) {
             return;
         }
 
@@ -71,7 +71,7 @@ class TracingListener
             false // Not an error
         );
 
-        $this->exporter->startTrace(
+        $this->exporter()->startTrace(
             $event->executionId,
             $event->graphName,
             array_keys($event->initialState->toArray()),
@@ -88,7 +88,7 @@ class TracingListener
      */
     public function onGraphCompleted(GraphExecutionCompleted $event): void
     {
-        if (! $this->exporter->isEnabled()) {
+        if (! $this->exporter()->isEnabled()) {
             return;
         }
 
@@ -99,7 +99,7 @@ class TracingListener
         $endedAt = $startedAt;
         $this->calculateSpanTimestamps($startedAt, null, $durationMs, $traceStartDt, $startedAt, $endedAt);
 
-        $this->exporter->addSpan([
+        $this->exporter()->addSpan([
             'id' => $spanId,
             'trace_id' => $event->executionId,
             'parent_id' => null,
@@ -121,7 +121,7 @@ class TracingListener
             false // Not an error
         );
 
-        $this->exporter->completeTrace(
+        $this->exporter()->completeTrace(
             $event->executionId,
             array_keys($event->finalState->toArray()),
             $durationMs,
@@ -135,7 +135,7 @@ class TracingListener
      */
     public function onGraphFailed(GraphExecutionFailed $event): void
     {
-        if (! $this->exporter->isEnabled()) {
+        if (! $this->exporter()->isEnabled()) {
             return;
         }
 
@@ -148,7 +148,7 @@ class TracingListener
         $resolvedEndedAt = $endedAt;
         $this->calculateSpanTimestamps($startedAt, null, $durationMs, $traceStartDt, $resolvedStartedAt, $resolvedEndedAt);
 
-        $this->exporter->addSpan([
+        $this->exporter()->addSpan([
             'id' => $spanId,
             'trace_id' => $event->executionId,
             'parent_id' => null,
@@ -174,7 +174,7 @@ class TracingListener
             true // Is an error
         );
 
-        $this->exporter->failTrace(
+        $this->exporter()->failTrace(
             $event->executionId,
             $event->exception,
             $durationMs,
@@ -188,7 +188,7 @@ class TracingListener
      */
     public function onNodeCompleted(NodeExecutionCompleted $event): void
     {
-        if (! $this->exporter->isEnabled()) {
+        if (! $this->exporter()->isEnabled()) {
             return;
         }
 
@@ -230,7 +230,7 @@ class TracingListener
         );
 
         $spanId = $event->spanId ?? uniqid('span_', true);
-        $this->exporter->addSpan([
+        $this->exporter()->addSpan([
             'id' => $spanId,
             'trace_id' => $event->executionId,
             'parent_id' => $event->parentSpanId,
@@ -259,7 +259,7 @@ class TracingListener
      */
     public function onNodeFailed(NodeExecutionFailed $event): void
     {
-        if (! $this->exporter->isEnabled()) {
+        if (! $this->exporter()->isEnabled()) {
             return;
         }
 
@@ -271,7 +271,7 @@ class TracingListener
         $this->calculateSpanTimestamps($startedAt, null, $event->durationMs, $traceStartDt, $resolvedStartedAt, $resolvedEndedAt);
 
         $spanId = $event->spanId ?? uniqid('span_', true);
-        $this->exporter->addSpan([
+        $this->exporter()->addSpan([
             'id' => $spanId,
             'trace_id' => $event->executionId,
             'parent_id' => $event->parentSpanId,
@@ -298,7 +298,7 @@ class TracingListener
      */
     public function onTokensUsed(TokensUsed $event): void
     {
-        if (! $this->exporter->isEnabled()) {
+        if (! $this->exporter()->isEnabled()) {
             return;
         }
 
@@ -326,7 +326,7 @@ class TracingListener
 
         $parentId = $event->parentSpanId;
 
-        $this->exporter->addSpan([
+        $this->exporter()->addSpan([
             'id' => $spanId ?? uniqid('span_', true),
             'trace_id' => $executionId,
             'parent_id' => $parentId,
@@ -383,12 +383,12 @@ class TracingListener
             $llmCallData['cache_key'] = $event->cacheKey;
         }
 
-        $this->exporter->addLlmCall($llmCallData);
+        $this->exporter()->addLlmCall($llmCallData);
     }
 
     public function onToolCallCaptured(ToolCallCaptured $event): void
     {
-        if (! $this->exporter->isEnabled() || $event->spanAlreadyExported) {
+        if (! $this->exporter()->isEnabled() || $event->spanAlreadyExported) {
             return;
         }
 
@@ -401,7 +401,7 @@ class TracingListener
         $statusCode = $status === 'success' ? 'OK' : 'ERROR';
         $parentId = $event->spanId ?? null;
 
-        $this->exporter->addSpan([
+        $this->exporter()->addSpan([
             'id' => uniqid('span_', true),
             'trace_id' => $event->executionId,
             'parent_id' => $parentId,
@@ -434,7 +434,7 @@ class TracingListener
      */
     public function onNodeInterrupted(NodeInterrupted $event): void
     {
-        if (! $this->exporter->isEnabled()) {
+        if (! $this->exporter()->isEnabled()) {
             return;
         }
 
@@ -442,7 +442,7 @@ class TracingListener
         // re-sends the same id in a later segment, and the merge keeps the final segment copy.
         if ($event->rootSpanId !== null && $event->graphName !== null) {
             $traceStartDt = $this->traceStart($event->executionId) ?? $event->interruptedAt;
-            $this->exporter->addSpan([
+            $this->exporter()->addSpan([
                 'id' => $event->rootSpanId,
                 'trace_id' => $event->executionId,
                 'parent_id' => null,
@@ -459,7 +459,7 @@ class TracingListener
         }
 
         // Create a span for the interrupt
-        $this->exporter->addSpan([
+        $this->exporter()->addSpan([
             'id' => uniqid('span_', true),
             'trace_id' => $event->executionId,
             'parent_id' => $event->parentSpanId,
@@ -485,12 +485,12 @@ class TracingListener
      */
     public function onNodeResumed(NodeResumed $event): void
     {
-        if (! $this->exporter->isEnabled()) {
+        if (! $this->exporter()->isEnabled()) {
             return;
         }
 
         // Create a span for the resume
-        $this->exporter->addSpan([
+        $this->exporter()->addSpan([
             'id' => uniqid('span_', true),
             'trace_id' => $event->executionId,
             'parent_id' => $event->parentSpanId,
@@ -515,11 +515,11 @@ class TracingListener
      */
     public function onRouteDecided(RouteDecided $event): void
     {
-        if (! $this->exporter->isEnabled()) {
+        if (! $this->exporter()->isEnabled()) {
             return;
         }
 
-        $this->exporter->addSpan([
+        $this->exporter()->addSpan([
             'id' => $event->spanId,
             'trace_id' => $event->executionId,
             'parent_id' => $event->parentSpanId,
@@ -542,6 +542,15 @@ class TracingListener
                 'route.reason' => null,
             ],
         ]);
+    }
+
+    /**
+     * The listener is subscribed at boot for every app, so the exporter is resolved per call: an app with
+     * tracing off never builds one, and a TracerExporter rebound at runtime receives the spans.
+     */
+    protected function exporter(): TracerExporter
+    {
+        return $this->exporter ?? app(TracerExporter::class);
     }
 
     /**
@@ -670,7 +679,7 @@ class TracingListener
 
     private function traceStart(string $executionId): ?\DateTimeImmutable
     {
-        $traceStart = $this->exporter->getTraceStartTime($executionId);
+        $traceStart = $this->exporter()->getTraceStartTime($executionId);
 
         return $traceStart ? \DateTimeImmutable::createFromInterface($traceStart) : null;
     }

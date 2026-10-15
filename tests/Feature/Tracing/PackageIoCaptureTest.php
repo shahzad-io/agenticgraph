@@ -4,7 +4,6 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
-use Shahzad\AgenticGraph\AgenticGraphServiceProvider;
 use Shahzad\AgenticGraph\Contracts\RouterInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Execution\ExecutionContext;
@@ -111,8 +110,6 @@ function ioExporter(): IoSentExporter
     app()->instance(TracerExporter::class, $exporter);
     app()->instance(PulseExporter::class, $exporter);
     ioForgetRun();
-    $provider = app()->getProvider(AgenticGraphServiceProvider::class);
-    (fn () => $this->registerTracing())->call($provider);
 
     return $exporter;
 }

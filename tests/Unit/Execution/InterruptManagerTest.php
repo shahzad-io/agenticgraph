@@ -161,7 +161,8 @@ it('invokes interrupt handler callbacks on handle and resume', function () {
 
     expect(InterruptManagerHandler::$handled)->toHaveCount(1);
 
-    $record = $result->record->markResolving();
+    $record = $result->record;
+    expect($record->markResolving())->toBeTrue();
 
     $job = new ResumeExecutionJob($record->interruptId(), ['approved' => true]);
     $job->handle(app(InterruptServiceInterface::class), app(StreamResumption::class));

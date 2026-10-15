@@ -82,7 +82,7 @@ return [
 
     'prism' => [
         'model' => env('AGENTICGRAPH_PRISM_MODEL'), // required, provider:model (example: openai:gpt-4o-mini); no default
-        'cache_enabled' => env('AGENTICGRAPH_PRISM_CACHE', true),
+        'cache_enabled' => env('AGENTICGRAPH_PRISM_CACHE', false),
         'cache_ttl' => env('AGENTICGRAPH_PRISM_CACHE_TTL', 60),
         'max_tokens' => env('AGENTICGRAPH_PRISM_MAX_TOKENS', null), // max output tokens per PrismNode call; null = no limit sent
         'embeddings' => [

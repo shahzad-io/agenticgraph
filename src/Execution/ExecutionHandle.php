@@ -6,6 +6,7 @@ namespace Shahzad\AgenticGraph\Execution;
 
 use Illuminate\Support\Facades\Route;
 use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Exceptions\InterruptExpiredException;
 use Shahzad\AgenticGraph\Exceptions\InterruptPersistenceDisabledException;
 use Shahzad\AgenticGraph\Jobs\ResumeExecutionJob;
 use Shahzad\AgenticGraph\State\State;
@@ -326,11 +327,12 @@ final class ExecutionHandle
             }
 
             $interrupt = $this->pendingInterrupt();
-            if ($interrupt === null) {
+            if ($interrupt === null || ! $interrupt->markResolving()) {
+                InterruptExpiredException::throwIfExpired($this->resumeAnchorCheckpointId() ?? $interrupt?->checkpointId(), $this->executionId);
+
                 return $this->refresh();
             }
 
-            $interrupt->markResolving();
             $interruptId = $interrupt->interruptId();
             if ($interruptId === null) {
                 throw new \RuntimeException('Interrupt id is missing.');
@@ -350,6 +352,7 @@ final class ExecutionHandle
         }
 
         $checkpointId = $this->resumeAnchorCheckpointId();
+        InterruptExpiredException::throwIfExpired($checkpointId, $this->executionId);
 
         $checkpoint = $checkpointId !== null
             ? $this->checkpoints->load($checkpointId)

@@ -4,6 +4,46 @@
 
 `agenticgraph.trace.v1` is frozen; later changes are additive. The contract is `spec/tracing-wire-v1.md`, locked by `TraceWireContractFreezeTest`.
 
+### BREAKING (tools() returns a ToolRun; agent() returns an AgentResponse)
+- `PrismNode::tools()` returns `Shahzad\AgenticGraph\Tools\ToolRun` instead of `ToolCall[]`: `calls` (`ToolCall[]`), `results` (per call: `toolCallId`, `toolName`, `arguments`, `result`, `error`) and `text`. It stays single-step: the results are not sent back to the model. `ToolRun` is `Countable` (calls) and `JsonSerializable`, so it can be stored in state.
+- `error` is set when a handler threw, returned a `ToolError`, or returned an `ERROR:` / `Tool execution error:` string. Fixed on the way: a tool that threw used to reach the model as a misleading "Parameter validation error"; it now gets Prism's own error message.
+- `PrismNode::agent()` returns `Shahzad\AgenticGraph\Tools\AgentResponse`, a Prism `TextResponse` with `results`: the tool results of every step (Prism's `toolResults` has only the last step's). Code that reads `->text` is unchanged.
+- Streaming is unchanged: tool calls and results still stream as events.
+
+Before:
+
+```php
+$calls = $this->tools('Look up order 42', $tools);       // array<int, ToolCall>
+return $state->set('tool_calls', $calls);                 // the handlers ran, their results were lost
+```
+
+After:
+
+```php
+$run = $this->tools('Look up order 42', $tools);          // ToolRun
+$run->results[0]->result;                                 // what the handler returned
+$run->results[0]->error;                                  // null, or why it failed
+return $state->set('lookup', $run);                       // stored as plain data
+```
+
+### BREAKING (one caching rule, off by default)
+- `agenticgraph.prism.cache_enabled` (`AGENTICGRAPH_PRISM_CACHE`) defaults to `false`. It was `true`. Apps with a published `config/agenticgraph.php` keep their old default until they change it there.
+- One rule for `prompt`, `promptTemplate`, `chatPrompt` and `promptMessages`: a reply is cached only when the call is not streamed, has no media, and caching is on for the node. `withCache($minutes)` / `withoutCache()` on the node win over the config. `withCache()` now turns caching on even when the config is off. `promptMessages()` now caches under the same rule.
+- The cache key covers the model, max tokens, provider options and the full message list (role, content, tool calls, tool results). `getCacheKey()` takes the message list instead of a prompt string. Existing cache entries are not reused.
+- The prompt in `TokensUsed` for `chatPrompt` and `promptMessages` keeps every role and the tool calls and results. It used to label every message as user and drop tool messages.
+- `PrismRouter` reads the same key with the same default.
+
+### Interrupt expiry
+- New command `agenticgraph:interrupt:expire` (schedule it). It moves pending interrupts past `expires_at` to `expired` with a conditional update. The execution becomes `failed`; the stream gets `graph_failed` with `reason: "interrupt_expired"`, then a failed `execution_terminal`, then the broadcast `stream_close`. `GraphExecutionFailed` and the new `InterruptExpired` event fire once per interrupt.
+- `graph_failed` has an optional `reason` field (wire contract, additive).
+- Every resume path refuses an expired interrupt: `AgenticGraph::resume()` returns `ResumeResult` with the new `expired` flag and dispatches nothing; `ExecutionHandle::resume()` (sync and async), a stream resume and `agenticgraph:checkpoint:resume` throw `InterruptExpiredException`. The interrupt controller's resolve response has `expired`.
+- `InterruptRecord::markResolving()` is conditional (`where status = pending`) and returns `bool` instead of the record, so a resume cannot overwrite an expired interrupt.
+
+### Tracing can be turned on at runtime
+- The tracing listeners and the HTTP and database instrumentation are always registered. Each handler reads `agenticgraph.tracing.enabled` when its event fires, so `config(['agenticgraph.tracing.enabled' => true])` at runtime produces spans. The Pulse and OTLP exporters read it per call too.
+- With tracing off, each handler costs one config read. The database listener runs on every query: about 2 microseconds per query in the package speed test (in-memory SQLite).
+- Booting with tracing off does not build a tracer exporter.
+
 ### BREAKING (stream wire contract v1.1)
 - `final_state` is now `null` by default in `execution_terminal`, broadcast `stream_close.meta` and `stream_replay_unavailable`. Apps that read it on the client must set `AGENTICGRAPH_STREAM_EXPOSE_FINAL_STATE=true`, ideally with an allowlist in `AGENTICGRAPH_STREAM_FINAL_STATE_KEYS`.
 - When exposed, `final_state` is the plain state object (top-level keys), not the internal `__agenticgraph_state` wrapper.

@@ -6,7 +6,6 @@ use Illuminate\Bus\Batch;
 use Illuminate\Bus\PendingBatch;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Event;
 use Prism\Prism\Facades\Prism;
 use Prism\Prism\Testing\StructuredResponseFake;
 use Prism\Prism\ValueObjects\Meta;
@@ -37,7 +36,6 @@ use Shahzad\AgenticGraph\Tests\Support\Routers\Billing\IntentRouter as BillingIn
 use Shahzad\AgenticGraph\Tests\Support\Routers\Shipping\IntentRouter as ShippingIntentRouter;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\ExecutionClock;
-use Shahzad\AgenticGraph\Tracing\Listeners\TracingListener;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 use Shahzad\AgenticGraph\Tracing\TraceSegmentMerger;
@@ -154,7 +152,6 @@ function rsExporter(): RouteSpanExporter
     app()->instance(TracerExporter::class, $exporter);
     app()->instance(PulseExporter::class, $exporter);
     rsForgetExecutionServices();
-    Event::subscribe(TracingListener::class);
 
     return $exporter;
 }

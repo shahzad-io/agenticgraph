@@ -137,13 +137,19 @@ class InterruptRecord extends Model
         return is_array($metadata) ? $metadata : [];
     }
 
-    public function markResolving(): self
+    /**
+     * Claims a pending interrupt for a resume. Conditional, so it cannot overwrite an interrupt that
+     * agenticgraph:interrupt:expire (or another resume) claimed first. Returns false when it was not pending.
+     */
+    public function markResolving(): bool
     {
-        $this->update([
-            'status' => 'resolving',
-        ]);
+        $claimed = static::query()
+            ->whereKey($this->getKey())
+            ->where('status', 'pending')
+            ->update(['status' => 'resolving', 'updated_at' => now()]);
+        $this->refresh();
 
-        return $this->refresh();
+        return $claimed === 1;
     }
 
     public function markPending(mixed $metadata = null): self

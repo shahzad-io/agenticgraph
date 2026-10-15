@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -21,7 +20,6 @@ use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\Exporters\FileExporter;
 use Shahzad\AgenticGraph\Tracing\Exporters\LogExporter;
-use Shahzad\AgenticGraph\Tracing\Listeners\TracingListener;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
 use Shahzad\AgenticGraph\Tracing\TracerExporterFactory;
 
@@ -175,7 +173,6 @@ function teTee(): TeeTraceExporter
     foreach ([ExecutionContextManager::class, InterruptManager::class, ParallelExecutionCoordinator::class, ExecutionCoordinator::class, GraphExecutor::class] as $service) {
         app()->forgetInstance($service);
     }
-    Event::subscribe(TracingListener::class);
 
     return $tee;
 }

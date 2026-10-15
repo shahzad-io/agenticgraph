@@ -21,14 +21,17 @@ use Prism\Prism\Images\PendingRequest as PendingImageRequest;
 use Prism\Prism\Images\Response as ImageResponse;
 use Prism\Prism\Streaming\Events\StreamEndEvent;
 use Prism\Prism\Streaming\Events\ToolCallEvent;
+use Prism\Prism\Streaming\Events\ToolResultEvent;
 use Prism\Prism\Structured\PendingRequest as PendingStructuredRequest;
 use Prism\Prism\Text\PendingRequest as PendingTextRequest;
-use Prism\Prism\Text\Response as TextResponse;
 use Prism\Prism\Tool;
 use Prism\Prism\ValueObjects\Media\Audio as AudioMedia;
 use Prism\Prism\ValueObjects\Media\Media;
 use Prism\Prism\ValueObjects\Media\Text;
-use Prism\Prism\ValueObjects\ToolCall;
+use Prism\Prism\ValueObjects\Messages\UserMessage;
+use Prism\Prism\ValueObjects\ToolError;
+use Prism\Prism\ValueObjects\ToolOutput;
+use Prism\Prism\ValueObjects\ToolResult;
 use Prism\Relay\Facades\Relay;
 use Shahzad\AgenticGraph\Contracts\PrismClient;
 use Shahzad\AgenticGraph\Contracts\StateContract;
@@ -39,10 +42,14 @@ use Shahzad\AgenticGraph\Facades\Trace;
 use Shahzad\AgenticGraph\Mcp\McpRequest;
 use Shahzad\AgenticGraph\Prompts\ChatPromptMessages;
 use Shahzad\AgenticGraph\Prompts\ChatPromptTemplate;
+use Shahzad\AgenticGraph\Prompts\MessageSerializer;
 use Shahzad\AgenticGraph\Prompts\PromptTemplate;
 use Shahzad\AgenticGraph\Prompts\TemplateInterpolator;
 use Shahzad\AgenticGraph\Streaming\PrismStreamAdapter;
 use Shahzad\AgenticGraph\Streaming\StreamContext;
+use Shahzad\AgenticGraph\Tools\AgentResponse;
+use Shahzad\AgenticGraph\Tools\ToolRun;
+use Shahzad\AgenticGraph\Tools\ToolRunResult;
 use Shahzad\AgenticGraph\Tracing\CaptureDepth;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 
@@ -76,9 +83,19 @@ abstract class PrismNode extends AbstractNode
 
     protected ?int $cacheTtl = null;
 
+    /** Explicit node choice set by withCache() / withoutCache(); null follows agenticgraph.prism.cache_enabled. */
+    protected ?bool $cacheEnabled = null;
+
     protected bool $trackTokens = true;
 
     private bool $toolsTracingWrapped = false;
+
+    /**
+     * Errors the tool wrapper saw in the current tools() / agent() call, keyed by tool name and arguments, in call order.
+     *
+     * @var array<string, list<string|null>>
+     */
+    private array $toolErrors = [];
 
     /**
      * Raw Prism text request factory (timeouts/client options only).
@@ -109,8 +126,7 @@ abstract class PrismNode extends AbstractNode
      */
     private function withNodeRequestOptions(PendingTextRequest|PendingStructuredRequest $request): PendingTextRequest|PendingStructuredRequest
     {
-        $configured = config('agenticgraph.prism.max_tokens', null);
-        $limit = $this->maxTokens ?? (is_numeric($configured) ? (int) $configured : null);
+        $limit = $this->resolvedMaxTokens();
 
         if ($limit !== null) {
             $request->withMaxTokens($limit);
@@ -121,6 +137,13 @@ abstract class PrismNode extends AbstractNode
         }
 
         return $request;
+    }
+
+    private function resolvedMaxTokens(): ?int
+    {
+        $configured = config('agenticgraph.prism.max_tokens', null);
+
+        return $this->maxTokens ?? (is_numeric($configured) ? (int) $configured : null);
     }
 
     protected function buildStreamingRequest(StateContract $state): PendingTextRequest
@@ -207,45 +230,9 @@ abstract class PrismNode extends AbstractNode
     {
         $startTime = microtime(true);
         $promptText = $this->interpolate($template, $variables);
-        if ($this->streamingEnabled()) {
-            $request = $this->prism()->withPrompt($promptText, $additionalContent);
+        $request = $this->prism()->withPrompt($promptText, $additionalContent);
 
-            return $this->streamTextRequest($request, $startTime, $promptText);
-        }
-        $useCache = $this->shouldCache() && $additionalContent === [];
-        $cacheKey = $useCache ? $this->getCacheKey($promptText) : null;
-        if ($useCache && $this->cache()->has($cacheKey)) {
-            $responseText = (string) $this->cache()->get($cacheKey);
-            $this->dispatchCachedLlmCall($startTime, $promptText, $responseText, $cacheKey);
-
-            return $responseText;
-        }
-        $config = $this->model ?? (string) config('agenticgraph.prism.model');
-        [$provider, $model] = $this->parseModel($config);
-        $response = $this->prism()->withPrompt($promptText, $additionalContent)->asText();
-        $responseText = $response->text;
-        if ($useCache) {
-            $this->cache()->put($cacheKey, $responseText, ($this->cacheTtl ?? (int) config('agenticgraph.prism.cache_ttl')) * 60);
-        }
-        if ($this->trackTokens) {
-            $usage = $this->resolveUsage($response);
-        }
-        if ($this->trackTokens && $usage !== null) {
-            $durationMs = (microtime(true) - $startTime) * 1000;
-            $this->events()->dispatch(TokensUsed::fromLlmCall(
-                node: $this->getName(),
-                callStartMicrotime: $startTime,
-                callDurationMs: $durationMs,
-                promptTokens: $usage['promptTokens'],
-                completionTokens: $usage['completionTokens'],
-                callType: 'text',
-                model: "{$provider}:{$model}",
-                prompt: $promptText,
-                response: $responseText
-            ));
-        }
-
-        return $responseText;
+        return $this->cachedText($request, [new UserMessage($promptText)], $additionalContent !== [], $startTime, $promptText);
     }
 
     /**
@@ -254,40 +241,9 @@ abstract class PrismNode extends AbstractNode
     protected function promptMessages(array $messages): string
     {
         $startTime = microtime(true);
-        $config = $this->model ?? (string) config('agenticgraph.prism.model');
-        [$provider, $model] = $this->parseModel($config);
+        $request = $this->prism()->withMessages($messages);
 
-        if ($this->streamingEnabled()) {
-            $request = $this->prism()->withMessages($messages);
-
-            return $this->streamTextRequest($request, $startTime, $this->extractPromptFromMessages($messages));
-        }
-
-        $response = $this->prism()
-            ->withMessages($messages)
-            ->asText();
-
-        $responseText = $response->text;
-
-        if ($this->trackTokens) {
-            $usage = $this->resolveUsage($response);
-        }
-        if ($this->trackTokens && $usage !== null) {
-            $durationMs = (microtime(true) - $startTime) * 1000;
-            $this->events()->dispatch(TokensUsed::fromLlmCall(
-                node: $this->getName(),
-                callStartMicrotime: $startTime,
-                callDurationMs: $durationMs,
-                promptTokens: $usage['promptTokens'],
-                completionTokens: $usage['completionTokens'],
-                callType: 'text',
-                model: "{$provider}:{$model}",
-                prompt: $this->extractPromptFromMessages($messages),
-                response: $responseText
-            ));
-        }
-
-        return $responseText;
+        return $this->cachedText($request, $messages, MessageSerializer::hasMedia($messages), $startTime, MessageSerializer::toText($messages));
     }
 
     /**
@@ -488,11 +444,14 @@ abstract class PrismNode extends AbstractNode
     }
 
     /**
+     * Single step: the model requests calls, the handlers run, and the ToolRun says what happened. The results are
+     * not sent back to the model; for a loop that answers in text use agent().
+     *
      * @param  array<int, Tool>  $tools
-     * @return array<int, ToolCall>
      */
-    protected function tools(string $prompt, array $tools): array
+    protected function tools(string $prompt, array $tools): ToolRun
     {
+        $this->toolErrors = [];
         $tools = $this->wrapToolsForTracing($tools, 'prism');
         $startTime = microtime(true);
         $config = $this->model ?? (string) config('agenticgraph.prism.model');
@@ -502,14 +461,10 @@ abstract class PrismNode extends AbstractNode
             $request = $this->prism()
                 ->withTools($tools)
                 ->withPrompt($prompt);
+            // streamingEnabled() means a sink is set; a stream context without one takes the non-streamed path below.
             $context = app(StreamContext::class);
             $sink = $context->sink();
-            if ($sink === null) {
-                $response = $request->asText();
-                $this->dispatchToolCalls($response->toolCalls, 'prism');
-
-                return $response->toolCalls;
-            }
+            assert($sink !== null);
             $traceContext = $this->resolveTraceContext();
             $adapter = new PrismStreamAdapter(
                 session: $context->session(),
@@ -518,11 +473,15 @@ abstract class PrismNode extends AbstractNode
                 parentSpanId: $traceContext?->getParentSpanId()
             );
             $toolCalls = [];
+            $toolResults = [];
             $text = '';
             $streamUsage = null;
             foreach ($request->asStream() as $event) {
                 if ($event instanceof StreamEndEvent && $event->usage !== null) {
                     $streamUsage = $event->usage;
+                }
+                if ($event instanceof ToolResultEvent) {
+                    $toolResults[] = $event->toolResult;
                 }
                 $streamEvent = $adapter->adapt($event);
                 if ($streamEvent === null) {
@@ -553,7 +512,7 @@ abstract class PrismNode extends AbstractNode
                 ));
             }
 
-            return $toolCalls;
+            return new ToolRun($toolCalls, $this->toolRunResults($toolResults), $text);
         }
 
         $response = $this->prism()
@@ -581,11 +540,38 @@ abstract class PrismNode extends AbstractNode
             ));
         }
 
-        return $response->toolCalls;
+        return new ToolRun(array_values($response->toolCalls), $this->toolRunResults($response->toolResults), $response->text);
     }
 
     /**
-     * Traced multi-step agent with local Prism tools (wrap + toolChoice + maxSteps + TokensUsed).
+     * Pairs Prism's results (which carry the tool call id) with the errors the tool wrapper saw, by tool name and arguments.
+     *
+     * @param  array<int, ToolResult>  $toolResults
+     * @return list<ToolRunResult>
+     */
+    private function toolRunResults(array $toolResults): array
+    {
+        $runResults = [];
+        foreach ($toolResults as $toolResult) {
+            $key = $this->toolOutcomeKey($toolResult->toolName, $toolResult->args);
+            $error = isset($this->toolErrors[$key]) && $this->toolErrors[$key] !== [] ? array_shift($this->toolErrors[$key]) : null;
+            $runResults[] = new ToolRunResult($toolResult->toolCallId, $toolResult->toolName, $toolResult->args, $toolResult->result, $error);
+        }
+
+        return $runResults;
+    }
+
+    /**
+     * @param  array<int|string, mixed>  $arguments
+     */
+    private function toolOutcomeKey(string $toolName, array $arguments): string
+    {
+        return $toolName.'|'.json_encode($arguments, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR);
+    }
+
+    /**
+     * Traced multi-step agent with local Prism tools (wrap + toolChoice + maxSteps + TokensUsed). The result's
+     * $results holds the tool results of every step.
      *
      * @param  array<int, Tool>  $tools
      * @param  array{
@@ -594,8 +580,9 @@ abstract class PrismNode extends AbstractNode
      *     maxSteps?: int,
      * }  $options
      */
-    protected function agent(string $prompt, array $tools, array $options = []): TextResponse
+    protected function agent(string $prompt, array $tools, array $options = []): AgentResponse
     {
+        $this->toolErrors = [];
         $tools = $this->wrapToolsForTracing($tools, 'prism');
         $startTime = microtime(true);
         $config = $this->model ?? (string) config('agenticgraph.prism.model');
@@ -636,7 +623,12 @@ abstract class PrismNode extends AbstractNode
             ));
         }
 
-        return $response;
+        $toolResults = [];
+        foreach ($response->steps as $step) {
+            array_push($toolResults, ...$step->toolResults);
+        }
+
+        return new AgentResponse($response, $this->toolRunResults($toolResults));
     }
 
     /**
@@ -683,37 +675,47 @@ abstract class PrismNode extends AbstractNode
         return $this;
     }
 
+    /** Caches this node's text replies for $ttlMinutes, whatever agenticgraph.prism.cache_enabled says. */
     protected function withCache(int $ttlMinutes): static
     {
+        $this->cacheEnabled = $ttlMinutes > 0;
         $this->cacheTtl = $ttlMinutes;
 
         return $this;
     }
 
+    /** Never caches this node's text replies, whatever agenticgraph.prism.cache_enabled says. */
     protected function withoutCache(): static
     {
-        $this->cacheTtl = 0;
+        $this->cacheEnabled = false;
 
         return $this;
     }
 
     protected function shouldCache(): bool
     {
-        return (bool) config('agenticgraph.prism.cache_enabled') && $this->cacheTtl !== 0;
+        return $this->cacheEnabled ?? ($this->cacheTtl !== 0 && (bool) config('agenticgraph.prism.cache_enabled', false));
     }
 
-    protected function getCacheKey(string $prompt): string
+    /**
+     * Covers the model, max tokens, provider options and the full message list (role, content, tool calls, tool results).
+     *
+     * @param  array<int, Message>  $messages
+     */
+    protected function getCacheKey(array $messages): string
     {
-        $model = $this->model ?? config('agenticgraph.prism.model', 'default');
-        $nodeClass = static::class;
-        $version = config('agenticgraph.cache.version', 'v1');
+        $payload = json_encode([
+            'model' => $this->model ?? (string) config('agenticgraph.prism.model'),
+            'max_tokens' => $this->resolvedMaxTokens(),
+            'provider_options' => $this->providerOptions,
+            'messages' => MessageSerializer::toArray($messages),
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR);
 
-        // Include node class and version to prevent cache key collisions
         return sprintf(
             'agenticgraph:prism:%s:%s:%s',
-            $version,
-            $nodeClass,
-            md5($model.'|'.$prompt)
+            config('agenticgraph.cache.version', 'v1'),
+            static::class,
+            hash('sha256', (string) $payload)
         );
     }
 
@@ -834,59 +836,6 @@ abstract class PrismNode extends AbstractNode
             'completionTokens' => $completionTokens,
             'totalTokens' => $promptTokens + $completionTokens,
         ];
-    }
-
-    /**
-     * Extract prompt text from messages (array or Collection).
-     *
-     * @param  array<int, Message>|Collection<int, Message>|null  $messages
-     */
-    private function extractPromptFromMessages(array|Collection|null $messages): ?string
-    {
-        if ($messages === null) {
-            return null;
-        }
-
-        // Convert Collection to array if needed
-        if ($messages instanceof Collection) {
-            $messages = $messages->all();
-        }
-
-        if ($messages === []) {
-            return null;
-        }
-
-        $parts = [];
-        foreach ($messages as $message) {
-            $content = null;
-
-            if (method_exists($message, 'getContent')) {
-                $content = $message->getContent();
-            } elseif (method_exists($message, 'content')) {
-                $content = $message->content();
-            } elseif (property_exists($message, 'content')) {
-                $content = $message->content;
-            } elseif (method_exists($message, 'text')) {
-                $content = $message->text();
-            } elseif (property_exists($message, 'text')) {
-                $content = $message->text;
-            }
-
-            if (is_string($content) && $content !== '') {
-                $role = 'user';
-                if (method_exists($message, 'getRole')) {
-                    $role = $message->getRole();
-                } elseif (method_exists($message, 'role')) {
-                    $role = $message->role();
-                } elseif (property_exists($message, 'role')) {
-                    $role = $message->role;
-                }
-
-                $parts[] = "[{$role}] {$content}";
-            }
-        }
-
-        return $parts === [] ? null : implode("\n\n", $parts);
     }
 
     /**
@@ -1120,7 +1069,7 @@ abstract class PrismNode extends AbstractNode
             $wrappedTool = $this->cloneToolDefinition($tool);
             $toolName = $tool->name();
 
-            $wrappedTool->using(function (...$args) use ($tool, $toolName, $toolType): string {
+            $wrappedTool->using(function (...$args) use ($tool, $toolName, $toolType): string|ToolOutput {
                 return $this->executeToolWithTracing($tool, $toolName, $args, $toolType);
             });
 
@@ -1150,13 +1099,21 @@ abstract class PrismNode extends AbstractNode
             $wrappedTool->concurrent(true);
         }
 
+        // The original tool already applied its own error handling: a failure arrives here as an exception carrying
+        // the message it chose (see executeToolWithTracing), which goes to the model unchanged, as a failed result.
+        if ($tool->failedHandler() === false) {
+            $wrappedTool->withoutErrorHandling();
+        } else {
+            $wrappedTool->failed(fn (\Throwable $e): string => $e->getMessage());
+        }
+
         return $wrappedTool;
     }
 
     /**
-     * @param  array<int, mixed>  $args
+     * @param  array<int|string, mixed>  $args
      */
-    private function executeToolWithTracing(Tool $tool, string $toolName, array $args, string $toolType): string
+    private function executeToolWithTracing(Tool $tool, string $toolName, array $args, string $toolType): string|ToolOutput
     {
         $startedAt = new \DateTimeImmutable;
         $start = microtime(true);
@@ -1170,13 +1127,14 @@ abstract class PrismNode extends AbstractNode
         ], CaptureDepth::toolArgsForSpan($args));
 
         try {
-            $result = Trace::span($toolName, function () use ($tool, $args, &$toolSpanId): string {
+            $output = Trace::span($toolName, function () use ($tool, $args, &$toolSpanId): string|ToolOutput|ToolError {
                 $toolSpanId = TraceContext::tryGet()?->getSpanId();
 
                 return $tool->handle(...$args);
             }, $attributes, 'tool');
         } catch (\Throwable $e) {
             $durationMs = (microtime(true) - $start) * 1000;
+            $this->toolErrors[$this->toolOutcomeKey($toolName, $args)][] = $e->getMessage();
             $this->dispatchWrappedToolCallEvent(
                 toolName: $toolName,
                 toolType: $toolType,
@@ -1193,7 +1151,13 @@ abstract class PrismNode extends AbstractNode
         }
 
         $durationMs = (microtime(true) - $start) * 1000;
-        [$status, $errorType, $errorMessage] = $this->detectToolError($result);
+        if ($output instanceof ToolError) {
+            [$result, $status, $errorType, $errorMessage] = [$output->message, 'failed', 'tool_error', $output->message];
+        } else {
+            $result = $output instanceof ToolOutput ? $output->result : $output;
+            [$status, $errorType, $errorMessage] = $this->detectToolError($result);
+        }
+        $this->toolErrors[$this->toolOutcomeKey($toolName, $args)][] = $status === 'failed' ? $errorMessage : null;
         $this->dispatchWrappedToolCallEvent(
             toolName: $toolName,
             toolType: $toolType,
@@ -1207,7 +1171,12 @@ abstract class PrismNode extends AbstractNode
             toolSpanId: $toolSpanId,
         );
 
-        return $result;
+        if ($output instanceof ToolError) {
+            // The wrapped tool's failed handler turns this back into a ToolError with the same message.
+            throw new \RuntimeException($output->message);
+        }
+
+        return $output;
     }
 
     /**
@@ -1309,48 +1278,9 @@ abstract class PrismNode extends AbstractNode
     {
         $startTime = microtime(true);
         $promptText = $template->format($variables);
-        if ($this->streamingEnabled()) {
-            $request = $this->prism()->withPrompt($promptText, $additionalContent);
+        $request = $this->prism()->withPrompt($promptText, $additionalContent);
 
-            return $this->streamTextRequest($request, $startTime, $promptText);
-        }
-        $useCache = $this->shouldCache() && $additionalContent === [];
-        $cacheKey = $useCache ? $this->getCacheKey($promptText) : null;
-
-        if ($useCache && $this->cache()->has($cacheKey)) {
-            $responseText = (string) $this->cache()->get($cacheKey);
-            $this->dispatchCachedLlmCall($startTime, $promptText, $responseText, $cacheKey);
-
-            return $responseText;
-        }
-
-        $config = $this->model ?? (string) config('agenticgraph.prism.model');
-        [$provider, $model] = $this->parseModel($config);
-
-        $response = $this->prism()->withPrompt($promptText, $additionalContent)->asText();
-
-        $responseText = $response->text;
-
-        if ($useCache) {
-            $this->cache()->put($cacheKey, $responseText, ($this->cacheTtl ?? (int) config('agenticgraph.prism.cache_ttl')) * 60);
-        }
-
-        if ($this->trackTokens) {
-            $durationMs = (microtime(true) - $startTime) * 1000;
-            $this->events()->dispatch(TokensUsed::fromLlmCall(
-                node: $this->getName(),
-                callStartMicrotime: $startTime,
-                callDurationMs: $durationMs,
-                promptTokens: $response->usage->promptTokens,
-                completionTokens: $response->usage->completionTokens,
-                callType: 'text',
-                model: "{$provider}:{$model}",
-                prompt: $promptText,
-                response: $responseText
-            ));
-        }
-
-        return $responseText;
+        return $this->cachedText($request, [new UserMessage($promptText)], $additionalContent !== [], $startTime, $promptText);
     }
 
     /**
@@ -1362,46 +1292,53 @@ abstract class PrismNode extends AbstractNode
     protected function chatPrompt(ChatPromptTemplate $template, array $variables = [], array $additionalContent = []): string
     {
         $startTime = microtime(true);
-        $formatted = $template->format($variables);
-        $messages = ChatPromptMessages::toPrismMessages($formatted, $additionalContent);
-        $promptText = $template->formatAsString($variables);
+        $messages = ChatPromptMessages::toPrismMessages($template->format($variables), $additionalContent);
+        $request = $this->prism()->withMessages($messages);
 
+        return $this->cachedText($request, $messages, $additionalContent !== [], $startTime, MessageSerializer::toText($messages));
+    }
+
+    /**
+     * The one caching rule for prompt(), promptTemplate(), chatPrompt() and promptMessages(). A reply is cached only
+     * when the call is not streamed, has no media, and caching is on for the node: withCache() / withoutCache() win,
+     * otherwise agenticgraph.prism.cache_enabled (default false). The key is {@see getCacheKey()}.
+     *
+     * @param  array<int, Message>  $keyMessages
+     */
+    private function cachedText(PendingTextRequest $request, array $keyMessages, bool $hasMedia, float $startTime, ?string $promptForTrace): string
+    {
         if ($this->streamingEnabled()) {
-            $request = $this->prism()->withMessages($messages);
-
-            return $this->streamTextRequest($request, $startTime, $promptText);
+            return $this->streamTextRequest($request, $startTime, $promptForTrace);
         }
 
-        $useCache = $this->shouldCache() && $additionalContent === [];
-        $cacheKey = $useCache ? $this->getCacheKey($promptText) : null;
-
-        if ($useCache && $this->cache()->has($cacheKey)) {
+        $cacheKey = ! $hasMedia && $this->shouldCache() ? $this->getCacheKey($keyMessages) : null;
+        if ($cacheKey !== null && $this->cache()->has($cacheKey)) {
             $responseText = (string) $this->cache()->get($cacheKey);
-            $this->dispatchCachedLlmCall($startTime, $promptText, $responseText, $cacheKey);
+            $this->dispatchCachedLlmCall($startTime, (string) $promptForTrace, $responseText, $cacheKey);
 
             return $responseText;
         }
 
-        $config = $this->model ?? (string) config('agenticgraph.prism.model');
-        [$provider, $model] = $this->parseModel($config);
-        $response = $this->prism()->withMessages($messages)->asText();
+        $response = $request->asText();
         $responseText = $response->text;
 
-        if ($useCache) {
-            $this->cache()->put($cacheKey, $responseText, ($this->cacheTtl ?? (int) config('agenticgraph.prism.cache_ttl')) * 60);
+        if ($cacheKey !== null) {
+            $this->cache()->put($cacheKey, $responseText, ($this->cacheTtl ?? (int) config('agenticgraph.prism.cache_ttl', 60)) * 60);
         }
 
-        if ($this->trackTokens) {
-            $durationMs = (microtime(true) - $startTime) * 1000;
+        $usage = $this->trackTokens ? $this->resolveUsage($response) : null;
+        if ($usage !== null) {
+            $config = $this->model ?? (string) config('agenticgraph.prism.model');
+            [$provider, $model] = $this->parseModel($config);
             $this->events()->dispatch(TokensUsed::fromLlmCall(
                 node: $this->getName(),
                 callStartMicrotime: $startTime,
-                callDurationMs: $durationMs,
-                promptTokens: $response->usage->promptTokens,
-                completionTokens: $response->usage->completionTokens,
+                callDurationMs: (microtime(true) - $startTime) * 1000,
+                promptTokens: $usage['promptTokens'],
+                completionTokens: $usage['completionTokens'],
                 callType: 'text',
                 model: "{$provider}:{$model}",
-                prompt: $this->extractPromptFromMessages($messages),
+                prompt: $promptForTrace,
                 response: $responseText
             ));
         }

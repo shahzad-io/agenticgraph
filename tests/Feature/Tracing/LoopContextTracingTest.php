@@ -2,7 +2,6 @@
 
 declare(strict_types=1);
 
-use Illuminate\Support\Facades\Event;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Execution\ExecutionMode;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
@@ -15,7 +14,6 @@ use Shahzad\AgenticGraph\Routers\AbstractRouter;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Tests\Unit\Tracing\MockPulseExporter;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
-use Shahzad\AgenticGraph\Tracing\Listeners\TracingListener;
 
 class LoopTraceLinearNodeA extends AbstractNode
 {
@@ -85,11 +83,6 @@ beforeEach(function (): void {
 
     $exporter = new MockPulseExporter;
     app()->instance(TracerExporter::class, $exporter);
-
-    $listener = new TracingListener($exporter);
-    foreach ($listener->subscribe($listener) as $eventClass => $method) {
-        Event::listen($eventClass, [$listener, $method]);
-    }
 
     $this->exporter = $exporter;
 });

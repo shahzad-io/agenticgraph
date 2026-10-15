@@ -10,7 +10,6 @@ use Illuminate\Http\Client\Events\ResponseReceived;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Log;
 use Prism\Prism\Streaming\Events\TextDeltaEvent;
-use Shahzad\AgenticGraph\AgenticGraphServiceProvider;
 use Shahzad\AgenticGraph\Execution\ExecutionContextManager;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
 use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
@@ -291,8 +290,6 @@ function registerTracingThroughProvider(HttpMockPulseExporter $exporter): void
 {
     app()->instance(TracerExporter::class, $exporter);
     app()->forgetInstance(ExecutionContextManager::class);
-    $provider = app()->getProvider(AgenticGraphServiceProvider::class);
-    (fn () => $this->registerTracing())->call($provider);
 }
 
 it('matches responses to requests through the event dispatcher', function () {

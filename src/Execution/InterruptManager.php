@@ -14,6 +14,7 @@ use Shahzad\AgenticGraph\Contracts\StorageInterface;
 use Shahzad\AgenticGraph\Events\InterruptPending;
 use Shahzad\AgenticGraph\Events\NodeInterrupted;
 use Shahzad\AgenticGraph\Events\NodeResumed;
+use Shahzad\AgenticGraph\Exceptions\InterruptExpiredException;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Nodes\PrismNode;
 use Shahzad\AgenticGraph\State\State;
@@ -265,6 +266,7 @@ final class InterruptManager implements InterruptServiceInterface
 
     public function resume(string $checkpointId): StateContract
     {
+        InterruptExpiredException::throwIfExpired($checkpointId);
         $checkpoint = $this->storage->load($checkpointId);
         if (! $checkpoint) {
             throw new \RuntimeException("Checkpoint {$checkpointId} not found.");
@@ -302,6 +304,7 @@ final class InterruptManager implements InterruptServiceInterface
 
     public function resumeWithInput(string $checkpointId, mixed $humanInput): StateContract
     {
+        InterruptExpiredException::throwIfExpired($checkpointId);
         $checkpoint = $this->storage->load($checkpointId);
 
         if ($checkpoint === null) {

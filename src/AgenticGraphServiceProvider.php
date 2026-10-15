@@ -20,6 +20,7 @@ use Shahzad\AgenticGraph\Console\CheckpointListCommand;
 use Shahzad\AgenticGraph\Console\CheckpointResumeCommand;
 use Shahzad\AgenticGraph\Console\ExecuteGraphCommand;
 use Shahzad\AgenticGraph\Console\ExecutionsListCommand;
+use Shahzad\AgenticGraph\Console\InterruptExpireCommand;
 use Shahzad\AgenticGraph\Console\ListGraphsCommand;
 use Shahzad\AgenticGraph\Console\SyncModelPricingCommand;
 use Shahzad\AgenticGraph\Console\VisualizeGraphCommand;
@@ -105,6 +106,7 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
             ->hasCommand(CheckpointDeleteCommand::class)
             ->hasCommand(CheckpointCleanupCommand::class)
             ->hasCommand(ExecutionsListCommand::class)
+            ->hasCommand(InterruptExpireCommand::class)
             ->hasCommand(SyncModelPricingCommand::class);
     }
 
@@ -339,10 +341,8 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
         });
         $this->app->bind(StreamingExecutorInterface::class, StreamingExecutionCoordinator::class);
 
-        // Register tracing instrumentation if tracing is enabled
-        if (config('agenticgraph.tracing.enabled', false)) {
-            $this->registerTracing();
-        }
+        // Always registered: each handler checks tracing.enabled when its event fires, so a runtime change applies.
+        $this->registerTracing();
 
         if (config('agenticgraph.streaming.routes.enabled', true)) {
             Route::middleware(config('agenticgraph.streaming.routes.middleware', ['api']))
@@ -355,12 +355,12 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
     }
 
     /**
-     * Register tracing instrumentation (lazy-loaded only when tracing is enabled)
+     * Register tracing instrumentation. With tracing off each handler returns after a config read.
      */
     private function registerTracing(): void
     {
         // Register event subscribers
-        Event::subscribe(TracingListener::class);
+        Event::subscribe(new TracingListener);
         // Singleton so RequestSending and ResponseReceived share the stored request starts.
         $this->app->singleton(HttpClientInstrumentation::class, fn () => new HttpClientInstrumentation);
         Event::subscribe(HttpClientInstrumentation::class);

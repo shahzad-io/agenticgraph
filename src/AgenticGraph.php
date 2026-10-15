@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Shahzad\AgenticGraph;
 
 use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Exceptions\InterruptExpiredException;
 use Shahzad\AgenticGraph\Exceptions\InterruptPersistenceDisabledException;
 use Shahzad\AgenticGraph\Execution\CheckpointManager;
 use Shahzad\AgenticGraph\Execution\ExecutionHandle;
@@ -163,6 +164,11 @@ class AgenticGraph
         $pending = $handle->pendingInterrupt();
 
         if ($pending === null) {
+            $latest = InterruptRecord::query()->forExecution($executionId)->latest('id')->first();
+            if ($latest?->status() === 'expired') {
+                return $this->expiredResult($handle, $latest, $streamId);
+            }
+
             $resolved = InterruptRecord::query()
                 ->forExecution($executionId)
                 ->resolved()
@@ -184,7 +190,12 @@ class AgenticGraph
             );
         }
 
-        $resumed = $handle->resume($humanInput);
+        try {
+            $resumed = $handle->resume($humanInput);
+        } catch (InterruptExpiredException $e) {
+            // Expired between the lookup above and the claim.
+            return $this->expiredResult($handle->refresh(), $e->interrupt, $streamId);
+        }
 
         $interrupt = InterruptRecord::query()
             ->forExecution($executionId)
@@ -198,6 +209,11 @@ class AgenticGraph
             alreadyResolved: false,
             streamId: $streamId ?? $resumed->streamId()
         );
+    }
+
+    private function expiredResult(ExecutionHandle $handle, InterruptRecord $interrupt, ?string $streamId): ResumeResult
+    {
+        return new ResumeResult(handle: $handle, interrupt: $interrupt, alreadyResolved: false, streamId: $streamId, expired: true);
     }
 
     private function resolveResumeStreamId(string $executionId): ?string

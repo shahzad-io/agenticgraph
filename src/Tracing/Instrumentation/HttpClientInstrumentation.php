@@ -55,6 +55,10 @@ class HttpClientInstrumentation
 
     public function onRequestSending(RequestSending $event): void
     {
+        if (! (bool) config('agenticgraph.tracing.enabled', false)) {
+            return;
+        }
+
         if ($this->exporter()->isCapturing()) {
             return;
         }
@@ -89,6 +93,10 @@ class HttpClientInstrumentation
 
     public function onResponseReceived(ResponseReceived $event): void
     {
+        if (! (bool) config('agenticgraph.tracing.enabled', false)) {
+            return;
+        }
+
         if ($this->exporter()->isCapturing()) {
             return;
         }
@@ -175,6 +183,10 @@ class HttpClientInstrumentation
 
     public function onConnectionFailed(ConnectionFailed $event): void
     {
+        if (! (bool) config('agenticgraph.tracing.enabled', false)) {
+            return;
+        }
+
         if ($this->exporter()->isCapturing()) {
             return;
         }

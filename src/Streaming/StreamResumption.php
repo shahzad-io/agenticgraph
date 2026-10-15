@@ -7,6 +7,7 @@ namespace Shahzad\AgenticGraph\Streaming;
 use Psr\Log\LoggerInterface;
 use Shahzad\AgenticGraph\Contracts\StorageInterface;
 use Shahzad\AgenticGraph\Events\NodeResumed;
+use Shahzad\AgenticGraph\Exceptions\InterruptExpiredException;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Execution\LoopMetadata;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
@@ -27,6 +28,7 @@ final class StreamResumption
 
     public function resumeStream(string $checkpointId, mixed $humanInput, StreamOptions $options): StreamHandle
     {
+        InterruptExpiredException::throwIfExpired($checkpointId);
         $checkpoint = $this->storage->load($checkpointId);
         if ($checkpoint === null) {
             throw new \RuntimeException("Checkpoint {$checkpointId} not found");

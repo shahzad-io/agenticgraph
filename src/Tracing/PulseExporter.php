@@ -21,23 +21,20 @@ class PulseExporter extends BufferedTraceExporter
 
     private ?string $apiKey = null;
 
-    private bool $enabled = false;
-
     public function __construct()
     {
         parent::__construct();
 
         $this->endpoint = config('agenticgraph.tracing.endpoint', 'https://ingest.agenticgraph.dev');
         $this->apiKey = config('agenticgraph.tracing.api_key', null);
-        $this->enabled = config('agenticgraph.tracing.enabled', false) && ! empty($this->apiKey);
     }
 
     /**
-     * Check if the exporter is configured and enabled.
+     * Check if the exporter is configured and enabled. tracing.enabled is read per call, so a runtime change applies.
      */
     public function isEnabled(): bool
     {
-        return $this->enabled;
+        return (bool) config('agenticgraph.tracing.enabled', false) && ! empty($this->apiKey);
     }
 
     /**

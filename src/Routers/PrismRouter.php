@@ -85,7 +85,7 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
         $prompt = $this->buildPromptWithLoop($state, $loop);
         $cacheKey = $this->buildCacheKey($prompt);
 
-        if (config('agenticgraph.prism.cache_enabled') && $this->cache->has($cacheKey)) {
+        if (config('agenticgraph.prism.cache_enabled', false) && $this->cache->has($cacheKey)) {
             $cachedRoute = $this->cache->get($cacheKey);
             if (is_string($cachedRoute) && $this->validateRoute($cachedRoute)) {
                 $this->lastRouteFlags['from_cache'] = true;
@@ -219,7 +219,7 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
             return $this->defaultRoute ?? '';
         }
 
-        if (config('agenticgraph.prism.cache_enabled')) {
+        if (config('agenticgraph.prism.cache_enabled', false)) {
             $this->cache->put($cacheKey, $route, config('agenticgraph.prism.cache_ttl', 60) * 60);
         }
 

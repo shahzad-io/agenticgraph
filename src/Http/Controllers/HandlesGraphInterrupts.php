@@ -89,6 +89,7 @@ trait HandlesGraphInterrupts
             'execution_id' => $result->handle->id(),
             'status' => $result->handle->status()->name,
             'already_resolved' => $result->alreadyResolved,
+            'expired' => $result->expired,
             'interrupt_still_pending' => $stillPending,
             'interrupt' => $result->interrupt?->toArray(),
         ]);

@@ -6,7 +6,6 @@ use Illuminate\Bus\Batch;
 use Illuminate\Bus\PendingBatch;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Event;
 use Shahzad\AgenticGraph\Contracts\RouterInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Contracts\StorageInterface;
@@ -32,7 +31,6 @@ use Shahzad\AgenticGraph\Streaming\StreamOptions;
 use Shahzad\AgenticGraph\Streaming\StreamResumption;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\ExecutionClock;
-use Shahzad\AgenticGraph\Tracing\Listeners\TracingListener;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 use Shahzad\AgenticGraph\Tracing\TraceSegmentMerger;
@@ -142,7 +140,6 @@ function rlExporter(): RootLifecycleExporter
     app()->instance(TracerExporter::class, $exporter);
     app()->instance(PulseExporter::class, $exporter);
     rlForgetExecutionServices();
-    Event::subscribe(TracingListener::class);
 
     return $exporter;
 }

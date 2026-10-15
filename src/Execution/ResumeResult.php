@@ -11,5 +11,7 @@ final class ResumeResult
         public readonly ?InterruptRecord $interrupt,
         public readonly bool $alreadyResolved = false,
         public readonly ?string $streamId = null,
+        /** True when the interrupt expired (agenticgraph:interrupt:expire): nothing was dispatched and the execution is failed. */
+        public readonly bool $expired = false,
     ) {}
 }

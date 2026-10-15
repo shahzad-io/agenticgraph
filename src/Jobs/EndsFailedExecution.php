@@ -39,11 +39,12 @@ trait EndsFailedExecution
         ?ExecutionOptions $executionOptions,
         ?string $rootSpanId = null,
         ?int $fallbackSeq = null,
+        ?string $reason = null,
     ): void {
         $changed = app(ExecutionRepository::class)->failed($executionId, $e->getMessage());
 
         if ($streamId !== null && $streaming !== null && $streaming !== StreamingMode::NONE) {
-            $this->appendFailedTerminalIfMissing($e, $executionId, $stateData, $streamId, $streaming, $executionOptions ?? new ExecutionOptions, $fallbackSeq);
+            $this->appendFailedTerminalIfMissing($e, $executionId, $stateData, $streamId, $streaming, $executionOptions ?? new ExecutionOptions, $fallbackSeq, $reason);
         }
 
         if ($changed) {
@@ -62,6 +63,7 @@ trait EndsFailedExecution
         StreamingMode $streaming,
         ExecutionOptions $executionOptions,
         ?int $fallbackSeq,
+        ?string $reason = null,
     ): void {
         // execution_terminal is always the last stored event, so checking the last one is enough.
         // An `interrupted` terminal ends only the run before a resume, not the execution.
@@ -93,7 +95,7 @@ trait EndsFailedExecution
             null,
             null,
             StreamLifecycleEventTypes::GRAPH_FAILED,
-            $error,
+            $reason !== null ? $error + ['reason' => $reason] : $error, // reason is optional, e.g. interrupt_expired
             ++$session->seq,
             null,
             new \DateTimeImmutable,

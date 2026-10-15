@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
-use Shahzad\AgenticGraph\AgenticGraphServiceProvider;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\ExecutionClock;
 use Shahzad\AgenticGraph\Tracing\Instrumentation\DatabaseInstrumentation;
@@ -30,7 +29,7 @@ class RebindCapturingExporter extends PulseExporter
 }
 
 /**
- * The instrumentation singletons are resolved at boot (Event::subscribe and
+ * The instrumentation singletons are resolved at boot, always (Event::subscribe and
  * DatabaseInstrumentation::register). Rebinding TracerExporter afterwards must still
  * route their spans to the new exporter.
  */
@@ -42,11 +41,9 @@ it('sends http, db and tracer spans to a TracerExporter rebound at runtime', fun
     ]);
     Http::fake(['rebind.test/*' => Http::response(['ok' => true])]);
 
-    // Boot as a tracing-enabled app does: the singletons are resolved with the boot exporter.
+    // The singletons were resolved at boot; the first exporter is what they would have pinned.
     $bootExporter = new RebindCapturingExporter;
     app()->instance(TracerExporter::class, $bootExporter);
-    $provider = app()->getProvider(AgenticGraphServiceProvider::class);
-    (fn () => $this->registerTracing())->call($provider);
     $tracer = app(Tracer::class);
     expect(app()->resolved(HttpClientInstrumentation::class))->toBeTrue()
         ->and(app()->resolved(DatabaseInstrumentation::class))->toBeTrue();

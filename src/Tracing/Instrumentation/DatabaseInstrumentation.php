@@ -46,6 +46,11 @@ class DatabaseInstrumentation
      */
     public function handleQuery(QueryExecuted $event): void
     {
+        // Runs on every query: with tracing off, one config read and nothing else.
+        if (! (bool) config('agenticgraph.tracing.enabled', false)) {
+            return;
+        }
+
         if ($this->exporter()->isCapturing()) {
             return;
         }

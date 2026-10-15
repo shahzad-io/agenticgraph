@@ -17,8 +17,6 @@ use Shahzad\AgenticGraph\Tracing\Otlp\OtlpPayloadBuilder;
  */
 final class OtlpExporter extends BufferedTraceExporter
 {
-    private bool $enabled = false;
-
     private string $endpoint;
 
     /** @var array<string, string> */
@@ -32,14 +30,14 @@ final class OtlpExporter extends BufferedTraceExporter
         parent::__construct();
 
         $this->endpoint = (string) config('agenticgraph.tracing.otlp.endpoint', 'http://localhost:4318/v1/traces');
-        $this->enabled = (bool) config('agenticgraph.tracing.enabled', false) && filled($this->endpoint);
         $this->protocol = (string) config('agenticgraph.tracing.otlp.protocol', 'http/json');
         $this->headers = $this->resolveHeaders();
     }
 
+    /** tracing.enabled is read per call, so a runtime change applies. */
     public function isEnabled(): bool
     {
-        return $this->enabled;
+        return (bool) config('agenticgraph.tracing.enabled', false) && filled($this->endpoint);
     }
 
     /**
