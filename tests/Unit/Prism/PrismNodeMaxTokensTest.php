@@ -9,6 +9,7 @@ use Prism\Prism\Tool;
 use Prism\Prism\ValueObjects\Messages\UserMessage;
 use Prism\Prism\ValueObjects\Usage;
 use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Exceptions\MissingModelException;
 use Shahzad\AgenticGraph\Nodes\PrismNode;
 use Shahzad\AgenticGraph\Prompts\ChatPromptTemplate;
 use Shahzad\AgenticGraph\Prompts\PromptTemplate;
@@ -19,13 +20,15 @@ use Shahzad\AgenticGraph\Streaming\StreamOptions;
 use Shahzad\AgenticGraph\Streaming\StreamSession;
 
 /**
- * Calls one helper, chosen by state 'helper'. $maxTokens comes from state so one class covers precedence.
+ * Calls one helper, chosen by state 'helper'. $maxTokens, $providerOptions and $model come from the constructor so one class covers precedence.
  */
 class MaxTokensProbeNode extends PrismNode
 {
-    public function __construct(?int $maxTokens = null)
+    public function __construct(?int $maxTokens = null, array $providerOptions = [], ?string $model = null)
     {
         $this->maxTokens = $maxTokens;
+        $this->providerOptions = $providerOptions;
+        $this->model = $model;
     }
 
     public function execute(StateContract $state): StateContract
@@ -58,6 +61,16 @@ class MaxTokensProbeNode extends PrismNode
  */
 function maxTokensRecorded(string $helper, bool $streamed, ?int $nodeLimit, array $fakes): array
 {
+    return array_map(fn ($request) => $request->maxTokens(), requestsRecorded(new MaxTokensProbeNode($nodeLimit), $helper, $streamed, $fakes));
+}
+
+/**
+ * Runs one helper on the node and returns every recorded Prism request.
+ *
+ * @return list<mixed>
+ */
+function requestsRecorded(MaxTokensProbeNode $node, string $helper, bool $streamed, array $fakes): array
+{
     $fake = Prism::fake($fakes);
 
     app()->forgetInstance(StreamContext::class);
@@ -69,17 +82,17 @@ function maxTokensRecorded(string $helper, bool $streamed, ?int $nodeLimit, arra
     }
 
     try {
-        (new MaxTokensProbeNode($nodeLimit))->execute(new State(['helper' => $helper]));
+        $node->execute(new State(['helper' => $helper]));
     } finally {
         app()->forgetInstance(StreamContext::class);
     }
 
-    $limits = [];
-    $fake->assertRequest(function (array $recorded) use (&$limits): void {
-        $limits = array_map(fn ($request) => $request->maxTokens(), $recorded);
+    $requests = [];
+    $fake->assertRequest(function (array $recorded) use (&$requests): void {
+        $requests = $recorded;
     });
 
-    return $limits;
+    return $requests;
 }
 
 function maxTokensText(): TextResponseFake
@@ -104,12 +117,7 @@ it('uses the node property, then config, then sends no limit', function (?int $n
     'none when key missing' => [null, 'missing', null],
 ]);
 
-it('sends the node limit from every helper', function (string $helper, bool $streamed, array $fakes) {
-    $limits = maxTokensRecorded($helper, $streamed, 20, $fakes);
-
-    expect($limits)->not->toBeEmpty()
-        ->and(array_unique($limits))->toBe([20]);
-})->with([
+dataset('every helper', [
     'prompt' => ['prompt', false, fn () => [maxTokensText()]],
     'prompt streamed' => ['prompt', true, fn () => [maxTokensText()]],
     'promptTemplate' => ['promptTemplate', false, fn () => [maxTokensText()]],
@@ -129,6 +137,51 @@ it('sends the node limit from every helper', function (string $helper, bool $str
     'agent' => ['agent', false, fn () => [maxTokensText()]],
     'withMcp' => ['withMcp', false, fn () => [maxTokensText()]],
 ]);
+
+it('sends the node limit from every helper', function (string $helper, bool $streamed, array $fakes) {
+    $limits = maxTokensRecorded($helper, $streamed, 20, $fakes);
+
+    expect($limits)->not->toBeEmpty()
+        ->and(array_unique($limits))->toBe([20]);
+})->with('every helper');
+
+it('sends the node provider options from every helper', function (string $helper, bool $streamed, array $fakes) {
+    $options = ['use_tool_calling' => true];
+    $requests = requestsRecorded(new MaxTokensProbeNode(providerOptions: $options), $helper, $streamed, $fakes);
+
+    expect($requests)->not->toBeEmpty();
+    foreach ($requests as $request) {
+        expect($request->providerOptions())->toBe($options);
+    }
+})->with('every helper');
+
+it('sends no provider options when the node sets none', function () {
+    $requests = requestsRecorded(new MaxTokensProbeNode, 'prompt', false, [maxTokensText()]);
+
+    expect($requests[0]->providerOptions())->toBe([]);
+});
+
+it('throws a clear error when no model is configured', function () {
+    config()->set('agenticgraph.prism.model', null);
+    Prism::fake([maxTokensText()]);
+
+    expect(fn () => (new MaxTokensProbeNode)->execute(new State(['helper' => 'prompt'])))
+        ->toThrow(MissingModelException::class, 'Set AGENTICGRAPH_PRISM_MODEL');
+    expect(MissingModelException::notConfigured()->getMessage())->toContain('$model property');
+});
+
+it('uses the node model when config has none', function () {
+    config()->set('agenticgraph.prism.model', null);
+    $requests = requestsRecorded(new MaxTokensProbeNode(model: 'anthropic:claude-x'), 'prompt', false, [maxTokensText()]);
+
+    expect($requests[0]->provider())->toBe('anthropic')
+        ->and($requests[0]->model())->toBe('claude-x');
+});
+
+it('throws when the model has no provider prefix', function (string $model) {
+    expect(fn () => (new MaxTokensProbeNode(model: $model))->execute(new State(['helper' => 'prompt'])))
+        ->toThrow(MissingModelException::class, 'has no provider');
+})->with(['gpt-4o', ':gpt-4o', 'openai:']);
 
 it('covers both requests of the streamed structured fallback', function () {
     expect(maxTokensRecorded('structured', true, 20, [

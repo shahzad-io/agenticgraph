@@ -162,7 +162,7 @@ When store replay is enabled, each gap item includes `type` inline (exception to
 
 ### Semi-closed Prism content set (version-pinned)
 
-Mapped by `PrismStreamAdapter` (`src/Streaming/PrismStreamAdapter.php::resolvePayload`). **Pinned to Prism `>=0.99.20 <0.100.0`.** A future Prism upgrade may add types — clients should handle unknown content `type` strings gracefully.
+Mapped by `PrismStreamAdapter` (`src/Streaming/PrismStreamAdapter.php::resolvePayload`). **Pinned to Prism `^0.100.1` (>=0.100.1 <0.101.0).** A future Prism upgrade may add types, so clients should handle unknown content `type` strings gracefully.
 
 Field types below reflect **what the adapter actually emits** (JSON types after `json_encode`), not Prism's internal `toArray()` shapes.
 

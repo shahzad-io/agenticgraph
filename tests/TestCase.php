@@ -43,6 +43,7 @@ class TestCase extends Orchestra
         config()->set('database.default', 'testing');
         config()->set('agenticgraph.storage', 'database');
         config()->set('agenticgraph.tracing.enabled', false); // Disable tracing in tests by default
+        config()->set('agenticgraph.prism.model', 'openai:gpt-4o-mini'); // the package has no default model
         $app['config']->set('database.connections.testing', [
             'driver' => 'sqlite',
             'database' => ':memory:',

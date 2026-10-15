@@ -9,6 +9,12 @@
 - When exposed, `final_state` is the plain state object (top-level keys), not the internal `__agenticgraph_state` wrapper.
 - `execution_terminal` is the last event of a run, and `stream_close` the last broadcast. On a failure, `graph_failed` comes before the terminal. Each run closes once.
 
+### BREAKING (Prism 0.100, no default model)
+- Requires `prism-php/prism` `^0.100.1`. Prism 0.100 sends Anthropic structured output in native mode, which needs Claude Sonnet 4.5 or newer. For older Anthropic models set `$providerOptions = ['use_tool_calling' => true]` on the node.
+- `agenticgraph.prism.model` (`AGENTICGRAPH_PRISM_MODEL`) has no default. It was `anthropic:claude-sonnet-4`. With no node `$model` and no config, the first Prism call throws `MissingModelException`. PrismRouter rethrows it instead of retrying or using its default route.
+- A model without a provider prefix (`gpt-4o`) throws `MissingModelException`. It used to mean `openai:gpt-4o`.
+- `PrismNode::$providerOptions` is sent with every text, structured and streamed call.
+
 ### Pre-release fixes
 - Logs no longer carry state values, model output or stack traces. PrismRouter logs state keys, router class, exception class, message, file and line. Parallel merge collisions log keys and branch names only.
 - `ChatPromptTemplate::messagesPlaceholder($variable)` inserts a list of messages (arrays or Prism message objects) without interpolation. Use it for chat history and any other untrusted text.

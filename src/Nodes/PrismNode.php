@@ -34,6 +34,7 @@ use Shahzad\AgenticGraph\Contracts\PrismClient;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\TokensUsed;
 use Shahzad\AgenticGraph\Events\ToolCallCaptured;
+use Shahzad\AgenticGraph\Exceptions\MissingModelException;
 use Shahzad\AgenticGraph\Facades\Trace;
 use Shahzad\AgenticGraph\Mcp\McpRequest;
 use Shahzad\AgenticGraph\Prompts\ChatPromptMessages;
@@ -66,6 +67,13 @@ abstract class PrismNode extends AbstractNode
     /** Max output tokens for this node's LLM calls; null falls back to agenticgraph.prism.max_tokens. */
     protected ?int $maxTokens = null;
 
+    /**
+     * Prism provider options sent with every text, structured and streamed call (e.g. ['use_tool_calling' => true] for Anthropic structured).
+     *
+     * @var array<string, mixed>
+     */
+    protected array $providerOptions = [];
+
     protected ?int $cacheTtl = null;
 
     protected bool $trackTokens = true;
@@ -83,7 +91,7 @@ abstract class PrismNode extends AbstractNode
         $timeout = (int) config('agenticgraph.api.timeout', 30);
         $connectTimeout = (int) config('agenticgraph.api.connect_timeout', 10);
 
-        return $this->withMaxTokensLimit($this->prismClient()->text())
+        return $this->withNodeRequestOptions($this->prismClient()->text())
             ->using($provider, $model)
             ->withClientOptions([
                 'timeout' => $timeout,
@@ -92,20 +100,24 @@ abstract class PrismNode extends AbstractNode
     }
 
     /**
-     * Applies the output token limit: $maxTokens, then agenticgraph.prism.max_tokens, else none sent.
+     * Applies $providerOptions and the output token limit: $maxTokens, then agenticgraph.prism.max_tokens, else none sent.
      *
      * @template T of PendingTextRequest|PendingStructuredRequest
      *
      * @param  T  $request
      * @return T
      */
-    private function withMaxTokensLimit(PendingTextRequest|PendingStructuredRequest $request): PendingTextRequest|PendingStructuredRequest
+    private function withNodeRequestOptions(PendingTextRequest|PendingStructuredRequest $request): PendingTextRequest|PendingStructuredRequest
     {
         $configured = config('agenticgraph.prism.max_tokens', null);
         $limit = $this->maxTokens ?? (is_numeric($configured) ? (int) $configured : null);
 
         if ($limit !== null) {
             $request->withMaxTokens($limit);
+        }
+
+        if ($this->providerOptions !== []) {
+            $request->withProviderOptions($this->providerOptions);
         }
 
         return $request;
@@ -420,7 +432,7 @@ abstract class PrismNode extends AbstractNode
             try {
                 return $this->decodeStructuredResponseText($text);
             } catch (PrismStructuredDecodingException) {
-                $response = $this->withMaxTokensLimit($this->prismClient()->structured())
+                $response = $this->withNodeRequestOptions($this->prismClient()->structured())
                     ->using($provider, $model)
                     ->withSchema($schema)
                     ->withPrompt($prompt)
@@ -448,7 +460,7 @@ abstract class PrismNode extends AbstractNode
             }
         }
 
-        $response = $this->withMaxTokensLimit($this->prismClient()->structured())
+        $response = $this->withNodeRequestOptions($this->prismClient()->structured())
             ->using($provider, $model)
             ->withSchema($schema)
             ->withPrompt($prompt)
@@ -643,7 +655,7 @@ abstract class PrismNode extends AbstractNode
         $tools = $this->wrapToolsForTracing($tools, 'mcp');
         $captureToolCalls = ! $this->toolsTracingWrapped;
         // Raw Prism request; McpRequest handles TokensUsed dispatch after asText().
-        $request = $this->withMaxTokensLimit($this->prismClient()->text())->using($provider, $model)->withTools($tools);
+        $request = $this->withNodeRequestOptions($this->prismClient()->text())->using($provider, $model)->withTools($tools);
 
         $toolChoice = $options['toolChoice'] ?? ToolChoice::Any;
         $request->withToolChoice($toolChoice);
@@ -718,12 +730,16 @@ abstract class PrismNode extends AbstractNode
      */
     protected function parseModel(string $value): array
     {
+        if ($value === '') {
+            throw MissingModelException::notConfigured();
+        }
+
         $parts = explode(':', $value, 2);
-        if (count($parts) === 2) {
+        if (count($parts) === 2 && $parts[0] !== '' && $parts[1] !== '') {
             return [$parts[0], $parts[1]];
         }
 
-        return ['openai', $value];
+        throw MissingModelException::missingProvider($value);
     }
 
     protected function trackTokensFromResponse(mixed $response, string $callType, float $startTime): void

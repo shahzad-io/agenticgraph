@@ -30,14 +30,14 @@ Docs: `/docs/getting-started`
 ## Env basics
 
 ```dotenv
-AGENTICGRAPH_PRISM_MODEL=openai:gpt-4o-mini
+AGENTICGRAPH_PRISM_MODEL=openai:gpt-4o-mini   # example; pick your own provider:model
 AGENTICGRAPH_STORAGE=database
 AGENTICGRAPH_CHECKPOINT_ENABLED=true
 AGENTICGRAPH_QUEUE_CONNECTION=database
 AGENTICGRAPH_QUEUE_NAME=agenticgraph
 ```
 
-- `AGENTICGRAPH_PRISM_MODEL` defaults to `anthropic:claude-sonnet-4`. Format `provider:model`; no colon means `openai`. The provider key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) is Prism's env.
+- `AGENTICGRAPH_PRISM_MODEL` has no default. Set it, or `$model` on the node or router, as `provider:model`. A missing model or a model without a provider throws `MissingModelException` on the first Prism call. The provider key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) is Prism's env.
 - `AGENTICGRAPH_STORAGE`: `database` (default), `redis` or `file`. Same value in every environment, or resume cannot find snapshots.
 - `AGENTICGRAPH_QUEUE_CONNECTION` defaults to `redis`. It matters only for async runs, async fan-out and async resume. Run a worker on the graph queue: `php artisan queue:work --queue=agenticgraph`.
 - `AGENTICGRAPH_MAX_ITERATIONS` (1000) caps a run.
@@ -138,6 +138,7 @@ final class ValidateOrderNode extends AbstractNode
 | `withModel($model)`, `withCache($ttlMinutes)`, `withoutCache()` | `static` | Per-call overrides |
 
 - `protected ?string $model` sets the node's default model. `protected bool $trackTokens = false` stops `TokensUsed`.
+- `protected array $providerOptions` is sent with every text, structured and streamed call, for example `['use_tool_calling' => true]` for Anthropic structured output on models older than Claude Sonnet 4.5.
 - Full `structured()` and `agent()` examples: [references/prism-nodes.md](references/prism-nodes.md).
 
 Docs: `/docs/nodes`, `/docs/api/nodes`

@@ -15,6 +15,7 @@ use Shahzad\AgenticGraph\Contracts\PrismClient;
 use Shahzad\AgenticGraph\Contracts\RouterInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\TokensUsed;
+use Shahzad\AgenticGraph\Exceptions\MissingModelException;
 use Shahzad\AgenticGraph\Execution\ExecutionContext;
 use Shahzad\AgenticGraph\Execution\LoopContext;
 use Shahzad\AgenticGraph\Graph\Graph;
@@ -112,6 +113,8 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
                 $this->afterRoute($state, $route, $loop, false);
 
                 return $route;
+            } catch (MissingModelException $e) {
+                throw $e; // configuration error: no retry, no default route
             } catch (\Throwable $e) {
                 $lastException = $e;
 
@@ -377,12 +380,16 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
      */
     protected function parseModel(string $value): array
     {
+        if ($value === '') {
+            throw MissingModelException::notConfigured();
+        }
+
         $parts = explode(':', $value, 2);
-        if (count($parts) === 2) {
+        if (count($parts) === 2 && $parts[0] !== '' && $parts[1] !== '') {
             return [$parts[0], $parts[1]];
         }
 
-        return ['openai', $value];
+        throw MissingModelException::missingProvider($value);
     }
 
     protected function prismClient(): PrismClient

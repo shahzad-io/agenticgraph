@@ -40,9 +40,15 @@ final class InstrumentationGate
             return $callback();
         }
 
-        $exporter = app(TracerExporter::class);
+        $exporter = self::exporter();
 
         return $exporter instanceof BufferedTraceExporter ? $exporter->whileCapturing($callback) : $callback();
+    }
+
+    /** The exporter is chosen from config at runtime; the declared type keeps larastan from fixing it to one class. */
+    private static function exporter(): TracerExporter
+    {
+        return app(TracerExporter::class);
     }
 
     public static function shouldCaptureDb(): bool

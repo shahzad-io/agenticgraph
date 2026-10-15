@@ -9,6 +9,7 @@ use Prism\Prism\Testing\StructuredResponseFake;
 use Prism\Prism\ValueObjects\Meta;
 use Prism\Prism\ValueObjects\Usage;
 use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Exceptions\MissingModelException;
 use Shahzad\AgenticGraph\Routers\PrismRouter;
 use Shahzad\AgenticGraph\State\State;
 
@@ -328,6 +329,18 @@ it('issues a structured Prism request when routing', function () {
             ->and($requests[0]->schema())->not->toBeNull()
             ->and($requests[0]->schema()->name())->toBe('routing_decision');
     });
+});
+
+it('throws the missing model error instead of using the default route', function () {
+    config()->set('agenticgraph.prism.cache_enabled', false);
+    config()->set('agenticgraph.prism.model', null);
+    $prismFake = Prism::fake([]);
+
+    $router = new PrismRouter(['technical' => 'tech issues'], defaultRoute: 'technical');
+
+    expect(fn () => $router->route(new State(['message' => 'login error'])))
+        ->toThrow(MissingModelException::class, 'Set AGENTICGRAPH_PRISM_MODEL');
+    $prismFake->assertCallCount(0);
 });
 
 afterEach(function () {
