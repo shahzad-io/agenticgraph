@@ -15,18 +15,18 @@ AgenticGraph is the first open-source Laravel AI orchestration package, bringing
 
 ## Documentation
 
-- Full documentation: [documentation.md](documentation.md)
+- Full documentation: [agenticgraph.dev/docs](https://agenticgraph.dev/docs/overview)
 - Covers configuration, .env settings, execution, routing, storage, middleware, events, checkpoints, and CLI
 
 ## Streaming
 
 - **Wire contract v1.1 (frozen):** [docs/streaming/WIRE-CONTRACT.md](docs/streaming/WIRE-CONTRACT.md): canonical NPM/AgenticPulse type spec
-- Streaming guide: [docs/streaming/README.md](docs/streaming/README.md)
-- API reference: [docs/streaming/API.md](docs/streaming/API.md)
-- Event catalog: [docs/streaming/EVENTS.md](docs/streaming/EVENTS.md)
-- Deployment: [docs/streaming/DEPLOYMENT.md](docs/streaming/DEPLOYMENT.md)
-- Troubleshooting: [docs/streaming/TROUBLESHOOTING.md](docs/streaming/TROUBLESHOOTING.md)
-- Examples: [docs/streaming/EXAMPLES.md](docs/streaming/EXAMPLES.md)
+- Streaming guide: [Streaming](https://agenticgraph.dev/docs/streaming)
+- API reference: [Streaming API](https://agenticgraph.dev/docs/api/streaming)
+- Event catalog: every event type and payload is in the wire contract above
+- Deployment: [Stream transports](https://agenticgraph.dev/docs/stream-transports) (broadcast vs SSE and what each needs)
+- Troubleshooting: [Stream limitations](https://agenticgraph.dev/docs/stream-limitations)
+- Examples: [Stream client getting started](https://agenticgraph.dev/docs/stream-getting-started)
 
 ## Tracing
 
