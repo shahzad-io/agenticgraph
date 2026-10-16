@@ -12,5 +12,11 @@ interface StreamStoreInterface
 
     public function lastSeq(string $streamId): ?int;
 
+    /**
+     * Oldest stored seq, or null when the stream has no events. Retention only trims from
+     * the front, so a cursor below this is gone.
+     */
+    public function firstSeq(string $streamId): ?int;
+
     public function truncate(string $streamId, int $beforeSeq): void;
 }

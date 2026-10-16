@@ -271,16 +271,27 @@ Package tests assert raw event name `'text_delta'` on the broadcaster; confirm d
 | Item | Value |
 |------|-------|
 | Route | `GET {prefix}/{streamId}` — default `agentic-graph/streams/{streamId}` |
-| Cursor | `?cursor=` query or `Last-Event-ID` header |
-| Frame | `id: {seq}\nevent: {type}\ndata: {json wire body}\n\n` |
+| Cursor | `?cursor=` query or `Last-Event-ID` header. The query wins when both are sent. The response starts at `cursor + 1`; no cursor starts at seq 1 |
+| Retry | Every response starts with `retry: {streaming.sse.retry_ms}` (default 2000) |
+| Frame | Stored events: `id: {seq}\nevent: {type}\ndata: {json wire body}\n\n`. Control events: no `id:` line (see below) |
 | Terminal | `execution_terminal` with full 9-field envelope; payload `{ status: 'completed'\|'interrupted'\|'failed', final_state: object \| null, meta? }`. Always emitted, even when `nodeFilter` or `eventTypeFilter` would exclude it (filters apply only to emitted events), because clients need it to end the stream |
 
-#### Transport-only SSE events (NOT frozen graph semantics)
+#### Connection lifecycle
 
-| `type` | Purpose |
-|--------|---------|
-| `stream_heartbeat` | Keep-alive `{ timestamp }` |
-| `stream_replay_unavailable` | Cursor miss `{ cursor, final_state? }`. `final_state` is present only when `execution_id` is passed and the execution has a stored final state; it follows [final_state](#final_state-exposure) and is never more than the terminal event would send |
+- `execution_terminal` with `completed` or `failed`: the server closes the response after it.
+- `execution_terminal` with `interrupted`: the response stays open (heartbeats while the run waits), so the resumed segment (`stream_resume` onward, same stream id, seq continues) arrives on the same connection.
+- At `streaming.sse.max_duration_seconds` the server sends control `reconnect` and closes. This is a planned close: reconnect with the last seen seq as the cursor.
+- Replay-unavailable is sent only when the cursor is really gone: `cursor + 1 < firstSeq` (retention trimmed it), or the stream is empty and `cursor > 0` (expired). It is sent once at the start of the response, then the response closes. A stream that is waiting for more events never gets it.
+
+#### Control events
+
+Control events are transport messages, not stream events: no `id:` line, no `seq`, never stored, never counted in the stream's sequence. The body is a JSON object with a `control` key; a client recognizes control events by that key, not by the 9 wire fields.
+
+| `event:` | Body | Meaning |
+|--------|------|---------|
+| `stream_heartbeat` | `{ "control": "heartbeat", "timestamp": "<ISO 8601>" }` | Keep-alive every `streaming.sse.heartbeat_interval` seconds without events |
+| `stream_reconnect` | `{ "control": "reconnect", "after_ms": <retry_ms> }` | Planned close at max duration. Reconnect after `after_ms` with the last seq as cursor |
+| `stream_replay_unavailable` | `{ "control": "replay_unavailable", "cursor": <int>, "final_state"?: object \| null }` | The cursor is gone from the store; the response closes. `final_state` is present only when `execution_id` is passed and the execution has a stored final state; it follows [final_state](#final_state-exposure) and is never more than the terminal event would send |
 
 Do not build graph logic against these.
 
@@ -345,6 +356,7 @@ Delivery mode determines the terminal event. This is **by design**, not a bug.
 - Open author `type` + payload pattern
 - Broadcast channel convention
 - Both terminal contracts and status mapping
+- SSE connection lifecycle and control events (`control` key, no `id:`, no `seq`)
 - Conditional `state_diff` / `state` shapes on `node_complete`
 
 ### Public observability (frozen, optional for basic clients)
@@ -355,7 +367,6 @@ Delivery mode determines the terminal event. This is **by design**, not a bug.
 ### Serialized but NOT promised
 
 - `payload.stream` on lifecycle events
-- `stream_heartbeat`, `stream_replay_unavailable`
 - Raw Redis XADD / database store rows (include top-level `type` field — different from broadcast/SSE wire body)
 
 ---
@@ -412,3 +423,4 @@ export type ExecutionTerminalPayload = {
 | **1.0** | 2026-06 | Initial freeze after prefreeze fixes (coherent `node_seq`, `StreamErrorPayload` wire serialization, `NODE_INTERRUPT` constant) |
 | **1.1** | 2026-10 | Pre-release amendment (allowed only because the contract was not yet publicly released). `final_state` is nullable and `null` by default in `execution_terminal`, broadcast `stream_close.meta` and `stream_replay_unavailable`; opt in with `AGENTICGRAPH_STREAM_EXPOSE_FINAL_STATE=true` and an optional `keys` allowlist. When exposed it is the plain state object, not the storage envelope. `execution_terminal` is documented as always emitted regardless of stream filters, and as the last event of a run (`graph_failed` before it, one `stream_close`). Breaking for clients that assume an object |
 | **1.1** | 2026-10 | Additive (B1): `graph_failed` has an optional `reason` string. `agenticgraph:interrupt:expire` sets `interrupt_expired`, then the failed `execution_terminal` follows as for any failure. Clients that ignore unknown payload keys need no change. |
+| **1.1** | 2026-10 | Pre-release amendment (B2, allowed only because the contract was not yet publicly released). SSE control events (`stream_heartbeat`, new `stream_reconnect`, `stream_replay_unavailable`) have no `id:` and no `seq`, and carry a `control` key instead of the 9 wire fields. `stream_replay_unavailable` used to claim the next real seq. Every SSE response starts with `retry:`. An `interrupted` terminal no longer closes the response. Max duration ends with control `reconnect`. Replay-unavailable only when the cursor is below the first stored seq or the stream is empty with `cursor > 0`, never during a wait. Breaking for SSE clients that read heartbeat or replay-unavailable as wire bodies |

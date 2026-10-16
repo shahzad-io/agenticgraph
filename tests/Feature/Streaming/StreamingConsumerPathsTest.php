@@ -102,7 +102,7 @@ function storedStreamEvents(string $streamId): array
  *
  * @return array{content: string, elapsed: float}
  */
-function invokeStreamControllerForStreamId(string $streamId, int $maxDurationSeconds = 30): array
+function invokeStreamControllerForStreamId(string $streamId, float $maxDurationSeconds = 30): array
 {
     config()->set('agenticgraph.streaming.sse.max_duration_seconds', $maxDurationSeconds);
     config()->set('agenticgraph.streaming.sse.poll_interval_ms', 50);
@@ -294,7 +294,7 @@ it('dispatched job completion integrates store writes with stream controller out
         ->and($result['elapsed'])->toBeLessThan(2.0);
 });
 
-it('dispatched job interrupt integrates store writes with prompt controller termination', function () {
+it('dispatched job interrupt integrates store writes with a held-open controller response', function () {
     Bus::fake();
     registerConsumerPathGraph('consumer-job-interrupt', ConsumerPathInterruptNode::class);
 
@@ -315,11 +315,12 @@ it('dispatched job interrupt integrates store writes with prompt controller term
     expect($storedTerminals)->toHaveCount(1)
         ->and($storedTerminals[0]->payload()['status'])->toBe('interrupted');
 
-    $result = invokeStreamControllerForStreamId($streamId);
+    $result = invokeStreamControllerForStreamId($streamId, 0.6);
 
     expect($result['content'])->toContain('event: node_interrupt')
         ->and($result['content'])->toContain('event: execution_terminal')
         ->and($result['content'])->toContain('"status":"interrupted"')
         ->and($result['content'])->toContain('final_state')
-        ->and($result['elapsed'])->toBeLessThan(2.0);
+        ->and($result['content'])->toContain('event: stream_reconnect')
+        ->and($result['elapsed'])->toBeGreaterThan(0.5);
 });

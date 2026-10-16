@@ -231,3 +231,40 @@ test('redis stream store handles malformed payload json', function () {
     expect($events)->toHaveCount(1)
         ->and($events[0]->payload())->toBe([]);
 });
+
+test('redis stream store reports firstSeq', function () {
+    try {
+        Redis::connection()->ping();
+    } catch (Throwable $e) {
+        $this->markTestSkipped('Redis is not available');
+    }
+
+    $store = new RedisStreamStore;
+    $streamId = (string) Str::uuid();
+
+    expect($store->firstSeq($streamId))->toBeNull();
+
+    foreach ([1, 2, 3, 4] as $seq) {
+        $store->append(new StreamEventImpl(
+            streamId: $streamId,
+            executionId: 'exec-first',
+            nodeName: null,
+            spanId: null,
+            parentSpanId: null,
+            type: 'text_delta',
+            payload: ['delta' => (string) $seq],
+            seq: $seq,
+            nodeSeq: null,
+            occurredAt: new DateTimeImmutable('2024-01-01T00:00:00Z')
+        ));
+    }
+
+    expect($store->firstSeq($streamId))->toBe(1);
+
+    $store->truncate($streamId, 3);
+
+    expect($store->firstSeq($streamId))->toBe(3)
+        ->and($store->lastSeq($streamId))->toBe(4);
+
+    Redis::connection()->del('agenticgraph:stream:'.$streamId);
+});

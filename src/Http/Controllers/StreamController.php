@@ -6,20 +6,30 @@ namespace Shahzad\AgenticGraph\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Shahzad\AgenticGraph\Execution\ExecutionStore;
+use Shahzad\AgenticGraph\Streaming\Contracts\StreamEvent;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
-use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
 use Shahzad\AgenticGraph\Streaming\StreamEventEnvelope;
+use Shahzad\AgenticGraph\Streaming\StreamTerminalStatus;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
+/**
+ * SSE reader over the stream store.
+ *
+ * Stored events carry `id: {seq}`. Control events (heartbeat, reconnect, replay_unavailable)
+ * carry no id and no seq, are never stored, and have a `control` key in the body.
+ * An `interrupted` terminal keeps the connection open for the resumed segment; a
+ * `completed` or `failed` terminal closes it. At max duration the server sends control
+ * `reconnect` and closes.
+ */
 final class StreamController
 {
     public function stream(string $streamId, Request $request, StreamStoreInterface $store, ?ExecutionStore $executionStore = null): StreamedResponse
     {
         $executionStore ??= app(ExecutionStore::class);
         $cursor = $request->query('cursor', $request->header('Last-Event-ID'));
-        $fromSeq = is_numeric($cursor) ? ((int) $cursor + 1) : 1;
+        $cursor = is_numeric($cursor) ? (int) $cursor : null;
 
-        return response()->stream(function () use ($streamId, $request, $store, $executionStore, $cursor, $fromSeq): void {
+        return response()->stream(function () use ($streamId, $request, $store, $executionStore, $cursor): void {
             if (! app()->runningUnitTests()) {
                 @ini_set('output_buffering', 'off');
                 @ini_set('zlib.output_compression', '0');
@@ -28,23 +38,39 @@ final class StreamController
                 }
                 ob_implicit_flush(true);
             }
-            $maxDuration = (int) config('agenticgraph.streaming.sse.max_duration_seconds', 120);
+            $maxDuration = (float) config('agenticgraph.streaming.sse.max_duration_seconds', 120);
             $pollIntervalMs = (int) config('agenticgraph.streaming.sse.poll_interval_ms', 250);
             $pollIntervalUs = max(1000, $pollIntervalMs * 1000);
             $heartbeatInterval = (int) config('agenticgraph.streaming.sse.heartbeat_interval', 30);
+            $retryMs = (int) config('agenticgraph.streaming.sse.retry_ms', 2000);
             $start = microtime(true);
             $nextHeartbeat = $heartbeatInterval > 0 ? $start + $heartbeatInterval : null;
-            $lastEventSeq = $fromSeq;
-            $replayNotified = false;
-            $terminalType = StreamEventEnvelope::TYPE_EXECUTION_TERMINAL;
+            $nextSeq = $cursor === null ? 1 : $cursor + 1;
+
+            echo 'retry: '.$retryMs."\n\n";
+
+            if ($cursor !== null && $this->cursorIsGone($store, $streamId, $cursor)) {
+                $payload = ['cursor' => $cursor];
+                $executionId = (string) $request->query('execution_id', '');
+                if ($executionId !== '') {
+                    $record = $executionStore->get($executionId);
+                    if ($record?->finalState !== null) {
+                        $payload['final_state'] = StreamEventEnvelope::clientFinalState($record->finalState);
+                    }
+                }
+                echo $this->formatControl('replay_unavailable', $payload);
+                $this->flushOutput();
+
+                return;
+            }
 
             while (microtime(true) - $start < $maxDuration) {
                 $hasEvents = false;
-                foreach ($store->readFrom($streamId, $lastEventSeq, 200) as $event) {
+                foreach ($store->readFrom($streamId, $nextSeq, 200) as $event) {
                     $hasEvents = true;
-                    $lastEventSeq = $event->seq() + 1;
+                    $nextSeq = $event->seq() + 1;
                     echo $this->formatEvent($event);
-                    if ($event->type() === $terminalType) {
+                    if ($this->closesResponse($event)) {
                         $this->flushOutput();
 
                         return;
@@ -57,40 +83,17 @@ final class StreamController
                     continue;
                 }
 
-                if ($cursor !== null && $replayNotified === false && microtime(true) - $start >= 1.0) {
-                    $payload = ['cursor' => $cursor];
-                    $executionId = (string) $request->query('execution_id', '');
-                    if ($executionId !== '') {
-                        $record = $executionStore->get($executionId);
-                        if ($record?->finalState !== null) {
-                            $payload['final_state'] = StreamEventEnvelope::clientFinalState($record->finalState);
-                        }
-                    }
-                    echo $this->formatEvent(new StreamEventImpl(
-                        $streamId,
-                        $executionId,
-                        null,
-                        null,
-                        null,
-                        'stream_replay_unavailable',
-                        $payload,
-                        $lastEventSeq,
-                        null,
-                        new \DateTimeImmutable('now')
-                    ));
-                    $replayNotified = true;
-                    $this->flushOutput();
-                }
-
                 if ($nextHeartbeat !== null && microtime(true) >= $nextHeartbeat) {
-                    $payload = ['timestamp' => now()->toISOString()];
-                    echo $this->formatRaw(null, 'stream_heartbeat', $payload);
+                    echo $this->formatControl('heartbeat', ['timestamp' => now()->toISOString()]);
                     $nextHeartbeat = microtime(true) + $heartbeatInterval;
                     $this->flushOutput();
                 }
 
                 usleep($pollIntervalUs);
             }
+
+            echo $this->formatControl('reconnect', ['after_ms' => $retryMs]);
+            $this->flushOutput();
         }, 200, [
             'Content-Type' => 'text/event-stream',
             'Cache-Control' => 'no-cache',
@@ -100,16 +103,40 @@ final class StreamController
         ]);
     }
 
-    private function formatEvent(StreamEventImpl $event): string
+    /**
+     * Stores only drop events from the front (retention, max length, TTL), so a cursor is
+     * gone when the next event it needs is older than the first stored one.
+     */
+    private function cursorIsGone(StreamStoreInterface $store, string $streamId, int $cursor): bool
+    {
+        $firstSeq = $store->firstSeq($streamId);
+
+        return $firstSeq === null ? $cursor > 0 : $cursor + 1 < $firstSeq;
+    }
+
+    private function closesResponse(StreamEvent $event): bool
+    {
+        if ($event->type() !== StreamEventEnvelope::TYPE_EXECUTION_TERMINAL) {
+            return false;
+        }
+        $payload = $event->payload();
+
+        return ! is_array($payload) || ($payload['status'] ?? null) !== StreamTerminalStatus::INTERRUPTED->value;
+    }
+
+    private function formatEvent(StreamEvent $event): string
     {
         $envelope = StreamEventEnvelope::fromStreamEvent($event);
 
         return $envelope->formatSse();
     }
 
-    private function formatRaw(?string $id, string $event, mixed $data): string
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    private function formatControl(string $control, array $data): string
     {
-        return StreamEventEnvelope::formatSseRaw($id, $event, is_array($data) ? $data : ['payload' => $data]);
+        return StreamEventEnvelope::formatSseRaw(null, 'stream_'.$control, ['control' => $control] + $data);
     }
 
     private function flushOutput(): void

@@ -115,6 +115,8 @@ return [
             'poll_interval_ms' => env('AGENTICGRAPH_STREAM_SSE_POLL_INTERVAL', 250),
             'use_blocking_reads' => env('AGENTICGRAPH_STREAM_SSE_BLOCKING_READS', true),
             'heartbeat_interval' => env('AGENTICGRAPH_STREAM_SSE_HEARTBEAT', 30),
+            // SSE `retry:` field and the planned-close `after_ms`.
+            'retry_ms' => env('AGENTICGRAPH_STREAM_SSE_RETRY_MS', 2000),
         ],
         'broadcast' => [
             'channel_prefix' => env('AGENTICGRAPH_STREAM_BROADCAST_CHANNEL_PREFIX', 'agenticgraph.stream.'),

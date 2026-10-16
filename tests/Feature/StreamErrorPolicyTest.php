@@ -68,6 +68,11 @@ function bindThrowingStreamStore(): void
             return null;
         }
 
+        public function firstSeq(string $streamId): ?int
+        {
+            return null;
+        }
+
         public function truncate(string $streamId, int $beforeSeq): void {}
     };
 
@@ -243,6 +248,11 @@ it('marks streaming execution failed when store_fatal override is enabled inside
         }
 
         public function lastSeq(string $streamId): ?int
+        {
+            return null;
+        }
+
+        public function firstSeq(string $streamId): ?int
         {
             return null;
         }

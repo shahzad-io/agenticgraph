@@ -53,7 +53,7 @@ class ControllerTerminalFailingNode extends AbstractNode
 /**
  * @return array{content: string, elapsed: float}
  */
-function runStreamControllerSse(string $streamId, int $maxDurationSeconds = 30): array
+function runStreamControllerSse(string $streamId, float $maxDurationSeconds = 30): array
 {
     config()->set('agenticgraph.streaming.sse.max_duration_seconds', $maxDurationSeconds);
     config()->set('agenticgraph.streaming.sse.poll_interval_ms', 50);
@@ -89,7 +89,7 @@ beforeEach(function () {
     config()->set('agenticgraph.checkpoint.enabled', true);
 });
 
-it('terminates store-backed sse promptly on interrupted execution_terminal', function () {
+it('holds store-backed sse open after an interrupted execution_terminal until the planned reconnect', function () {
     $graph = GraphBuilder::create('controller-terminal-interrupt')
         ->addNode('approve', ControllerTerminalInterruptNode::class)
         ->setEntryPoint('approve')
@@ -101,12 +101,13 @@ it('terminates store-backed sse promptly on interrupted execution_terminal', fun
     $handle = AgenticGraph::execute('controller-terminal-interrupt', new State, controllerStreamingOptions());
     $streamId = (string) $handle->streamId();
 
-    $result = runStreamControllerSse($streamId, 30);
+    $result = runStreamControllerSse($streamId, 0.6);
 
     expect($result['content'])->toContain('event: execution_terminal')
         ->and($result['content'])->toContain('"status":"interrupted"')
         ->and($result['content'])->toContain('final_state')
-        ->and($result['elapsed'])->toBeLessThan(2.0);
+        ->and($result['content'])->toEndWith("event: stream_reconnect\ndata: {\"control\":\"reconnect\",\"after_ms\":2000}\n\n")
+        ->and($result['elapsed'])->toBeGreaterThan(0.5);
 });
 
 it('terminates store-backed sse on completed execution_terminal with final_state', function () {
@@ -182,7 +183,7 @@ it('does not terminate on graph_complete without execution_terminal', function (
         ->and($result['elapsed'])->toBeGreaterThan(0.8);
 });
 
-it('terminates on seeded execution_terminal without waiting for max_duration', function () {
+it('keeps a seeded interrupted stream open until max_duration', function () {
     $store = app(StreamStoreInterface::class);
     $streamId = 'stream-seeded-terminal';
 
@@ -214,10 +215,11 @@ it('terminates on seeded execution_terminal without waiting for max_duration', f
         occurredAt: new DateTimeImmutable('2024-01-01T00:00:02Z')
     ));
 
-    $result = runStreamControllerSse($streamId, 30);
+    $result = runStreamControllerSse($streamId, 0.6);
 
     expect($result['content'])->toContain('event: node_interrupt')
         ->and($result['content'])->toContain('event: execution_terminal')
         ->and($result['content'])->toContain('"status":"interrupted"')
-        ->and($result['elapsed'])->toBeLessThan(2.0);
+        ->and($result['content'])->toContain('event: stream_reconnect')
+        ->and($result['elapsed'])->toBeGreaterThan(0.5);
 });

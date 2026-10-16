@@ -77,8 +77,16 @@ final class RedisStreamStore implements StreamStoreInterface
 
     public function lastSeq(string $streamId): ?int
     {
-        $key = $this->prefix.$streamId;
-        $entries = $this->connection->command('xrevrange', [$key, '+', '-', 1]);
+        return $this->edgeSeq($this->connection->command('xrevrange', [$this->prefix.$streamId, '+', '-', 1]));
+    }
+
+    public function firstSeq(string $streamId): ?int
+    {
+        return $this->edgeSeq($this->connection->command('xrange', [$this->prefix.$streamId, '-', '+', 1]));
+    }
+
+    private function edgeSeq(mixed $entries): ?int
+    {
         if (! $entries) {
             return null;
         }

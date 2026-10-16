@@ -26,12 +26,12 @@ use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
  * - Prism content type set (version-pinned to Prism ^0.100.1, i.e. >=0.100.1 <0.101.0)
  * - Open author types via streamEvent() (any string + author payload)
  * - Broadcast channel convention and terminal contracts (stream_close / execution_terminal)
+ * - SSE connection lifecycle and control events (`control` key, no id, no seq; see StreamController)
  * - Optional node_complete state capture shapes (config-gated)
  * - Observability fields: span_id, parent_span_id, node_seq (nullable semantics documented)
  *
  * SERIALIZED BUT NOT PROMISED (may change without a major bump):
  * - payload.stream on lifecycle events (framework telemetry)
- * - SSE transport-only events: stream_heartbeat, stream_replay_unavailable
  * - Raw Redis/database store row layout (differs from broadcast/SSE wire body)
  */
 final class StreamEventEnvelope
@@ -188,7 +188,7 @@ final class StreamEventEnvelope
 
     /**
      * The only place that turns graph state into client-facing final_state
-     * (execution_terminal, stream_close meta, stream_replay_unavailable).
+     * (execution_terminal, stream_close meta, the SSE replay_unavailable control event).
      *
      * Returns null unless streaming.final_state.expose is true. Accepts the storage
      * payload, a plain array, or a state object; returns plain state data, limited to

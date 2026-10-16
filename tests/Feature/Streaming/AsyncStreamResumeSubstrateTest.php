@@ -349,6 +349,11 @@ it('logs non-fatal store write failures with store entry id instead of vanishing
             return null;
         }
 
+        public function firstSeq(string $streamId): ?int
+        {
+            return null;
+        }
+
         public function truncate(string $streamId, int $beforeSeq): void {}
     };
 

@@ -83,6 +83,15 @@ final class DatabaseStreamStore implements StreamStoreInterface
         return $row ? (int) $row->seq : null;
     }
 
+    public function firstSeq(string $streamId): ?int
+    {
+        $seq = InstrumentationGate::internal(fn () => $this->query()
+            ->where('stream_id', $streamId)
+            ->min('seq'));
+
+        return $seq === null ? null : (int) $seq;
+    }
+
     public function truncate(string $streamId, int $beforeSeq): void
     {
         InstrumentationGate::internal(fn () => $this->query()

@@ -50,6 +50,11 @@ class SetupThrowingStreamStore implements StreamStoreInterface
         return null;
     }
 
+    public function firstSeq(string $streamId): ?int
+    {
+        return null;
+    }
+
     public function truncate(string $streamId, int $beforeSeq): void {}
 }
 

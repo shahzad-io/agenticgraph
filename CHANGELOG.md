@@ -4,6 +4,15 @@
 
 `agenticgraph.trace.v1` is frozen; later changes are additive. The contract is `spec/tracing-wire-v1.md`, locked by `TraceWireContractFreezeTest`.
 
+### BREAKING (SSE endpoint: control events, held-open waits, firstSeq)
+- `StreamStoreInterface` has a new method `firstSeq(string $streamId): ?int` (oldest stored seq, `null` when empty). Implemented on the Redis and database stores. Custom stores must add it.
+- SSE control events (`stream_heartbeat`, new `stream_reconnect`, `stream_replay_unavailable`) have no `id:` line and no `seq`, and are never stored. Their body is `{"control": "<name>", ...}`, not the 9-field wire body. `stream_replay_unavailable` used to carry the next real seq as its id, so a later reconnect with that cursor skipped a real event.
+- `stream_replay_unavailable` is sent only when the cursor is really gone (`cursor + 1 < firstSeq`, or an empty stream with `cursor > 0`), once, and then the response closes. It used to be sent after one quiet second on any reconnect with a cursor, including a normal approval wait.
+- An `interrupted` `execution_terminal` keeps the response open (heartbeats), so the resumed segment arrives on the same connection. `completed` and `failed` still close it.
+- At `streaming.sse.max_duration_seconds` the response ends with control `reconnect` (`{"control":"reconnect","after_ms":<retry_ms>}`). It used to end silently.
+- Every SSE response starts with `retry: <ms>`. New config `streaming.sse.retry_ms` (`AGENTICGRAPH_STREAM_SSE_RETRY_MS`, default 2000). `max_duration_seconds` accepts fractions.
+- Wire contract v1.1 amendment: `docs/streaming/WIRE-CONTRACT.md` (SSE connection lifecycle, control events). Use `@agenticgraph/stream-client` from the same release.
+
 ### BREAKING (tools() returns a ToolRun; agent() returns an AgentResponse)
 - `PrismNode::tools()` returns `Shahzad\AgenticGraph\Tools\ToolRun` instead of `ToolCall[]`: `calls` (`ToolCall[]`), `results` (per call: `toolCallId`, `toolName`, `arguments`, `result`, `error`) and `text`. It stays single-step: the results are not sent back to the model. `ToolRun` is `Countable` (calls) and `JsonSerializable`, so it can be stored in state.
 - `error` is set when a handler threw, returned a `ToolError`, or returned an `ERROR:` / `Tool execution error:` string. Fixed on the way: a tool that threw used to reach the model as a misleading "Parameter validation error"; it now gets Prism's own error message.

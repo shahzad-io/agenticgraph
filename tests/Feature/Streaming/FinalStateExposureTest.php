@@ -137,7 +137,7 @@ function finalStateReplayUnavailablePayload(string $executionId): array
     expect($content)->toContain('event: stream_replay_unavailable');
     preg_match('/event: stream_replay_unavailable\ndata: (.+)\n/', $content, $match);
 
-    return json_decode($match[1], true)['payload'];
+    return json_decode($match[1], true);
 }
 
 beforeEach(function () {

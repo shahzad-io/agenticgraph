@@ -137,6 +137,11 @@ test('wrapped sink emits stream_error on redis store failure', function () {
             return null;
         }
 
+        public function firstSeq(string $streamId): ?int
+        {
+            return null;
+        }
+
         public function truncate(string $streamId, int $beforeSeq): void {}
     };
     $baseSink = new MemorySink;
@@ -212,6 +217,11 @@ test('wrapped sink treats store failure as fatal when configured', function () {
             return null;
         }
 
+        public function firstSeq(string $streamId): ?int
+        {
+            return null;
+        }
+
         public function truncate(string $streamId, int $beforeSeq): void {}
     };
     $baseSink = new MemorySink;
@@ -281,6 +291,11 @@ test('wrapped sink emits stream_error on database store failure', function () {
         }
 
         public function lastSeq(string $streamId): ?int
+        {
+            return null;
+        }
+
+        public function firstSeq(string $streamId): ?int
         {
             return null;
         }
@@ -441,6 +456,11 @@ test('wrapped sink enforces retention and emits metrics on close', function () {
             return null;
         }
 
+        public function firstSeq(string $streamId): ?int
+        {
+            return null;
+        }
+
         public function truncate(string $streamId, int $beforeSeq): void
         {
             $this->truncateCalls[] = [$streamId, $beforeSeq];
@@ -514,6 +534,11 @@ test('wrapped sink applies retention metrics and error handling in order', funct
         }
 
         public function lastSeq(string $streamId): ?int
+        {
+            return null;
+        }
+
+        public function firstSeq(string $streamId): ?int
         {
             return null;
         }
@@ -614,6 +639,11 @@ test('wrapped sink applies retention metrics and error handling in order', funct
         }
 
         public function lastSeq(string $streamId): ?int
+        {
+            return null;
+        }
+
+        public function firstSeq(string $streamId): ?int
         {
             return null;
         }
@@ -944,6 +974,11 @@ test('wrapped stream sink handles nonfatal store failure without rethrowing', fu
             return null;
         }
 
+        public function firstSeq(string $streamId): ?int
+        {
+            return null;
+        }
+
         public function truncate(string $streamId, int $beforeSeq): void {}
     };
     $sink = new MemorySink;
@@ -1009,6 +1044,11 @@ test('wrapped stream sink handles fatal store failure by rethrowing', function (
         }
 
         public function lastSeq(string $streamId): ?int
+        {
+            return null;
+        }
+
+        public function firstSeq(string $streamId): ?int
         {
             return null;
         }
