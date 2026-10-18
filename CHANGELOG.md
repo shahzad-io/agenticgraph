@@ -4,6 +4,17 @@
 
 The trace wire (`agenticgraph.trace.v1.1`, the v1 contract plus the v1.1 amendment) is frozen; later changes are additive. The contract is `spec/tracing-wire-v1.md`, locked by `TraceWireContractFreezeTest`.
 
+### Reasoning level and thought tokens (B12)
+
+- New: `protected ?string $reasoning` (`off`, `low`, `medium`, `high`) and `protected ?int $reasoningBudget` on `PrismNode`, and `->reasoning(?string $level = null, ?int $budget = null)` on `LlmRequest`. Precedence call, then node; **no config layer** (a global level would break nodes on providers that cannot apply it). Null sends nothing.
+- The package maps the setting to the option Prism reads for the provider: OpenAI `reasoning.effort`; Gemini `thinkingLevel`, `thinkingBudget` (off is budget 0); Anthropic `thinking` (the app's budget from the new `agenticgraph.prism.reasoning.budgets.{low,medium,high}`, env `AGENTICGRAPH_PRISM_REASONING_BUDGET_*`, no package defaults); OpenRouter `reasoning`; Ollama `thinking` (the level is reduced to on). Never a silent no-op: the DeepSeek provider, a provider with no mapping, a budget where none exists, a level without its Anthropic budget and Anthropic thinking with a forced tool choice throw `ReasoningException` before the call; a vendor 4xx (not a rate limit) is rethrown as `ReasoningException` with the level and the option sent.
+- New event `ReasoningNotDisabled`: level `off` that still reports thought tokens logs a warning, fires the event and adds to `LlmResponse::$warnings`. Not an exception.
+- The derived option is merged recursively into the node's and the call's provider options (other keys under the same option survive; the reasoning setting wins on the same key). `explain()` has `settings.reasoning` (level, budget, options, note, source) and the exact options in `settings.provider_options`. The cache key includes them.
+- `thoughtTokens` (nullable: Anthropic, DeepSeek and Ollama do not report it) on `TokensUsed`, `LlmResponse::toArray()['usage']['thought_tokens']` (new key) and the llm span. `LlmResponse::toArray()` also gains `warnings`.
+- Trace wire, additive (v1.1 note): the `llm` span has an optional `thought_tokens` (integer), absent when unknown. The OTLP exporter maps it to `agenticgraph.thought_tokens`.
+- Docs: on reasoning models `$maxTokens` includes the reasoning tokens (nodes chapter, core skill). Known upstream issue, not fixed here: a truncated OpenAI stream reports zero usage (Prism does not handle `response.incomplete`).
+- Not done: core `PrismNode::embeddings()` has no `url` either (later list).
+
 ### Release metadata (B11 session C)
 
 - README: Laravel 11, 12 or 13 (as `composer.json` already allowed), the upgrade steps from 0.1.0 and a compatibility table (core 0.2.x, vector 0.1.x, stream client 0.1.x). `composer.json` gains keywords and `support` (issues, source, docs). `.claude/settings.local.json` is no longer tracked. Dev lock updated (`composer audit` clean; guzzle 8).

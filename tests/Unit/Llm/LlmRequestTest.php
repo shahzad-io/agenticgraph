@@ -438,7 +438,7 @@ describe('terminals', function () {
 
         expect($stored['run'])->toMatchArray(['text' => 'done', 'structured' => null, 'cached' => false])
             ->and($stored['run']['tool_calls'][0]['name'])->toBe('lookup')
-            ->and($stored['run']['usage'])->toBe(['prompt_tokens' => 5, 'completion_tokens' => 1]);
+            ->and($stored['run']['usage'])->toBe(['prompt_tokens' => 5, 'completion_tokens' => 1, 'thought_tokens' => null]);
     });
 
     it('dispatches the call types text, structured, tools, mcp and cached', function () {

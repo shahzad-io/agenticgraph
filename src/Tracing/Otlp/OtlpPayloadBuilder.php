@@ -9,7 +9,7 @@ namespace Shahzad\AgenticGraph\Tracing\Otlp;
  */
 final class OtlpPayloadBuilder
 {
-    private const LLM_FIELDS = ['model', 'prompt_tokens', 'completion_tokens', 'total_tokens', 'cost_usd', 'cached', 'streamed'];
+    private const LLM_FIELDS = ['model', 'prompt_tokens', 'completion_tokens', 'total_tokens', 'cost_usd', 'cached', 'streamed', 'thought_tokens'];
 
     /** Prism provider names whose OTel gen_ai.provider.name well-known value differs. */
     private const OTEL_PROVIDERS = ['gemini' => 'gcp.gemini', 'mistral' => 'mistral_ai', 'xai' => 'x_ai'];
@@ -187,7 +187,7 @@ final class OtlpPayloadBuilder
     private function genAiAttributes(array $span, ?array $llmCall): array
     {
         $attributes = [];
-        foreach (['total_tokens', 'cost_usd', 'cached'] as $key) {
+        foreach (['total_tokens', 'cost_usd', 'cached', 'thought_tokens'] as $key) {
             if (isset($span[$key])) {
                 $attributes['agenticgraph.'.$key] = $span[$key];
             }

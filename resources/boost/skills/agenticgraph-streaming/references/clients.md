@@ -153,6 +153,37 @@ await stream.disconnect();
 
 `events()` has no replay: it yields from the moment you start iterating.
 
+## Reconnect, resolveUrl and stop reasons
+
+The transport reconnects on its own. `resolveUrl` is called before each reconnect, not before the first connect.
+
+```ts
+import { AgenticStream, SSETransport } from '@agenticgraph/stream-client';
+
+const transport = new SSETransport({
+  url: payload.stream_url,
+  maxAttempts: 5, // consecutive failed retries before the transport reports `failed`
+  resolveUrl: async () => {
+    // A fresh signed URL from your own endpoint; the client appends ?cursor=.
+    // Return null to end the stream on purpose (stop reason `resolver`, not an error).
+    const response = await fetch(`/drafts/${payload.execution_id}/stream-url`);
+    if (response.status === 404) return null;
+
+    return (await response.json()).url;
+  },
+});
+
+const stream = await AgenticStream.connect({ transport });
+
+// status === 'error' and error.kind === 'connection' after `failed`: stream.reconnect() starts it again.
+// Why the transport stopped: 'terminal' | 'replay_unavailable' | 'resolver' | 'manual' | 'failed' (null while running).
+transport.getStopReason();
+```
+
+- A transient drop leaves `status` where it was. It becomes `error` only when the transport reports `failed` (kind `connection`) or `replay_unavailable` arrives.
+- With the React and Vue hooks, `client` is the `AgenticStream` for manual `reconnect()`. Do not connect the transport yourself.
+- The signed URL must validate while ignoring `cursor`: [SKILL.md](../SKILL.md#task-serve-sse).
+
 ## Tests
 
 ```ts

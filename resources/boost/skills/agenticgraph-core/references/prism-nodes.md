@@ -14,7 +14,8 @@ use Shahzad\AgenticGraph\Nodes\PrismNode;
 
 final class DraftNode extends PrismNode
 {
-    protected ?string $model = 'openai:gpt-4o-mini';
+    // null: the model comes from config (AGENTICGRAPH_PRISM_MODEL). Set provider:model here only for this node.
+    protected ?string $model = null;
 
     public function execute(StateContract $state): StateContract
     {
@@ -173,3 +174,22 @@ return [
     ],
 ];
 ```
+
+## Reasoning
+
+```php
+class AnswerNode extends PrismNode
+{
+    protected ?string $reasoning = 'low'; // off | low | medium | high; null sends nothing
+
+    public function execute(StateContract $state): StateContract
+    {
+        // ->reasoning(budget: 2000) for a provider that takes a token budget; a call wins over the node
+        return $state->set('answer', $this->llm()->prompt('{q}')->vars(['q' => (string) $state->get('q', '')])->reasoning('high')->text());
+    }
+}
+```
+
+- The package maps the level to the provider's option (OpenAI `reasoning.effort`, Gemini `thinkingLevel` / `thinkingBudget`, Anthropic `thinking` with your budget from `agenticgraph.prism.reasoning.budgets.{low,medium,high}`, OpenRouter `reasoning`, Ollama `thinking`). It knows the provider, never the model: a vendor 4xx comes back as a `ReasoningException` with the level and the option sent.
+- `off` that still reports thought tokens: a warning, a `ReasoningNotDisabled` event and `LlmResponse::$warnings`; not an exception.
+- `explain()['settings']['reasoning']` and `['provider_options']` show the level, its source and the exact options passed to Prism.

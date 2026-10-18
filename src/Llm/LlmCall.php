@@ -27,6 +27,7 @@ final readonly class LlmCall
      * @param  list<array{server: string, options: array<string, mixed>}>  $mcp
      * @param  array<string, mixed>  $providerOptions  merged over the node's, call wins per key
      * @param  bool|null  $stream  false never streams (PrismRouter); null follows the streaming matrix
+     * @param  string|null  $reasoning  off, low, medium or high; this call's, wins over the node's
      * @param  bool  $structuredTraceAsJson  TokensUsed response is the JSON of the structured data (PrismRouter parity)
      */
     public function __construct(
@@ -47,6 +48,8 @@ final readonly class LlmCall
         public ?int $cacheTtl = null,
         public ?bool $stream = null,
         public bool $structuredTraceAsJson = false,
+        public ?string $reasoning = null,
+        public ?int $reasoningBudget = null,
     ) {}
 
     /**

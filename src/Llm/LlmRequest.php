@@ -17,7 +17,8 @@ use Shahzad\AgenticGraph\Prompts\PromptTemplate;
  * One model call, built from a node with $this->llm(). Immutable: every method returns a new request.
  *
  * Templates interpolate (prompt(), chat(), with vars()); inline content (system(), user(), assistant(), history())
- * never does. Settings: config, then the node's properties, then model() / maxTokens() / providerOptions() here.
+ * never does. Settings: config, then the node's properties, then model() / maxTokens() / providerOptions() here. reasoning() has
+ * no config layer (node, then call).
  *
  *     $this->llm()->prompt('Summarize {topic}')->vars(['topic' => $topic])->text();
  *     $this->llm()->chat($template)->vars($vars)->user($visitorText)->text();
@@ -65,6 +66,10 @@ final class LlmRequest
     private ?string $model = null;
 
     private ?int $maxTokens = null;
+
+    private ?string $reasoning = null;
+
+    private ?int $reasoningBudget = null;
 
     public function __construct(private readonly LlmExecutor $executor) {}
 
@@ -214,6 +219,19 @@ final class LlmRequest
         return $this->with('maxTokens', $maxTokens);
     }
 
+    /**
+     * Exception to the node's $reasoning / $reasoningBudget: a level (off, low, medium, high) or a token budget, for
+     * this request only. Throws when the provider cannot apply it; never a silent no-op.
+     */
+    public function reasoning(?string $level = null, ?int $budget = null): self
+    {
+        ReasoningMapper::assertValid($level, $budget);
+        $request = $this->with('reasoning', $level);
+        $request->reasoningBudget = $budget;
+
+        return $request;
+    }
+
     public function text(): string
     {
         return $this->run()->text;
@@ -287,6 +305,8 @@ final class LlmRequest
             model: $this->model,
             maxTokens: $this->maxTokens,
             providerOptions: $this->providerOptions,
+            reasoning: $this->reasoning,
+            reasoningBudget: $this->reasoningBudget,
             cache: $this->cache,
             cacheTtl: $this->cacheTtl,
         );

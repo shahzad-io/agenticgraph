@@ -7,8 +7,10 @@ namespace Shahzad\AgenticGraph\Llm;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Container\BindingResolutionException;
 use Illuminate\Contracts\Events\Dispatcher;
+use Illuminate\Support\Facades\Log;
 use Prism\Prism\Contracts\Schema;
 use Prism\Prism\Enums\FinishReason;
+use Prism\Prism\Exceptions\PrismException;
 use Prism\Prism\Exceptions\PrismStructuredDecodingException;
 use Prism\Prism\Streaming\Events\StreamEndEvent;
 use Prism\Prism\Streaming\Events\ToolCallEvent;
@@ -26,9 +28,11 @@ use Prism\Prism\ValueObjects\ToolResult;
 use Prism\Prism\ValueObjects\Usage;
 use Prism\Relay\Facades\Relay;
 use Shahzad\AgenticGraph\Contracts\PrismClient;
+use Shahzad\AgenticGraph\Events\ReasoningNotDisabled;
 use Shahzad\AgenticGraph\Events\TokensUsed;
 use Shahzad\AgenticGraph\Events\ToolCallCaptured;
 use Shahzad\AgenticGraph\Exceptions\MissingModelException;
+use Shahzad\AgenticGraph\Exceptions\ReasoningException;
 use Shahzad\AgenticGraph\Facades\Trace;
 use Shahzad\AgenticGraph\Prompts\MessageSerializer;
 use Shahzad\AgenticGraph\Streaming\PrismStreamAdapter;
@@ -74,6 +78,8 @@ final class LlmExecutor
         private readonly bool $trackTokens = true,
         private readonly ?bool $cacheEnabled = null,
         private readonly ?int $cacheTtl = null,
+        private readonly ?string $reasoning = null,
+        private readonly ?int $reasoningBudget = null,
     ) {}
 
     /**
@@ -83,6 +89,7 @@ final class LlmExecutor
      *     model: array{value: string, source: string},
      *     max_tokens: array{value: int|null, source: string},
      *     provider_options: array{value: array<string, mixed>, source: string},
+     *     reasoning: array{value: array{level: string|null, budget: int|null, options: array<string, mixed>, note: string|null}, source: string},
      *     track_tokens: array{value: bool, source: string},
      *     timeout: array{value: int, source: string},
      *     connect_timeout: array{value: int, source: string},
@@ -92,30 +99,64 @@ final class LlmExecutor
     {
         $call ??= new LlmCall;
         $configuredMaxTokens = config('agenticgraph.prism.max_tokens', null);
+        $model = match (true) {
+            $call->model !== null => ['value' => $call->model, 'source' => 'call'],
+            $this->model !== null => ['value' => $this->model, 'source' => 'node'],
+            default => ['value' => (string) config('agenticgraph.prism.model'), 'source' => 'config'],
+        };
+        $reasoning = $this->reasoningSetting($call, $model['value']);
+        $providerOptions = array_replace($this->providerOptions, $call->providerOptions);
 
         return [
-            'model' => match (true) {
-                $call->model !== null => ['value' => $call->model, 'source' => 'call'],
-                $this->model !== null => ['value' => $this->model, 'source' => 'node'],
-                default => ['value' => (string) config('agenticgraph.prism.model'), 'source' => 'config'],
-            },
+            'model' => $model,
             'max_tokens' => match (true) {
                 $call->maxTokens !== null => ['value' => $call->maxTokens, 'source' => 'call'],
                 $this->maxTokens !== null => ['value' => $this->maxTokens, 'source' => 'node'],
                 default => ['value' => is_numeric($configuredMaxTokens) ? (int) $configuredMaxTokens : null, 'source' => 'config'],
             },
             'provider_options' => [
-                'value' => array_replace($this->providerOptions, $call->providerOptions),
+                'value' => array_replace_recursive($providerOptions, $reasoning['value']['options']),
                 'source' => match (true) {
                     $call->providerOptions !== [] && $this->providerOptions !== [] => 'node, call',
                     $call->providerOptions !== [] => 'call',
                     default => 'node',
                 },
             ],
+            'reasoning' => $reasoning,
             'track_tokens' => ['value' => $this->trackTokens, 'source' => 'node'],
             'timeout' => ['value' => (int) config('agenticgraph.api.timeout', 30), 'source' => 'config'],
             'connect_timeout' => ['value' => (int) config('agenticgraph.api.connect_timeout', 10), 'source' => 'config'],
         ];
+    }
+
+    /**
+     * The reasoning level or budget (call, then node; no config layer) and the provider option it becomes. Throws
+     * before any call when the provider cannot apply it.
+     *
+     * @return array{value: array{level: string|null, budget: int|null, options: array<string, mixed>, note: string|null}, source: string}
+     */
+    private function reasoningSetting(LlmCall $call, string $model): array
+    {
+        [$level, $budget, $source] = match (true) {
+            $call->reasoning !== null || $call->reasoningBudget !== null => [$call->reasoning, $call->reasoningBudget, 'call'],
+            $this->reasoning !== null || $this->reasoningBudget !== null => [$this->reasoning, $this->reasoningBudget, 'node'],
+            default => [null, null, 'default'],
+        };
+        if ($level === null && $budget === null) {
+            return ['value' => ['level' => null, 'budget' => null, 'options' => [], 'note' => null], 'source' => $source];
+        }
+
+        ReasoningMapper::assertValid($level, $budget);
+        $budgets = config('agenticgraph.prism.reasoning.budgets', []);
+        $mapped = ReasoningMapper::options(
+            self::parseModel($model)[0],
+            $level,
+            $budget,
+            ReasoningMapper::forcesToolChoice($call->toolChoice),
+            is_array($budgets) ? $budgets : [],
+        );
+
+        return ['value' => ['level' => $level, 'budget' => $budget, ...$mapped], 'source' => $source];
     }
 
     public function streams(LlmCall $call): bool
@@ -200,6 +241,59 @@ final class LlmExecutor
         $settings = $this->settings($call);
         $model = implode(':', self::parseModel($settings['model']['value']));
 
+        try {
+            $response = $this->perform($call, $settings, $model, $startTime);
+        } catch (PrismException $e) {
+            throw $this->reasoningRejection($settings, $e) ?? $e;
+        }
+
+        return $this->flagUndisabled($settings, $model, $response);
+    }
+
+    /**
+     * A vendor 4xx (not rate limits) while a reasoning setting was sent is rethrown with the setting and the options.
+     *
+     * @param  array<string, mixed>  $settings
+     */
+    private function reasoningRejection(array $settings, PrismException $e): ?ReasoningException
+    {
+        $reasoning = $settings['reasoning']['value'];
+        $code = $e->getCode();
+        if ($e::class !== PrismException::class || ($reasoning['level'] === null && $reasoning['budget'] === null) || $code < 400 || $code > 499 || $code === 429) {
+            return null;
+        }
+
+        return ReasoningException::rejected(
+            $reasoning['budget'] !== null ? "budget {$reasoning['budget']}" : "level [{$reasoning['level']}]",
+            $settings['provider_options']['value'],
+            $e,
+        );
+    }
+
+    /**
+     * Level off that still reported thought tokens: a warning, an event and a note on the response; not an exception.
+     *
+     * @param  array<string, mixed>  $settings
+     */
+    private function flagUndisabled(array $settings, string $model, LlmResponse $response): LlmResponse
+    {
+        $thoughtTokens = (int) ($response->usage->thoughtTokens ?? 0);
+        if ($settings['reasoning']['value']['level'] !== 'off' || $thoughtTokens <= 0) {
+            return $response;
+        }
+
+        $message = "Reasoning was set to off but {$model} reported {$thoughtTokens} thought tokens.";
+        Log::warning($message, ['node' => $this->nodeName, 'options' => $settings['provider_options']['value']]);
+        $this->events->dispatch(new ReasoningNotDisabled($this->nodeName, $model, $thoughtTokens));
+
+        return $response->withWarnings([...$response->warnings, $message]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $settings
+     */
+    private function perform(LlmCall $call, array $settings, string $model, float $startTime): LlmResponse
+    {
         if ($call->toolRequest) {
             return $this->runTools($call, $settings, $model, $startTime);
         }
@@ -564,7 +658,7 @@ final class LlmExecutor
     }
 
     /**
-     * @param  array{promptTokens: int, completionTokens: int}|Usage|null  $usage
+     * @param  array{promptTokens: int, completionTokens: int, thoughtTokens: int|null}|Usage|null  $usage
      */
     private function dispatchUsage(float $startTime, string $model, string $callType, array|Usage|null $usage, ?string $prompt, ?string $response, bool $streamed = false): void
     {
@@ -578,6 +672,7 @@ final class LlmExecutor
             callDurationMs: (microtime(true) - $startTime) * 1000,
             promptTokens: $usage instanceof Usage ? (int) $usage->promptTokens : $usage['promptTokens'],
             completionTokens: $usage instanceof Usage ? (int) $usage->completionTokens : $usage['completionTokens'],
+            thoughtTokens: $usage instanceof Usage ? $usage->thoughtTokens : $usage['thoughtTokens'],
             callType: $callType,
             model: $model,
             prompt: $prompt,
@@ -589,7 +684,7 @@ final class LlmExecutor
     /**
      * The response's usage, else the sum of its steps' usage.
      *
-     * @return array{promptTokens: int, completionTokens: int}|null
+     * @return array{promptTokens: int, completionTokens: int, thoughtTokens: int|null}|null
      */
     private function resolveUsage(object $response): ?array
     {
@@ -597,17 +692,22 @@ final class LlmExecutor
             return [
                 'promptTokens' => (int) ($response->usage->promptTokens ?? 0),
                 'completionTokens' => (int) ($response->usage->completionTokens ?? 0),
+                'thoughtTokens' => isset($response->usage->thoughtTokens) ? (int) $response->usage->thoughtTokens : null,
             ];
         }
 
         $promptTokens = 0;
         $completionTokens = 0;
+        $thoughtTokens = null;
         foreach (property_exists($response, 'steps') && is_iterable($response->steps) ? $response->steps : [] as $step) {
             $promptTokens += (int) ($step->usage->promptTokens ?? 0);
             $completionTokens += (int) ($step->usage->completionTokens ?? 0);
+            if (isset($step->usage->thoughtTokens)) {
+                $thoughtTokens = ($thoughtTokens ?? 0) + (int) $step->usage->thoughtTokens;
+            }
         }
 
-        return $promptTokens === 0 && $completionTokens === 0 ? null : ['promptTokens' => $promptTokens, 'completionTokens' => $completionTokens];
+        return $promptTokens === 0 && $completionTokens === 0 ? null : ['promptTokens' => $promptTokens, 'completionTokens' => $completionTokens, 'thoughtTokens' => $thoughtTokens];
     }
 
     private function buildStructuredPrompt(string $prompt, Schema $schema): string

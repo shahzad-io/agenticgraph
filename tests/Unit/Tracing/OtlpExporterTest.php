@@ -215,6 +215,12 @@ it('maps promoted llm fields from the span itself to verified gen_ai attributes'
         ]);
 });
 
+it('maps thought_tokens to agenticgraph.thought_tokens and never leaks the raw key', function (): void {
+    $attrs = otlpAttrs(['node_name' => 'n llm', 'span_type' => 'llm', 'model' => 'openai:o3', 'prompt_tokens' => 1, 'completion_tokens' => 9, 'thought_tokens' => 7]);
+
+    expect($attrs['agenticgraph.thought_tokens'])->toBe(7)->and($attrs)->not->toHaveKey('thought_tokens');
+});
+
 it('maps the llm call type to the OTel operation and provider well-known values', function (string $model, string $callType, ?string $operation, string $provider): void {
     $attrs = otlpAttrs(
         ['node_name' => 'n llm', 'span_type' => 'llm', 'model' => $model, 'prompt_tokens' => 1, 'completion_tokens' => 1],

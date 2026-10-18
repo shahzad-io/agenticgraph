@@ -20,6 +20,7 @@ final class LlmResponse implements JsonSerializable
      * @param  array<mixed>|null  $structured
      * @param  list<ToolCall>  $toolCalls
      * @param  list<ToolRunResult>  $toolResults
+     * @param  list<string>  $warnings  e.g. reasoning 'off' that still reported thought tokens
      */
     public function __construct(
         public readonly string $text = '',
@@ -29,10 +30,19 @@ final class LlmResponse implements JsonSerializable
         public readonly ?Usage $usage = null,
         public readonly ?FinishReason $finishReason = null,
         public readonly bool $cached = false,
+        public readonly array $warnings = [],
     ) {}
 
     /**
-     * @return array{text: string, structured: array<mixed>|null, tool_calls: list<array<string, mixed>>, tool_results: list<array<string, mixed>>, usage: array{prompt_tokens: int, completion_tokens: int}|null, finish_reason: string|null, cached: bool}
+     * @param  list<string>  $warnings
+     */
+    public function withWarnings(array $warnings): self
+    {
+        return new self($this->text, $this->structured, $this->toolCalls, $this->toolResults, $this->usage, $this->finishReason, $this->cached, $warnings);
+    }
+
+    /**
+     * @return array{text: string, structured: array<mixed>|null, tool_calls: list<array<string, mixed>>, tool_results: list<array<string, mixed>>, usage: array{prompt_tokens: int, completion_tokens: int, thought_tokens: int|null}|null, finish_reason: string|null, cached: bool, warnings: list<string>}
      */
     public function toArray(): array
     {
@@ -42,10 +52,11 @@ final class LlmResponse implements JsonSerializable
             'tool_calls' => array_map(fn (ToolCall $call): array => $call->toArray(), $this->toolCalls),
             'tool_results' => array_map(fn (ToolRunResult $result): array => $result->toArray(), $this->toolResults),
             'usage' => $this->usage !== null
-                ? ['prompt_tokens' => $this->usage->promptTokens, 'completion_tokens' => $this->usage->completionTokens]
+                ? ['prompt_tokens' => $this->usage->promptTokens, 'completion_tokens' => $this->usage->completionTokens, 'thought_tokens' => $this->usage->thoughtTokens]
                 : null,
             'finish_reason' => $this->finishReason?->value,
             'cached' => $this->cached,
+            'warnings' => $this->warnings,
         ];
     }
 

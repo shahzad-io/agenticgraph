@@ -5,13 +5,23 @@ description: "Build AgenticGraph agent graphs in Laravel: GraphBuilder, nodes (A
 
 # AgenticGraph Core
 
-docs-sha: 301ce71
+docs-sha: 1e3e4db
 
 Condensed from the AgenticGraph docs (`/docs/...` paths below) at that commit. When a detail here and the package source disagree, the source wins.
 
 Other skills, use them when installed: `agenticgraph-streaming` for `stream()`, `broadcast()`, SSE and the JS clients. `agenticgraph-tracing` for traces, spans and AgenticPulse. `agenticgraph-vector` for retrieval and vector stores, if `shahzad/agenticgraph-vector` is installed.
 
-## Install
+## Rules
+
+1. Model and provider names live in config (`AGENTICGRAPH_PRISM_MODEL`) or in the node property `$model`. Names in this skill are examples, labelled as such. `->model()` on a call is an exception: say why in a comment.
+2. Visitor text reaches a model only through `vars()` on a template, or through `history()`. Never put it in a template string, a `system()` string or `user()`.
+3. Dynamic text (model output, JSON, user input) goes in `vars()`, never in the template string.
+4. Chat replies: call `->withoutCache()`. Caching is off by default, and tool and MCP requests never cache.
+5. A string passed to `prompt()` is a template. Never join or interpolate runtime values (visitor text, model output, retrieved content) into prompt text; pass them through `vars()` or `history()`. Write literal braces as `{{` and `}}`.
+6. Two templates in one request throw. So do a schema with tools, and a request with only `system()`.
+7. On reasoning models `$maxTokens` includes the reasoning tokens: a limit that suits a normal model can give an empty reply (streamed) or a `max tokens exceeded` error (OpenAI, not streamed and structured). Set the reasoning level on the node (`protected ?string $reasoning`, one of `off`, `low`, `medium`, `high`) or with `->reasoning()` on one request; never in config, and never through raw `$providerOptions` when a level covers it.
+
+## Task: install and configure
 
 ```bash
 composer require shahzad/agenticgraph
@@ -26,8 +36,6 @@ php artisan agenticgraph:list
 - There is no `agenticgraph:install`.
 
 Docs: `/docs/getting-started`
-
-## Env basics
 
 ```dotenv
 AGENTICGRAPH_PRISM_MODEL=openai:gpt-4o-mini   # example; pick your own provider:model
@@ -44,17 +52,7 @@ AGENTICGRAPH_QUEUE_NAME=agenticgraph
 
 Docs: `/docs/getting-started`
 
-## The model
-
-- **State** is an immutable bag of keys. `set()` returns a new instance.
-- A **node** does one job: state in, new state out. It never picks the next node.
-- An **edge** names the next node. A **router** picks it from state.
-- The **coordinator** loops: interrupt check, run node, checkpoint, exit or route.
-- `AgenticGraph::execute()` is the one entry point. `run()`, `dispatch()`, `stream()` and `broadcast()` are presets of `ExecutionOptions`.
-
-Docs: `/docs/graph`, `/docs/execution`
-
-## Build and register a graph
+## Task: build a graph
 
 A graph in config is a class with a static `build()` that returns a `Graph`.
 
@@ -96,7 +94,7 @@ final class ContentGraph
 
 Docs: `/docs/graph`, `/docs/api/graph`
 
-## Nodes
+## Task: write a node
 
 Use `AbstractNode` for deterministic work (validation, math, DB, HTTP). Use `PrismNode` when language is the point.
 
@@ -123,13 +121,9 @@ final class ValidateOrderNode extends AbstractNode
 - Hooks: `onBefore`, `onAfter`, `onError`. Retries wrap `onBefore → execute → onAfter`.
 - `getTimeout()` exists on the interface, but the coordinator never reads it.
 
-`PrismNode` helpers (all `protected`):
+### Model calls in a PrismNode
 
-| Helper | Returns | Use |
-|---|---|---|
-| `llm()` | `LlmRequest` | Every model call: text, chat, structured, tools, MCP. Immutable; end with `text()`, `structured()` or `run()`. |
-| `prism()` | `PendingTextRequest` | Raw Prism request with the node's settings. Not traced, cached or streamed. |
-| `embeddingsFromInput`, `generateImage`, `audioToText`, `textToAudio` | Prism responses | Media |
+Every model call starts with `$this->llm()`. Each builder method returns a new `LlmRequest`; the node is never changed.
 
 ```php
 use Shahzad\AgenticGraph\Contracts\StateContract;
@@ -150,19 +144,25 @@ final class SummaryNode extends PrismNode
 }
 ```
 
-- Inputs: `prompt($stringOrPromptTemplate)` or `chat(ChatPromptTemplate)`, plus `vars()`. Templates interpolate; `system()`, `user()`, `assistant()` and `history()` are literal. Put dynamic text (model output, JSON, user input) in `vars()`, not into the template string.
-- `user()` and `assistant()` append after `chat()` and throw with `prompt()`. Two templates throw. `attach($media)` adds media to the last user turn.
+| Helper | Returns | Use |
+|---|---|---|
+| `llm()` | `LlmRequest` | Every model call: text, chat, structured, tools, MCP. End with `text()`, `structured()` or `run()`. |
+| `prism()` | `PendingTextRequest` | Raw Prism request with the node's settings. Not traced, cached or streamed. |
+| `embeddingsFromInput`, `generateImage`, `audioToText`, `textToAudio` | Prism responses | Media |
+
+- Inputs: `prompt($stringOrPromptTemplate)` or `chat(ChatPromptTemplate)`, plus `vars()`. Templates interpolate; `system()`, `user()`, `assistant()` and `history()` are literal. Rules 2, 3 and 5 apply.
+- `user()` and `assistant()` append after `chat()` and throw with `prompt()`. `attach($media)` adds media to the last user turn.
 - `schema($schema)` then `structured(): array`; the root schema should be an `ObjectSchema`. A schema with tools throws.
 - `tools()`, `mcp($server)`, `toolChoice()`, `maxSteps()`: one step and Prism's tool choice by default. Raise `maxSteps` for a tool loop. `run()` returns an `LlmResponse` with the tool calls and results of every step.
-- Settings: config, then node properties (`$model`, `$maxTokens`, `$providerOptions`, `$trackTokens`), then the call (`model()`, `maxTokens()`, `providerOptions()`, merged per key). `explain()` shows each setting with its source, the stream and cache decisions and the cache key, without calling the model.
-- Caching is off by default. `withCache($ttlMinutes)` and `withoutCache()` apply to one request. Tool and MCP requests never cache.
+- Settings: config, then node properties (`$model`, `$maxTokens`, `$providerOptions`, `$trackTokens`), then the call. Provider options have no config layer. `reasoning()` (level or `budget:`) resolves node, then call, with no config layer; it throws when the provider cannot apply it (the DeepSeek provider, a budget on OpenAI or Ollama, Anthropic with a forced tool choice, an Anthropic level without `agenticgraph.prism.reasoning.budgets.*`). `thoughtTokens` is null when the provider does not report it. `explain()` shows each setting with its source, the stream and cache decisions and the cache key, without calling the model.
+- Caching: off by default. Chat replies call `withoutCache()` (rule 4); `withCache($ttlMinutes)` turns it on for one request. Tool and MCP requests never cache.
 - Streaming when the run streams: text and chat; `schema()` only with a Prism `Schema` and `prompt()`; single-step tools. `maxSteps > 1` and MCP do not stream.
-- `protected bool $trackTokens = false` stops `TokensUsed`. `protected array $providerOptions`, for example `['use_tool_calling' => true]` for Anthropic structured output on models older than Claude Sonnet 4.5.
+- `protected bool $trackTokens = false` stops `TokensUsed`. `protected array $providerOptions` takes the options your provider needs, for example `['use_tool_calling' => true]` where its structured output requires tool calling (check the Prism docs for your provider and model).
 - Structured, tool loop and MCP examples: [references/prism-nodes.md](references/prism-nodes.md).
 
 Docs: `/docs/nodes`, `/docs/api/nodes`
 
-## Prompts
+## Task: write prompts
 
 - `{word}` is a placeholder. `{{` and `}}` are literal braces. `{user.name}` is not a path; flatten in PHP.
 - A missing variable throws `TemplateException`.
@@ -171,7 +171,7 @@ Docs: `/docs/nodes`, `/docs/api/nodes`
 
 Docs: `/docs/prompts`, `/docs/api/prompts`
 
-## State
+## Task: manage state
 
 ```php
 use Shahzad\AgenticGraph\State\State;
@@ -188,7 +188,7 @@ $state->get('missing', 'default');
 
 Docs: `/docs/state`, `/docs/api/state`
 
-## Edges and routers
+## Task: route between nodes
 
 - `addEdge($from, $to)`: a fixed next hop. Only the first outgoing edge of a node is used, so two `addEdge` calls are not a fork.
 - `addConditionalEdge($from, $router)`: a `RouterInterface` instance or class name. A closure is not accepted.
@@ -221,7 +221,7 @@ final class QualityRouter extends AbstractRouter
 
 Docs: `/docs/edges`, `/docs/routing`
 
-## Cyclic graphs
+### Cyclic graphs
 
 - A loop is an edge or route that points back.
 - The exit must be a separate node the router can name. Do not mark the looping node as the exit: after it runs, the graph ends.
@@ -231,7 +231,7 @@ Docs: `/docs/edges`, `/docs/routing`
 
 Docs: `/docs/cyclic`
 
-## Parallel execution
+### Parallel execution
 
 - A router returns an array of node ids to fan out. Then `addJoin(['write', 'seo'], 'merge')` waits for all of them.
 - Without `addJoin`, nothing waits for every branch.
@@ -240,7 +240,7 @@ Docs: `/docs/cyclic`
 
 Docs: `/docs/parallel`
 
-## Run a graph
+## Task: run a graph
 
 ```php
 use Shahzad\AgenticGraph\Execution\ExecutionMode;
@@ -263,7 +263,7 @@ $handle = AgenticGraph::execute('content', new State, new ExecutionOptions(mode:
 
 Docs: `/docs/execution`, `/docs/api/execution`
 
-## Interrupts (human in the loop)
+## Task: pause for a human
 
 - A gate is a `PrismNode` that overrides `shouldInterrupt()`. It is checked before `execute()`, so the gate pauses on data earlier nodes wrote. `AbstractNode` gates are never asked.
 - The run stops with status `INTERRUPTED`, which is not a failure. Override `getInterruptReason()` and `getInterruptPayload()` for the reviewer, and `onResume($state, $humanInput)` to apply the answer. `handleApproval()` writes `approved` and `approval_comments`.
@@ -273,7 +273,7 @@ Docs: `/docs/execution`, `/docs/api/execution`
 
 Docs: `/docs/interrupts`
 
-## Checkpoints
+## Task: use checkpoints
 
 - The coordinator writes a snapshot after each node (`checkpoint.frequency`) and before a gate. Nodes never call it.
 - `checkpoint.enabled` (snapshots) and `interrupts.persistence_enabled` (resume in a later request) are separate settings.
@@ -282,7 +282,7 @@ Docs: `/docs/interrupts`
 
 Docs: `/docs/checkpoints`
 
-## MCP tools
+## Task: call MCP tools
 
 ```php
 use Prism\Prism\Enums\ToolChoice;
@@ -306,7 +306,7 @@ return $state->set('answer', $response->text)->set('tool_calls', $response->toAr
 
 Docs: `/docs/mcp`, `/docs/api/mcp`
 
-## Middleware
+## Task: add middleware
 
 - Configured only in `config('agenticgraph.middleware.global')`, never on `GraphBuilder`. The first entry is outermost.
 - No interface. A class with `handle(StateContract $state, NodeInterface $node, Closure $next): StateContract`. Not Laravel HTTP middleware.
@@ -316,7 +316,7 @@ Docs: `/docs/mcp`, `/docs/api/mcp`
 
 Docs: `/docs/guide-middleware`
 
-## Lifecycle events
+## Task: listen to lifecycle events
 
 Ordinary Laravel events in `Shahzad\AgenticGraph\Events`. Not stream events, not spans.
 
@@ -328,7 +328,7 @@ Ordinary Laravel events in `Shahzad\AgenticGraph\Events`. Not stream events, not
 
 Docs: `/docs/guide-events`
 
-## CLI
+## Task: use the CLI
 
 | Command | Notes |
 |---|---|
@@ -342,7 +342,7 @@ Docs: `/docs/guide-events`
 
 Docs: `/docs/guide-cli`
 
-## Testing
+## Task: test a graph or a node
 
 - Test node logic by calling `execute()` on the node with a `State`. No graph needed.
 - Fake the model: `Prism::fake([TextResponseFake::make()->withText('...')])`. One fake per model call, in order.

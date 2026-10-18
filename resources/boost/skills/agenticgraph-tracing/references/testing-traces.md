@@ -4,9 +4,15 @@ Docs: `/docs/guide-testing`, `/docs/tracing`
 
 Leave tracing off unless a test is about traces. `auto` resolves to `null` in unit tests, so nothing is sent by default.
 
-## Enable it at boot
+## What a test can change at runtime
 
-The tracing listener is subscribed when the app boots, and only if tracing is enabled then. Setting `agenticgraph.tracing.enabled` inside a test is too late. Put it in `phpunit.xml`, with the `file` driver:
+Tested in `tests/Feature/Tracing/RuntimeTracingFileTest.php`:
+
+- `agenticgraph.tracing.enabled` set in a test applies to the next run. The listeners are always registered, and the gate reads the flag per event.
+- The exporter is a singleton that keeps the driver it resolved first. Under `auto` in tests that driver is `null`, so a flag change alone writes nothing.
+- To change the driver mid-test, set the config and forget the instance. Changing the config without forgetting the instance writes nothing.
+
+Set the flag and the driver in `phpunit.xml` for a whole suite. The same config keys are read at the first resolve, so this is the simplest setup (not run as a separate test):
 
 ```xml
 <php>

@@ -159,6 +159,26 @@ it('marks llm spans and llm calls as streamed or not', function (bool $streamed)
         ->and($exporter->llmCalls[0]['streamed'])->toBe($streamed);
 })->with([true, false]);
 
+it('adds thought_tokens to the llm span only when the provider reported them', function (?int $thoughtTokens) {
+    $exporter = new MockPulseExporter;
+    (new TracingListener($exporter))->onTokensUsed(new TokensUsed(
+        node: 'node-a',
+        promptTokens: 1,
+        completionTokens: 1,
+        totalTokens: 2,
+        executionId: 'exec_thought',
+        spanId: 'span_t',
+        model: 'openai:o3',
+        durationMs: 1.0,
+        startedAt: new \DateTimeImmutable('2024-01-01 10:00:00'),
+        endedAt: new \DateTimeImmutable('2024-01-01 10:00:00.001'),
+        thoughtTokens: $thoughtTokens,
+    ));
+
+    expect(array_key_exists('thought_tokens', $exporter->spans[0]))->toBe($thoughtTokens !== null)
+        ->and($exporter->spans[0]['thought_tokens'] ?? null)->toBe($thoughtTokens);
+})->with([0, 12, null]);
+
 it('puts interrupt and resume fields in attributes, keeping state_snapshot nested', function (): void {
     $exporter = new MockPulseExporter;
     $listener = new TracingListener($exporter);

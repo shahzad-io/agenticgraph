@@ -346,6 +346,7 @@ class TracingListener
             'cost_usd' => $cost,
             'cached' => $event->cached,
             'streamed' => $event->streamed,
+            ...($event->thoughtTokens !== null ? ['thought_tokens' => $event->thoughtTokens] : []),
         ]);
 
         // Build LLM call data with optional prompt/response capture

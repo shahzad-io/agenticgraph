@@ -66,7 +66,7 @@ class FzWorkNode extends PrismNode
         $this->wrapToolsForTracing([$tool], 'prism')[0]->handle('Lisbon');
 
         $start = microtime(true);
-        event(TokensUsed::fromLlmCall('work', $start, 1.0, 3, 5, 'text', 'test:model', 'prompt', 'response', streamed: true));
+        event(TokensUsed::fromLlmCall('work', $start, 1.0, 3, 5, 'text', 'test:model', 'prompt', 'response', streamed: true, thoughtTokens: 4));
         event(TokensUsed::fromCacheHit('work', $start, 0.5, 'test:model', 'prompt', 'response', 'cache:key'));
         event(new ToolCallCaptured(
             executionId: TraceContext::tryGet()?->getExecutionId() ?? '',

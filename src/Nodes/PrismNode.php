@@ -52,6 +52,15 @@ abstract class PrismNode extends AbstractNode
      */
     protected array $providerOptions = [];
 
+    /**
+     * Reasoning level for this node's LLM calls: off, low, medium or high. Null sends nothing (the provider's default).
+     * No config layer: a global level would break nodes on providers that cannot apply it. A request's reasoning() wins.
+     */
+    protected ?string $reasoning = null;
+
+    /** Reasoning token budget, for providers that take one. Exclusive with $reasoning. */
+    protected ?int $reasoningBudget = null;
+
     /** Cache TTL in minutes for this node's requests; null falls back to agenticgraph.prism.cache_ttl. */
     protected ?int $cacheTtl = null;
 
@@ -89,6 +98,8 @@ abstract class PrismNode extends AbstractNode
             trackTokens: $this->trackTokens,
             cacheEnabled: $this->cacheEnabled,
             cacheTtl: $this->cacheTtl,
+            reasoning: $this->reasoning,
+            reasoningBudget: $this->reasoningBudget,
         );
     }
 
