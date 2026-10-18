@@ -170,7 +170,7 @@ it('puts schema_version first in every envelope', function () {
     $payload = tpbBuild(tpbTrace(), [tpbSpan('a')]);
 
     expect(array_key_first($payload))->toBe('schema_version')
-        ->and($payload['schema_version'])->toBe('agenticgraph.trace.v1')
+        ->and($payload['schema_version'])->toBe('agenticgraph.trace.v1.1')
         ->and(array_keys($payload))->toBe(['schema_version', 'trace', 'spans', 'llm_calls']);
 });
 
@@ -182,7 +182,7 @@ it('keeps the real trace status on an oversize payload and reports why in _meta'
 
     $payload = tpbBuild(tpbTrace(['status' => 'failed', 'initial_state' => ['q' => 'x']]), [tpbSpan('a'), tpbSpan('b')], $calls);
 
-    expect($payload['schema_version'])->toBe('agenticgraph.trace.v1')
+    expect($payload['schema_version'])->toBe('agenticgraph.trace.v1.1')
         ->and($payload['trace']['status'])->toBe('failed')
         ->and($payload['trace']['ended_at'])->toBe('2026-09-27T10:00:05.000000+00:00')
         ->and($payload['trace'])->not->toHaveKey('error_reason')

@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-`agenticgraph.trace.v1` is frozen; later changes are additive. The contract is `spec/tracing-wire-v1.md`, locked by `TraceWireContractFreezeTest`.
+The trace wire (`agenticgraph.trace.v1.1`, the v1 contract plus the v1.1 amendment) is frozen; later changes are additive. The contract is `spec/tracing-wire-v1.md`, locked by `TraceWireContractFreezeTest`.
 
 ### BREAKING (one LLM request builder: `$this->llm()`)
 - `PrismNode::llm()` returns an immutable `Shahzad\AgenticGraph\Llm\LlmRequest`. It replaces `prompt()`, `promptTemplate()`, `chatPrompt()`, `promptMessages()`, `structured()`, `tools()`, `agent()` and `withMcp()`, which are removed, with `withModel()`, `buildStreamingRequest()`, `trackTokensFromResponse()`, `interpolate()`, `shouldCache()`, `getCacheKey()`, `dispatchCachedLlmCall()` and the node-level `withCache()` / `withoutCache()` (caching is now chosen per request; the `$cacheEnabled` and `$cacheTtl` properties stay as node defaults).
@@ -31,6 +31,7 @@
 
 ### Changed (trace wire v1.1, pre-release amendment)
 - Queued work that outlives its caller: `TraceContext` takes optional `links` (`[{trace_id, span_id}]`, the span that queued the work). Spans that `Tracer` exports directly under the root of such a context carry `links`, a new optional span key; the OTLP exporter sends it as OTLP span links. The package's own jobs are unchanged.
+- `schema_version` is `agenticgraph.trace.v1.1` (was `agenticgraph.trace.v1`), so a receiver can detect `links` and the merge rules below. Nothing else in the envelope changed; a receiver should accept both strings.
 - `TraceSegmentMerger`: `trace.ended_at` is the latest segment end (it was the final segment's end), so `duration_ms` covers every segment and `active_ms` is never above it. The root graph span keeps the graph's end; spans with `links` may end after it.
 
 ### BREAKING (SSE endpoint: control events, held-open waits, firstSeq)

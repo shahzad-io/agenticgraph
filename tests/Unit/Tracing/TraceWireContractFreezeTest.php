@@ -285,6 +285,11 @@ afterEach(function () {
     File::deleteDirectory(fzDir());
 });
 
+test('contract freeze guard: the schema string is agenticgraph.trace.v1.1 in the code and the registry', function () {
+    expect(TracePayloadBuilder::SCHEMA_VERSION)->toBe('agenticgraph.trace.v1.1')
+        ->and(fzRegistry()['schema_version'])->toBe('agenticgraph.trace.v1.1');
+});
+
 test('contract freeze guard: every emitted key and value is in the registry, and every registry key is emitted', function () {
     $registry = fzRegistry();
     $envelopes = fzEnvelopes();

@@ -13,7 +13,7 @@ use Shahzad\AgenticGraph\Tracing\TraceSegmentMerger;
 function tsmEnvelope(array $segment, array $trace = [], array $spans = [], array $llmCalls = []): array
 {
     return [
-        'schema_version' => 'agenticgraph.trace.v1',
+        'schema_version' => 'agenticgraph.trace.v1.1',
         'trace' => $trace + ['id' => 'tr_m', 'graph_name' => 'g', 'status' => 'running'],
         'segment' => $segment + ['kind' => 'continued', 'final' => false],
         'spans' => $spans,

@@ -11,7 +11,7 @@ namespace Shahzad\AgenticGraph\Tracing;
  */
 final class TracePayloadBuilder
 {
-    public const SCHEMA_VERSION = 'agenticgraph.trace.v1';
+    public const SCHEMA_VERSION = 'agenticgraph.trace.v1.1';
 
     /** Payload size limits */
     private const MAX_PAYLOAD_BYTES = 1_048_576; // 1MB

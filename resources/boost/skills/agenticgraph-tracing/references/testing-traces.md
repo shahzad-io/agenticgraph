@@ -47,7 +47,7 @@ it('writes a final trace for the run', function () {
     $envelope = json_decode(file_get_contents($files[0]), true);
 
     expect($files)->toHaveCount(1)
-        ->and($envelope['schema_version'])->toBe('agenticgraph.trace.v1')
+        ->and($envelope['schema_version'])->toBe('agenticgraph.trace.v1.1')
         ->and($envelope['segment']['final'])->toBeTrue()
         ->and(array_column($envelope['spans'], 'span_type'))->toContain('graph', 'node');
 });

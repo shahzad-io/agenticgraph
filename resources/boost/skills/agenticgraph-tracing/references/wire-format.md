@@ -1,14 +1,14 @@
-# agenticgraph.trace.v1 in brief
+# agenticgraph.trace.v1.1 in brief
 
 The contract is `spec/tracing-wire-v1.md` in this package, locked by `TraceWireContractFreezeTest`. This page summarizes it; read the spec before writing a receiver or changing the payload. Any addition updates the spec's key registry and tables.
 
 ## Envelope
 
-Keys in order: `schema_version`, `trace`, `segment`, `spans`, `llm_calls`, and `_meta` only when truncated. `schema_version` is always `agenticgraph.trace.v1`.
+Keys in order: `schema_version`, `trace`, `segment`, `spans`, `llm_calls`, and `_meta` only when truncated. `schema_version` is always `agenticgraph.trace.v1.1` (`agenticgraph.trace.v1` before the v1.1 amendment).
 
 ```json
 {
-  "schema_version": "agenticgraph.trace.v1",
+  "schema_version": "agenticgraph.trace.v1.1",
   "trace": {"id": "exec_…", "status": "completed", "sampled": true, "graph_name": "content", "resource": {"service.name": "my-app", "service.version": "unknown", "deployment.environment.name": "production"}, "instrumentation_scope": "agenticgraph"},
   "segment": {"id": "seg_0123456789abcdef", "kind": "initial", "final": true, "started_at": "2026-09-27T14:03:11.482913+00:00", "ended_at": "2026-09-27T14:03:12.104551+00:00"},
   "spans": [{"id": "…", "trace_id": "exec_…", "parent_id": null, "node_name": "content", "node_type": "graph", "span_type": "graph", "status": "success", "span_kind": "…", "status_code": "OK", "started_at": "…", "ended_at": "…", "duration_ms": 621.6}],

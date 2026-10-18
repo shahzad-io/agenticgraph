@@ -1,6 +1,6 @@
 ---
 name: agenticgraph-tracing
-description: "Trace AgenticGraph runs: tracing drivers (auto, pulse, file, log, otlp, null), segments, span types and attributes, the agenticgraph.trace.v1 wire format, sampling, Trace::span and TraceContext, sending traces to AgenticPulse, and testing traces."
+description: "Trace AgenticGraph runs: tracing drivers (auto, pulse, file, log, otlp, null), segments, span types and attributes, the agenticgraph.trace.v1.1 wire format, sampling, Trace::span and TraceContext, sending traces to AgenticPulse, and testing traces."
 ---
 
 # AgenticGraph Tracing
@@ -94,7 +94,7 @@ Docs: `/docs/tracing#span-tree`. Spec: spans, Route spans, Attribute names.
 
 ## The wire format
 
-- Envelope `agenticgraph.trace.v1`: `schema_version`, `trace`, `segment`, `spans`, `llm_calls`, and `_meta` only when truncated.
+- Envelope `agenticgraph.trace.v1.1`: `schema_version`, `trace`, `segment`, `spans`, `llm_calls`, and `_meta` only when truncated.
 - v1 is frozen. Later versions only add keys. The machine-readable key registry is at the end of `spec/tracing-wire-v1.md`.
 - Every timestamp is UTC with six fraction digits: `2026-09-27T14:03:11.482913+00:00`.
 - Payloads over the size limit are truncated, and `_meta` records what was dropped.

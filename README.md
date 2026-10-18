@@ -30,7 +30,7 @@ AgenticGraph is the first open-source Laravel AI orchestration package, bringing
 
 ## Tracing
 
-- **Trace wire format `agenticgraph.trace.v1`:** [spec/tracing-wire-v1.md](spec/tracing-wire-v1.md): the envelope every JSON exporter sends (pulse, file, log), its segments and merge rules, span types and attribute names, and the OTLP mapping.
+- **Trace wire format `agenticgraph.trace.v1.1`:** [spec/tracing-wire-v1.md](spec/tracing-wire-v1.md): the envelope every JSON exporter sends (pulse, file, log), its segments and merge rules, span types and attribute names, and the OTLP mapping.
 - Exporters: `auto`, `pulse`, `log`, `file`, `null`, `otlp` (`AGENTICGRAPH_TRACING_EXPORTER`). `auto` is `null` in unit tests, `pulse` when `AGENTICPULSE_API_KEY` is set, otherwise `log`.
 
 ## Installation

@@ -205,7 +205,7 @@ it('pulse and file carry the same envelope for a real run', function (bool $fail
 
     expect($files)->toHaveCount(1)
         ->and(teWithoutClock($files[0]))->toBe(teWithoutClock($pulse[0]))
-        ->and($pulse[0]['schema_version'])->toBe('agenticgraph.trace.v1')
+        ->and($pulse[0]['schema_version'])->toBe('agenticgraph.trace.v1.1')
         ->and($pulse[0]['trace']['status'])->toBe($fail ? 'failed' : 'completed')
         ->and($pulse[0]['llm_calls'])->toHaveCount(1)
         ->and(collect($pulse[0]['spans'])->pluck('span_type')->sort()->values()->all())->toBe(['graph', 'llm', 'node']);
@@ -297,7 +297,7 @@ it('log exporter logs the shared envelope', function () {
 
     Log::shouldHaveReceived('info')->once()->with('agenticgraph.trace', Mockery::on(function (array $payload): bool {
         return array_key_first($payload) === 'schema_version'
-            && $payload['schema_version'] === 'agenticgraph.trace.v1'
+            && $payload['schema_version'] === 'agenticgraph.trace.v1.1'
             && $payload['trace']['sampled'] === true
             && $payload['trace']['resource']['service.name'] !== ''
             && array_key_exists('deployment.environment.name', $payload['trace']['resource'])
