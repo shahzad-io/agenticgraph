@@ -142,6 +142,11 @@ final class Tracer
             $span['error'] = $error;
         }
 
+        // Queued work's own spans hang off the root; the link names the span that queued it.
+        if ($parentSpanId === $context->getRootSpanId() && $context->getLinks() !== []) {
+            $span['links'] = $context->getLinks();
+        }
+
         $this->exporter()->addSpan($span);
     }
 

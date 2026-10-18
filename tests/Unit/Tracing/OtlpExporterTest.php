@@ -239,6 +239,21 @@ it('leaves gen_ai request and usage attributes off a cache hit', function (): vo
         ->and(array_filter(array_keys($attrs), fn (string $key): bool => str_starts_with($key, 'gen_ai.')))->toBe([]);
 });
 
+it('maps span links to otlp links, not attributes', function (): void {
+    $payload = (new OtlpPayloadBuilder)->build(
+        trace: ['id' => 'exec_link', 'graph_name' => 'g', 'status' => 'running'],
+        spans: [['id' => 'span_late', 'trace_id' => 'exec_link', 'parent_id' => 'span_root', 'status' => 'success', 'status_code' => 'OK',
+            'started_at' => '2026-06-27T10:00:00+00:00', 'ended_at' => '2026-06-27T10:00:01+00:00',
+            'links' => [['trace_id' => 'exec_link', 'span_id' => 'span_node']]]],
+        llmCalls: [],
+    );
+    $span = $payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0];
+
+    expect($span['links'])->toBe([['traceId' => OtlpIdEncoder::traceId('exec_link'), 'spanId' => OtlpIdEncoder::spanId('span_node')]])
+        ->and(array_column($span['attributes'], 'key'))->not->toContain('links')
+        ->and(array_filter(array_column($span['attributes'], 'key'), fn (string $key): bool => str_starts_with($key, 'links')))->toBe([]);
+});
+
 it('passes span attributes through without an attributes prefix', function (): void {
     $vector = otlpAttrs(['node_name' => 'vector.search', 'span_type' => 'vector', 'attributes' => ['vector.store' => 'pgvector', 'vector.top_k' => 5]]);
     $tool = otlpAttrs(['node_name' => 'lookup_order', 'span_type' => 'tool', 'attributes' => ['gen_ai.tool.call.id' => 'call_1', 'tool.type' => 'prism']]);

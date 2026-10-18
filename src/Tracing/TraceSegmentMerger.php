@@ -71,8 +71,10 @@ final class TraceSegmentMerger
         }
 
         $startedAt = $initialStart ?? ($windows === [] ? null : TraceTime::fromMicrotime(min(array_column($windows, 0))));
-        $endedAt = TraceTime::parse($final['ended_at'] ?? null)
-            ?? ($windows === [] ? null : TraceTime::fromMicrotime(max(array_column($windows, 1))));
+        // The last segment to end, which is the final one unless queued work outlived the run.
+        $finalEnd = TraceTime::parse($final['ended_at'] ?? null);
+        $lastEnd = $windows === [] ? null : TraceTime::fromMicrotime(max(array_column($windows, 1)));
+        $endedAt = $finalEnd !== null && $lastEnd !== null ? max($finalEnd, $lastEnd) : ($finalEnd ?? $lastEnd);
 
         if ($startedAt) {
             $trace['started_at'] = TraceTime::format($startedAt);
@@ -177,7 +179,8 @@ final class TraceSegmentMerger
 
     /**
      * The root span of a resumed trace comes from the final segment, which only knows its own
-     * start. Widen it back to the trace start.
+     * start. Widen it back to the trace start. Its end stays the graph's end, also when queued
+     * work ended later (those spans carry links and may end after the root).
      *
      * @param  array<string, mixed>  $span
      * @return array<string, mixed>

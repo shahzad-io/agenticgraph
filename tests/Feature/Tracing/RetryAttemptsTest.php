@@ -41,7 +41,8 @@ class RetryAttemptsExporter extends PulseExporter
  */
 class RaFlakyNode extends AbstractNode
 {
-    public const DELAY_MS = 20;
+    // Long enough that scheduler jitter stays well under one more delay (the gap check's upper bound).
+    public const DELAY_MS = 50;
 
     public static int $failures = 0;
 
@@ -238,8 +239,9 @@ function raAssertFourFailedAttempts(array $attempts, string $rootId): void
             ->and($attempt)->not->toHaveKey('retry_count');
         if ($i > 0) {
             $gapMs = (raMicros($attempt['started_at']) - raMicros($attempts[$i - 1]['ended_at'])) / 1000;
+            // One retry delay between attempts: at least the delay, and below two of them.
             expect($gapMs)->toBeGreaterThanOrEqual(RaFlakyNode::DELAY_MS)
-                ->and($gapMs)->toBeLessThan(RaFlakyNode::DELAY_MS + 25);
+                ->and($gapMs)->toBeLessThan(2 * RaFlakyNode::DELAY_MS);
         }
     }
 }

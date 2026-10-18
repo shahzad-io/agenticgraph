@@ -4,6 +4,10 @@
 
 `agenticgraph.trace.v1` is frozen; later changes are additive. The contract is `spec/tracing-wire-v1.md`, locked by `TraceWireContractFreezeTest`.
 
+### Changed (trace wire v1.1, pre-release amendment)
+- Queued work that outlives its caller: `TraceContext` takes optional `links` (`[{trace_id, span_id}]`, the span that queued the work). Spans that `Tracer` exports directly under the root of such a context carry `links`, a new optional span key; the OTLP exporter sends it as OTLP span links. The package's own jobs are unchanged.
+- `TraceSegmentMerger`: `trace.ended_at` is the latest segment end (it was the final segment's end), so `duration_ms` covers every segment and `active_ms` is never above it. The root graph span keeps the graph's end; spans with `links` may end after it.
+
 ### BREAKING (SSE endpoint: control events, held-open waits, firstSeq)
 - `StreamStoreInterface` has a new method `firstSeq(string $streamId): ?int` (oldest stored seq, `null` when empty). Implemented on the Redis and database stores. Custom stores must add it.
 - SSE control events (`stream_heartbeat`, new `stream_reconnect`, `stream_replay_unavailable`) have no `id:` line and no `seq`, and are never stored. Their body is `{"control": "<name>", ...}`, not the 9-field wire body. `stream_replay_unavailable` used to carry the next real seq as its id, so a later reconnect with that cursor skipped a real event.

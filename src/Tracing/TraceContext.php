@@ -25,9 +25,14 @@ final class TraceContext
 
     private readonly bool $enabled;
 
+    /**
+     * @param  list<array{trace_id: string, span_id: string}>  $links  for queued work that runs after its caller ended:
+     *                                                                 the span that queued it, put on the work's spans under the root
+     */
     public function __construct(
         private readonly string $executionId,
         private readonly string $rootSpanId,
+        private readonly array $links = [],
     ) {
         $this->enabled = (bool) config('agenticgraph.tracing.enabled', false);
         $this->currentSpanId = $this->rootSpanId;
@@ -99,6 +104,14 @@ final class TraceContext
     public function getRootSpanId(): string
     {
         return $this->rootSpanId;
+    }
+
+    /**
+     * @return list<array{trace_id: string, span_id: string}>
+     */
+    public function getLinks(): array
+    {
+        return $this->links;
     }
 
     /**

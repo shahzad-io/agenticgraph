@@ -127,6 +127,30 @@ it('creates a child span nested under the active node span', function (): void {
         ->and($span['status_code'])->toBe('OK');
 });
 
+it('puts the context links on spans of queued work parented to the root, not on their children', function (): void {
+    $exporter = bindCapturingExporter();
+    $link = ['trace_id' => 'exec_late', 'span_id' => 'span_queueing_node'];
+    app()->instance(TraceContext::class, new TraceContext('exec_late', 'span_root', links: [$link]));
+
+    $attributes = [];
+    Trace::span('vector.upsert', fn () => Trace::span('child', fn () => null), $attributes, 'vector');
+
+    [$child, $top] = $exporter->spans;
+    expect($top['parent_id'])->toBe('span_root')
+        ->and($top['links'])->toBe([$link])
+        ->and($child['parent_id'])->toBe($top['id'])
+        ->and($child)->not->toHaveKey('links');
+});
+
+it('adds no links key without context links (guard)', function (): void {
+    $exporter = bindCapturingExporter();
+    bindActiveTraceContext('exec_plain', 'span_root');
+
+    Trace::span('op', fn () => null);
+
+    expect($exporter->spans[0])->not->toHaveKey('links');
+});
+
 it('is a no-op without a bound trace context', function (): void {
     $exporter = bindCapturingExporter();
 

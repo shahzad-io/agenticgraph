@@ -49,6 +49,9 @@ class FzWorkNode extends PrismNode
         fzSwallow(fn () => Trace::span('custom-fail', fn () => throw new RuntimeException('custom failed')));
         $vector = ['vector.store' => 'pgvector', 'vector.top_k' => 3];
         Trace::span('search', fn () => null, $vector, 'vector');
+        // What a job queued here carries, for the queued-work segment sent after the run.
+        $context = TraceContext::tryGet();
+        $GLOBALS['fzQueued'] = ['trace_id' => $context?->getExecutionId(), 'root_span_id' => $context?->getRootSpanId(), 'span_id' => $context?->getSpanId()];
         fzSwallow(fn () => Trace::span('search-fail', fn () => throw new RuntimeException('vector failed'), $vector, 'vector'));
 
         $tool = (new Tool)->as('lookup')->for('Look up a city')->withStringParameter('city', 'City')
@@ -182,7 +185,8 @@ function fzForgetRun(): void
 
 /**
  * Run A: summary capture depths, interrupt then resume in a fresh process, route, custom,
- * vector, tool, http (200, 500, connection failure), db, streamed and cached llm calls.
+ * vector, tool, http (200, 500, connection failure), db, streamed and cached llm calls, then a
+ * job queued by the work node that finishes after the run (a continued segment with a linked span).
  * Run B: full capture depths and a failing node. Plus the builder's two size-limit envelopes.
  *
  * @return list<array<string, mixed>>
@@ -229,6 +233,15 @@ function fzEnvelopes(): array
     $exporter->reset();
     fzForgetRun();
     app(GraphExecutor::class)->resumeWithInput($state->getInterruptCheckpointId(), ['ok' => true]);
+
+    $queued = $GLOBALS['fzQueued'];
+    fzForgetRun();
+    app()->instance(TraceContext::class, new TraceContext($queued['trace_id'], $queued['root_span_id'], links: [['trace_id' => $queued['trace_id'], 'span_id' => $queued['span_id']]]));
+    $exporter->resumeTrace($queued['trace_id'], null, 'continued');
+    $late = ['vector.store' => 'pgvector', 'vector.operation' => 'upsert'];
+    Trace::span('vector.upsert', fn () => null, $late, 'vector');
+    app()->forgetInstance(TraceContext::class);
+    $exporter->flush($queued['trace_id']);
 
     config([
         'agenticgraph.tracing.capture.tool_args' => 'full',
@@ -335,7 +348,8 @@ test('contract freeze guard: every emitted key and value is in the registry, and
                 continue;
             }
             fzSubset($registry['span']['common'], array_keys($span), "{$type} span (missing common key)", $problems);
-            $top = array_values(array_diff(array_keys($span), $registry['span']['common'], ['attributes']));
+            $see('span.optional', array_values(array_intersect(array_keys($span), $registry['span']['optional'])));
+            $top = array_values(array_diff(array_keys($span), $registry['span']['common'], $registry['span']['optional'], ['attributes']));
             $see("{$type}.top", $top);
             fzSubset($top, $spec['top'], "{$type} span", $problems);
             fzSubset([$span['status']], $registry['span']['status'], "{$type}.status", $problems);
@@ -381,6 +395,7 @@ test('contract freeze guard: every emitted key and value is in the registry, and
         'trace' => [...$registry['trace']['always'], ...$registry['trace']['optional']],
         '_meta' => array_unique([...$registry['_meta']['truncated'], ...$registry['_meta']['payload_too_large']]),
         'span_types' => array_keys($registry['span_types']),
+        'span.optional' => $registry['span']['optional'],
         'llm_calls' => [...$registry['llm_calls']['always'], ...$registry['llm_calls']['optional']],
     ];
     foreach ($registry['span_types'] as $type => $spec) {
@@ -440,6 +455,18 @@ test('contract freeze guard: the merger output matches the merged block, both di
     $merger = new TraceSegmentMerger;
     foreach ($byTrace as $traceId => $segments) {
         $merged = $merger->merge($segments);
+
+        // Run A's queued work ends after the run: the trace ends with it, the root keeps the graph's end (wire v1.1).
+        if ($traceId !== 'fz-size') {
+            $root = array_values(array_filter($merged['spans'], fn (array $span): bool => $span['parent_id'] === null))[0];
+            $sent = array_values(array_filter(array_merge(...array_column($segments, 'spans')), fn (array $span): bool => $span['id'] === $root['id']));
+            if ($root['ended_at'] !== end($sent)['ended_at']) {
+                $problems[] = "{$traceId} the merge moved the root end to {$root['ended_at']}";
+            }
+            if ($merged['trace']['ended_at'] !== max(array_column(array_column($segments, 'segment'), 'ended_at'))) {
+                $problems[] = "{$traceId} trace ended_at is not the last segment end";
+            }
+        }
         $keys = array_keys($merged);
         $seen['merged'] = [...$seen['merged'], ...$keys];
         $expected = array_values(array_intersect([...$registry['keys'], ...$registry['optional']], $keys));

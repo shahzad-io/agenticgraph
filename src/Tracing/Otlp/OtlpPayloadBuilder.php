@@ -129,6 +129,10 @@ final class OtlpPayloadBuilder
             $mapped['parentSpanId'] = $spanIdMap[$parentInternalId] ?? OtlpIdEncoder::spanId($parentInternalId);
         }
 
+        foreach ($span['links'] ?? [] as $link) {
+            $mapped['links'][] = ['traceId' => OtlpIdEncoder::traceId((string) $link['trace_id']), 'spanId' => OtlpIdEncoder::spanId((string) $link['span_id'])];
+        }
+
         return $mapped;
     }
 
@@ -142,7 +146,7 @@ final class OtlpPayloadBuilder
      */
     private function spanAttributes(array $span, ?array $llmCall): array
     {
-        $reserved = ['id', 'trace_id', 'parent_id', 'started_at', 'ended_at', 'node_name', 'span_kind', 'status', 'status_code', 'error', 'attributes', ...self::LLM_FIELDS];
+        $reserved = ['id', 'trace_id', 'parent_id', 'links', 'started_at', 'ended_at', 'node_name', 'span_kind', 'status', 'status_code', 'error', 'attributes', ...self::LLM_FIELDS];
         $payload = [];
 
         foreach ($span as $key => $value) {

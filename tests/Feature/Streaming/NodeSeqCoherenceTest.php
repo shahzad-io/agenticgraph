@@ -149,9 +149,7 @@ it('leaves graph-level lifecycle events with null node_seq', function () {
 it('populates coherent node_seq on Prism streaming text_delta events via real provider', function () {
     $apiKey = env('OPENAI_API_KEY');
     if (! is_string($apiKey) || $apiKey === '') {
-        expect(true)->toBeTrue('OPENAI_API_KEY not configured, skipping real-provider Prism node_seq test');
-
-        return;
+        $this->markTestSkipped('OPENAI_API_KEY not configured: real-provider Prism node_seq test');
     }
 
     config()->set('agenticgraph.tracing.enabled', false);
@@ -179,12 +177,16 @@ it('populates coherent node_seq on Prism streaming text_delta events via real pr
         ->and($deltas)->not->toBeEmpty()
         ->and($start->nodeSeq())->toBe(1);
 
+    // Prism also streams step and text start/complete events around the deltas, so the deltas share the node's
+    // gapless sequence with them: in order, after node_start and before node_complete.
     $deltaSeqs = array_map(fn (StreamEvent $e) => $e->nodeSeq(), $deltas);
-    $expectedDeltaSeqs = range(2, 1 + count($deltas));
-
-    expect($deltaSeqs)->toBe($expectedDeltaSeqs)
-        ->and($complete->nodeSeq())->toBe(2 + count($deltas));
-
+    $sortedDeltaSeqs = $deltaSeqs;
+    sort($sortedDeltaSeqs);
     $allPrismSeqs = nodeSeqValuesForNode($events, 'prism_stream');
-    expect($allPrismSeqs)->toBe(range(1, count($allPrismSeqs)));
+
+    expect($allPrismSeqs)->toBe(range(1, count($allPrismSeqs)))
+        ->and($deltaSeqs)->toBe($sortedDeltaSeqs)
+        ->and(min($deltaSeqs))->toBeGreaterThan(1)
+        ->and($complete->nodeSeq())->toBe(count($allPrismSeqs))
+        ->and(max($deltaSeqs))->toBeLessThan($complete->nodeSeq());
 });

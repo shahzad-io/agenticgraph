@@ -94,6 +94,25 @@ it('counts overlapping branch segments once: active_ms is their union, not their
         ->and($merged['trace']['status'])->toBe('completed');
 });
 
+it('covers a queued segment that ends after the final segment: duration to the last end, active_ms within it, the root keeps the graph end', function () {
+    $root = ['id' => 'span_root', 'trace_id' => 'tr_m', 'parent_id' => null, 'span_type' => 'graph', 'status' => 'success',
+        'started_at' => '2026-09-27T10:00:00.000000+00:00', 'ended_at' => '2026-09-27T10:00:01.000000+00:00', 'duration_ms' => 1000.0];
+    $merged = (new TraceSegmentMerger)->merge([
+        tsmEnvelope(['id' => 'seg_init', 'kind' => 'initial', 'final' => true, 'started_at' => '2026-09-27T10:00:00.000000+00:00', 'ended_at' => '2026-09-27T10:00:01.000000+00:00'],
+            ['status' => 'completed', 'started_at' => '2026-09-27T10:00:00.000000+00:00', 'ended_at' => '2026-09-27T10:00:01.000000+00:00'], [$root]),
+        tsmEnvelope(['id' => 'seg_late', 'started_at' => '2026-09-27T10:00:02.000000+00:00', 'ended_at' => '2026-09-27T10:00:04.000000+00:00'], [],
+            [['id' => 'span_batch', 'trace_id' => 'tr_m', 'parent_id' => 'span_root', 'span_type' => 'vector', 'started_at' => '2026-09-27T10:00:02.000000+00:00', 'ended_at' => '2026-09-27T10:00:04.000000+00:00']]),
+    ]);
+    $mergedRoot = array_values(array_filter($merged['spans'], fn (array $span): bool => $span['parent_id'] === null))[0];
+
+    expect($merged['trace']['status'])->toBe('completed')
+        ->and($merged['trace']['ended_at'])->toBe('2026-09-27T10:00:04.000000+00:00')
+        ->and($merged['trace']['duration_ms'])->toBe(4000.0)
+        ->and($merged['trace']['active_ms'])->toBe(3000.0)
+        ->and($mergedRoot['ended_at'])->toBe('2026-09-27T10:00:01.000000+00:00')
+        ->and($mergedRoot['duration_ms'])->toBe(1000.0);
+});
+
 it('without a final segment takes status from the segment that ended last', function () {
     $merged = (new TraceSegmentMerger)->merge([
         tsmEnvelope(['id' => 'seg_1', 'kind' => 'initial', 'started_at' => '2026-09-27T10:00:00.000000+00:00', 'ended_at' => '2026-09-27T10:00:05.000000+00:00'], ['status' => 'interrupted', 'interrupt_reason' => 'approval']),
