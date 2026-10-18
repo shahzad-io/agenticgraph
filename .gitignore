@@ -40,3 +40,6 @@ tasks/
 
 docs/
 /docs
+
+# Local Claude Code settings
+.claude/settings.local.json

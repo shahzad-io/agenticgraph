@@ -19,6 +19,10 @@ return new class extends Migration
 
     public function down(): void
     {
+        if (! Schema::hasColumn('agenticgraph_executions', 'execution_options')) {
+            return;
+        }
+
         Schema::table('agenticgraph_executions', function (Blueprint $table) {
             $table->dropColumn('execution_options');
         });

@@ -1,8 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 (unreleased)
 
 The trace wire (`agenticgraph.trace.v1.1`, the v1 contract plus the v1.1 amendment) is frozen; later changes are additive. The contract is `spec/tracing-wire-v1.md`, locked by `TraceWireContractFreezeTest`.
+
+### Release metadata (B11 session C)
+
+- README: Laravel 11, 12 or 13 (as `composer.json` already allowed), the upgrade steps from 0.1.0 and a compatibility table (core 0.2.x, vector 0.1.x, stream client 0.1.x). `composer.json` gains keywords and `support` (issues, source, docs). `.claude/settings.local.json` is no longer tracked. Dev lock updated (`composer audit` clean; guzzle 8).
+
+### Upgrade migrations (from 0.1.0)
+
+- The four upgrade migrations are now published with the others, in this order: `zzzz_add_checkpoint_node_count_to_agenticgraph_executions_table`, `zzzz_add_execution_options_to_agenticgraph_executions_table`, `zzzz_drop_checkpoint_tree_columns_from_agenticgraph_checkpoints_table` and the new `zzzz_add_stream_columns_to_agenticgraph_executions_table` (adds `stream_id` with its index and `interrupted_at`, drops 0.1.0's `(id, status)` index). Each checks the schema first, so on a fresh install they change nothing, and every `down()` skips a column that is already gone.
+- Upgrading an app that published the 0.1.0 migrations: `php artisan vendor:publish --tag=agenticgraph-migrations`, then `php artisan migrate`. Files the app already has keep their names; the new tables (`stream_events`, `agenticgraph_interrupts`) and the four upgrades are added. `UpgradeMigrationsTest` checks that the result matches a fresh install.
 
 ### BREAKING (one LLM request builder: `$this->llm()`)
 - `PrismNode::llm()` returns an immutable `Shahzad\AgenticGraph\Llm\LlmRequest`. It replaces `prompt()`, `promptTemplate()`, `chatPrompt()`, `promptMessages()`, `structured()`, `tools()`, `agent()` and `withMcp()`, which are removed, with `withModel()`, `buildStreamingRequest()`, `trackTokensFromResponse()`, `interpolate()`, `shouldCache()`, `getCacheKey()`, `dispatchCachedLlmCall()` and the node-level `withCache()` / `withoutCache()` (caching is now chosen per request; the `$cacheEnabled` and `$cacheTtl` properties stay as node defaults).

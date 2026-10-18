@@ -97,6 +97,11 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
             ->hasMigration('create_agenticgraph_checkpoints_table')
             ->hasMigration('create_agenticgraph_stream_events_table')
             ->hasMigration('create_agenticgraph_interrupts_table')
+            // Upgrades for apps that published 0.1.0, in this order; each is a no-op on a fresh install.
+            ->hasMigration('zzzz_add_checkpoint_node_count_to_agenticgraph_executions_table')
+            ->hasMigration('zzzz_add_execution_options_to_agenticgraph_executions_table')
+            ->hasMigration('zzzz_drop_checkpoint_tree_columns_from_agenticgraph_checkpoints_table')
+            ->hasMigration('zzzz_add_stream_columns_to_agenticgraph_executions_table')
             ->hasCommand(AgenticGraphCommand::class)
             ->hasCommand(ListGraphsCommand::class)
             ->hasCommand(VisualizeGraphCommand::class)

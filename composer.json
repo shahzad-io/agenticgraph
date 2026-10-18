@@ -4,9 +4,21 @@
     "keywords": [
         "shahzad",
         "laravel",
-        "agenticgraph"
+        "agenticgraph",
+        "ai",
+        "llm",
+        "agents",
+        "workflow",
+        "graph",
+        "orchestration",
+        "prism"
     ],
     "homepage": "https://github.com/shahzad-io/agenticgraph",
+    "support": {
+        "issues": "https://github.com/shahzad-io/agenticgraph/issues",
+        "source": "https://github.com/shahzad-io/agenticgraph",
+        "docs": "https://agenticgraph.dev/docs/overview"
+    },
     "license": "MIT",
     "authors": [
         {

@@ -19,6 +19,10 @@ return new class extends Migration
 
     public function down(): void
     {
+        if (! Schema::hasColumn('agenticgraph_executions', 'checkpoint_node_count')) {
+            return;
+        }
+
         Schema::table('agenticgraph_executions', function (Blueprint $table) {
             $table->dropColumn('checkpoint_node_count');
         });
