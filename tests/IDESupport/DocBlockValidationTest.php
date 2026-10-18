@@ -53,7 +53,7 @@ class DocBlockValidationTest extends TestCase
         $docComment = $reflection->getDocComment();
 
         // The helpers are protected, so they are listed in prose, not as @method tags (F9).
-        $requiredMethods = ['prism', 'structured', 'tools', 'embeddings', 'prompt', 'withMcp'];
+        $requiredMethods = ['llm', 'prism', 'embeddings', 'generateImage', 'audioToText'];
 
         foreach ($requiredMethods as $method) {
             $this->assertStringContainsString(

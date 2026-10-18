@@ -26,7 +26,7 @@ class CSRespondNode extends PrismNode
     public function execute(StateContract $state): StateContract
     {
         $intent = $state->get('intent');
-        $text = $this->prompt('Respond to {intent} issue', ['intent' => $intent]);
+        $text = $this->llm()->prompt('Respond to {intent} issue')->vars(['intent' => $intent])->text();
 
         return $state->set('response', $text);
     }

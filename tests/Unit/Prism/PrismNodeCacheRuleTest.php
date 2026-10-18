@@ -23,7 +23,7 @@ use Shahzad\AgenticGraph\Streaming\StreamOptions;
 use Shahzad\AgenticGraph\Streaming\StreamSession;
 
 /**
- * Calls one text helper. State: helper, cache ('with' | 'without' | null), messages (for promptMessages).
+ * Runs one text path. State: path, cache ('with' | 'without' | null), messages (for history).
  */
 class CacheRuleNode extends PrismNode
 {
@@ -35,17 +35,17 @@ class CacheRuleNode extends PrismNode
 
     public function execute(StateContract $state): StateContract
     {
-        match ($state->get('cache')) {
-            'with' => $this->withCache(10),
-            'without' => $this->withoutCache(),
-            default => null,
+        $llm = match ($state->get('cache')) {
+            'with' => $this->llm()->withCache(10),
+            'without' => $this->llm()->withoutCache(),
+            default => $this->llm(),
         };
 
-        $reply = match ($state->get('helper')) {
-            'prompt' => $this->prompt('Say {x}', ['x' => 'hi']),
-            'promptTemplate' => $this->promptTemplate(PromptTemplate::create('Say {x}'), ['x' => 'hi']),
-            'chatPrompt' => $this->chatPrompt(ChatPromptTemplate::create()->user('Say {x}'), ['x' => 'hi']),
-            'promptMessages' => $this->promptMessages($state->get('messages') ?? [new UserMessage('Say hi')]),
+        $reply = match ($state->get('path')) {
+            'prompt' => $llm->prompt('Say {x}')->vars(['x' => 'hi'])->text(),
+            'prompt template' => $llm->prompt(PromptTemplate::create('Say {x}'))->vars(['x' => 'hi'])->text(),
+            'chat' => $llm->chat(ChatPromptTemplate::create()->user('Say {x}'))->vars(['x' => 'hi'])->text(),
+            'history' => $llm->history($state->get('messages') ?? [new UserMessage('Say hi')])->text(),
         };
 
         return $state->set('reply', $reply);
@@ -90,42 +90,42 @@ function twice(array $state, ?CacheRuleNode $node = null): array
     return [[$node ?? new CacheRuleNode, $state], [$node ?? new CacheRuleNode, $state]];
 }
 
-dataset('text helpers', ['prompt', 'promptTemplate', 'chatPrompt', 'promptMessages']);
+dataset('text paths', ['prompt', 'prompt template', 'chat', 'history']);
 
-it('does not cache by default', function (string $helper) {
-    expect(providerCalls(twice(['helper' => $helper])))->toBe(2);
-})->with(['prompt', 'promptTemplate', 'chatPrompt']); // promptMessages never cached before, see the next tests
+it('does not cache by default', function (string $path) {
+    expect(providerCalls(twice(['path' => $path])))->toBe(2);
+})->with(['prompt', 'prompt template', 'chat']); // history never cached before, see the next tests
 
-it('caches when the node calls withCache, even with config off', function (string $helper) {
+it('caches when the request calls withCache, even with config off', function (string $path) {
     config()->set('agenticgraph.prism.cache_enabled', false);
 
-    expect(providerCalls(twice(['helper' => $helper, 'cache' => 'with'])))->toBe(1);
-})->with('text helpers');
+    expect(providerCalls(twice(['path' => $path, 'cache' => 'with'])))->toBe(1);
+})->with('text paths');
 
-it('caches promptMessages when config is on and the node sets nothing', function () {
+it('caches history when config is on and the request sets nothing', function () {
     config()->set('agenticgraph.prism.cache_enabled', true);
 
-    expect(providerCalls(twice(['helper' => 'promptMessages'])))->toBe(1);
+    expect(providerCalls(twice(['path' => 'history'])))->toBe(1);
 });
 
-it('guard: withoutCache wins over config on', function (string $helper) {
+it('guard: withoutCache wins over config on', function (string $path) {
     config()->set('agenticgraph.prism.cache_enabled', true);
 
-    expect(providerCalls(twice(['helper' => $helper, 'cache' => 'without'])))->toBe(2);
-})->with('text helpers');
+    expect(providerCalls(twice(['path' => $path, 'cache' => 'without'])))->toBe(2);
+})->with('text paths');
 
-it('guard: never caches a streamed call', function (string $helper) {
-    expect(providerCalls(twice(['helper' => $helper, 'cache' => 'with']), streamed: true))->toBe(2);
-})->with('text helpers');
+it('guard: never caches a streamed call', function (string $path) {
+    expect(providerCalls(twice(['path' => $path, 'cache' => 'with']), streamed: true))->toBe(2);
+})->with('text paths');
 
 it('guard: never caches a message list with media', function () {
     $messages = [new UserMessage('Describe this', [Image::fromUrl('https://example.test/a.png')])];
 
-    expect(providerCalls(twice(['helper' => 'promptMessages', 'cache' => 'with', 'messages' => $messages])))->toBe(2);
+    expect(providerCalls(twice(['path' => 'history', 'cache' => 'with', 'messages' => $messages])))->toBe(2);
 });
 
 it('keys the cache on max tokens and provider options', function () {
-    $state = ['helper' => 'prompt', 'cache' => 'with'];
+    $state = ['path' => 'prompt', 'cache' => 'with'];
 
     expect(providerCalls([
         [new CacheRuleNode(maxTokens: 20), $state],
@@ -145,11 +145,11 @@ it('keys the cache on the full message list, tool calls and results included', f
     ];
 
     expect(providerCalls([
-        [new CacheRuleNode, ['helper' => 'promptMessages', 'cache' => 'with', 'messages' => $conversation('approved')]],
-        [new CacheRuleNode, ['helper' => 'promptMessages', 'cache' => 'with', 'messages' => $conversation('approved')]],
-        [new CacheRuleNode, ['helper' => 'promptMessages', 'cache' => 'with', 'messages' => $conversation('denied')]],
-        [new CacheRuleNode, ['helper' => 'promptMessages', 'cache' => 'with', 'messages' => [new SystemMessage('Status?')]]],
-        [new CacheRuleNode, ['helper' => 'promptMessages', 'cache' => 'with', 'messages' => [new UserMessage('Status?')]]],
+        [new CacheRuleNode, ['path' => 'history', 'cache' => 'with', 'messages' => $conversation('approved')]],
+        [new CacheRuleNode, ['path' => 'history', 'cache' => 'with', 'messages' => $conversation('approved')]],
+        [new CacheRuleNode, ['path' => 'history', 'cache' => 'with', 'messages' => $conversation('denied')]],
+        [new CacheRuleNode, ['path' => 'history', 'cache' => 'with', 'messages' => [new SystemMessage('Status?')]]],
+        [new CacheRuleNode, ['path' => 'history', 'cache' => 'with', 'messages' => [new UserMessage('Status?')]]],
     ]))->toBe(4);
 });
 
@@ -163,7 +163,7 @@ it('logs roles and tool messages in the TokensUsed prompt', function () {
         new ToolResultMessage([new ToolResult('call_1', 'lookup', ['q' => 'refund'], 'approved')]),
     ];
 
-    providerCalls([[new CacheRuleNode, ['helper' => 'promptMessages', 'messages' => $messages]]]);
+    providerCalls([[new CacheRuleNode, ['path' => 'history', 'messages' => $messages]]]);
 
     Event::assertDispatched(TokensUsed::class, function (TokensUsed $event): bool {
         return $event->prompt === "[system] Be brief.\n\n[user] Status?\n\n[tool_call] lookup {\"q\":\"refund\"}\n\n[tool_result] lookup: approved";

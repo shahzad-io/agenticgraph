@@ -74,7 +74,7 @@ Docs: `/docs/streaming#from-a-controller`
 
 - **Lifecycle**, from the coordinator: `graph_start`, `graph_complete`, `graph_failed`, `node_start`, `node_complete`, `node_error`, `node_interrupt`, `stream_resume`.
 - **Terminal**: `execution_terminal` (SSE; `status` is `completed`, `interrupted` or `failed`, plus `final_state`), `stream_close` (broadcast; `{status, meta}`), `stream_error`.
-- **Prism**, from `prompt()`: `text_start`, `text_delta`, `text_complete`, `tool_call`, `tool_result`, `thinking_*`, `step_start`, `step_finish`, `provider_tool_event`, `artifact`, `error`.
+- **Prism**, from `$this->llm()`: `text_start`, `text_delta`, `text_complete`, `tool_call`, `tool_result`, `thinking_*`, `step_start`, `step_finish`, `provider_tool_event`, `artifact`, `error`.
 - **Yours**: any string through `streamEvent($type, $payload)`.
 - `stream_heartbeat` and `stream_replay_unavailable` are SSE only and may change.
 
@@ -88,7 +88,7 @@ $this->whenStreaming(function () use ($items): void {
 });
 ```
 
-- `prompt()` streams by itself when a sink is bound and still returns the full string. There is no special streaming node.
+- `$this->llm()` streams by itself when a sink is bound and `text()` still returns the full string. There is no special streaming node. Text, chat, structured with a Prism `Schema` and single-step tools stream; `maxSteps > 1` and MCP do not.
 - `streamEvent()` is a no-op without a sink, for example in a `run()` or `dispatch()` graph.
 - The type is the SSE `event:` line or the broadcast event name. It is not in the JSON body.
 - The body is frozen: `stream_id`, `execution_id`, `node_name`, `span_id`, `parent_span_id`, `seq`, `node_seq`, `occurred_at`, `payload`. `seq` is the SSE `id:` and the replay cursor.

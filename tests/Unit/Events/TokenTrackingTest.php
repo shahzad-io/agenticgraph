@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Event;
 use Prism\Prism\Audio\TextResponse;
+use Prism\Prism\Enums\ToolChoice;
 use Prism\Prism\Facades\Prism;
 use Prism\Prism\Schema\StringSchema;
 use Prism\Prism\Testing\EmbeddingsResponseFake;
@@ -19,37 +20,37 @@ use Shahzad\AgenticGraph\Events\TokensUsed;
 use Shahzad\AgenticGraph\Nodes\PrismNode;
 use Shahzad\AgenticGraph\State\State;
 
-// Test node using structured() method
+// Structured output
 class StructuredTestNode extends PrismNode
 {
     public function execute(StateContract $state): StateContract
     {
-        $result = $this->structured('Analyze this', new StringSchema('result', 'analysis'));
+        $result = $this->llm()->prompt('Analyze this')->schema(new StringSchema('result', 'analysis'))->structured();
 
         return $state->set('analysis', $result);
     }
 }
 
-// Test node using tools() method
+// A single-step tool call
 class ToolsTestNode extends PrismNode
 {
     public function execute(StateContract $state): StateContract
     {
         $tools = []; // Empty tools for test
-        $result = $this->tools('Use a tool', $tools);
+        $result = $this->llm()->prompt('Use a tool')->tools($tools)->run();
 
         return $state->set('tool_calls', $result);
     }
 }
 
-// Test node using agent() method
+// A multi-step tool run
 class AgentTestNode extends PrismNode
 {
     public function execute(StateContract $state): StateContract
     {
         $tools = [];
 
-        $response = $this->agent('Use a tool', $tools, ['maxSteps' => 5]);
+        $response = $this->llm()->prompt('Use a tool')->tools($tools)->toolChoice(ToolChoice::Any)->maxSteps(5)->run();
 
         return $state->set('text', $response->text);
     }
@@ -85,7 +86,7 @@ class AudioTokenNode extends PrismNode
     }
 }
 
-it('emits TokensUsed event from structured() with callType', function () {
+it('emits TokensUsed event from structured output with callType', function () {
     Event::fake();
     config()->set('agenticgraph.prism.cache_enabled', false);
 
@@ -110,7 +111,7 @@ it('emits TokensUsed event from structured() with callType', function () {
     });
 });
 
-it('emits TokensUsed event from tools() with callType', function () {
+it('emits TokensUsed event from a tool call with callType', function () {
     Event::fake();
     config()->set('agenticgraph.prism.cache_enabled', false);
 
@@ -133,7 +134,7 @@ it('emits TokensUsed event from tools() with callType', function () {
     });
 });
 
-it('emits TokensUsed event from agent() with callType tools', function () {
+it('emits TokensUsed event from a multi-step tool run with callType tools', function () {
     Event::fake();
     config()->set('agenticgraph.prism.cache_enabled', false);
 

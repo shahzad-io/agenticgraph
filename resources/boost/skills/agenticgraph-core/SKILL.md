@@ -127,19 +127,38 @@ final class ValidateOrderNode extends AbstractNode
 
 | Helper | Returns | Use |
 |---|---|---|
-| `prompt($template, $vars, $additionalContent)` | `string` | One-off text. Streams when the run streams. |
-| `promptTemplate(PromptTemplate, ...)` / `chatPrompt(ChatPromptTemplate, ...)` / `promptMessages($messages)` | `string` | Reusable templates and role messages |
-| `structured($prompt, $schema)` | `mixed` | Root schema should be an `ObjectSchema`. Pass a string, not a template. |
-| `tools($prompt, $tools)` | `ToolCall[]` | One step. Not a chat reply. |
-| `agent($prompt, $tools, $options)` | `TextResponse` | Multi-step tool loop. `maxSteps` defaults to 5; `systemPrompt` option. Read `->text`. |
-| `withMcp($server, $options)` | `McpRequest` | Tools from a Relay MCP server |
-| `prism()` | `PendingTextRequest` | Raw Prism request. Tools added with `withTools()` here are not traced. |
+| `llm()` | `LlmRequest` | Every model call: text, chat, structured, tools, MCP. Immutable; end with `text()`, `structured()` or `run()`. |
+| `prism()` | `PendingTextRequest` | Raw Prism request with the node's settings. Not traced, cached or streamed. |
 | `embeddingsFromInput`, `generateImage`, `audioToText`, `textToAudio` | Prism responses | Media |
-| `withModel($model)`, `withCache($ttlMinutes)`, `withoutCache()` | `static` | Per-call overrides |
 
-- `protected ?string $model` sets the node's default model. `protected bool $trackTokens = false` stops `TokensUsed`.
-- `protected array $providerOptions` is sent with every text, structured and streamed call, for example `['use_tool_calling' => true]` for Anthropic structured output on models older than Claude Sonnet 4.5.
-- Full `structured()` and `agent()` examples: [references/prism-nodes.md](references/prism-nodes.md).
+```php
+use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Nodes\PrismNode;
+
+final class SummaryNode extends PrismNode
+{
+    public function execute(StateContract $state): StateContract
+    {
+        $summary = $this->llm()
+            ->system('You write two-sentence summaries.')
+            ->prompt('Summarize: {text}')
+            ->vars(['text' => (string) $state->get('text')])
+            ->text();
+
+        return $state->set('summary', $summary);
+    }
+}
+```
+
+- Inputs: `prompt($stringOrPromptTemplate)` or `chat(ChatPromptTemplate)`, plus `vars()`. Templates interpolate; `system()`, `user()`, `assistant()` and `history()` are literal. Put dynamic text (model output, JSON, user input) in `vars()`, not into the template string.
+- `user()` and `assistant()` append after `chat()` and throw with `prompt()`. Two templates throw. `attach($media)` adds media to the last user turn.
+- `schema($schema)` then `structured(): array`; the root schema should be an `ObjectSchema`. A schema with tools throws.
+- `tools()`, `mcp($server)`, `toolChoice()`, `maxSteps()`: one step and Prism's tool choice by default. Raise `maxSteps` for a tool loop. `run()` returns an `LlmResponse` with the tool calls and results of every step.
+- Settings: config, then node properties (`$model`, `$maxTokens`, `$providerOptions`, `$trackTokens`), then the call (`model()`, `maxTokens()`, `providerOptions()`, merged per key). `explain()` shows each setting with its source, the stream and cache decisions and the cache key, without calling the model.
+- Caching is off by default. `withCache($ttlMinutes)` and `withoutCache()` apply to one request. Tool and MCP requests never cache.
+- Streaming when the run streams: text and chat; `schema()` only with a Prism `Schema` and `prompt()`; single-step tools. `maxSteps > 1` and MCP do not stream.
+- `protected bool $trackTokens = false` stops `TokensUsed`. `protected array $providerOptions`, for example `['use_tool_calling' => true]` for Anthropic structured output on models older than Claude Sonnet 4.5.
+- Structured, tool loop and MCP examples: [references/prism-nodes.md](references/prism-nodes.md).
 
 Docs: `/docs/nodes`, `/docs/api/nodes`
 
@@ -268,17 +287,21 @@ Docs: `/docs/checkpoints`
 ```php
 use Prism\Prism\Enums\ToolChoice;
 
-$mcp = $this->withMcp('context7', ['toolChoice' => ToolChoice::Any, 'maxSteps' => 5])
-    ->withSystemPrompt($systemPrompt)
-    ->withPrompt($question)
-    ->asMcp();
+$response = $this->llm()
+    ->system($systemPrompt)
+    ->prompt('{question}')
+    ->vars(['question' => $question])
+    ->mcp('context7')
+    ->toolChoice(ToolChoice::Any)
+    ->maxSteps(5)
+    ->run();
 
-return $state->set('answer', $mcp->cleanText())->set('tool_calls', $mcp->toolCalls());
+return $state->set('answer', $response->text)->set('tool_calls', $response->toArray()['tool_calls']);
 ```
 
 - The server name is a key in `config/relay.php` (`vendor:publish --tag=relay-config`).
-- Prism's default `maxSteps` is 1 and `withMcp` does not raise it. Without `maxSteps` the model cannot call a tool and then answer.
-- `McpResponse` lives in `Shahzad\AgenticGraph\Mcp`. `withMcp` always uses `asText()`; it never streams.
+- `mcp()` uses one step and Prism's tool choice, like `tools()`. Without `maxSteps` the model cannot call a tool and then answer; pass `ToolChoice::Any` to force a tool call.
+- MCP requests never stream and never cache. `TokensUsed` carries `call_type` `mcp`.
 - On servers, set `RELAY_NPX_PATH` and `PATH` in the env.
 
 Docs: `/docs/mcp`, `/docs/api/mcp`

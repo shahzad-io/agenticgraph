@@ -28,10 +28,10 @@ class MessagesPlaceholderChatNode extends PrismNode
             ->messagesPlaceholder('history')
             ->user('Answer the last message for {brand}.');
 
-        return $state->set('reply', $this->withoutCache()->chatPrompt($template, [
+        return $state->set('reply', $this->llm()->withoutCache()->chat($template)->vars([
             'brand' => 'Acme',
             'history' => $state->get('history'),
-        ]));
+        ])->text());
     }
 }
 
@@ -119,7 +119,7 @@ it('lists the placeholder variable and keeps braces in formatAsString', function
         ->toBe("SYSTEM: You help Acme.\n\nUSER: ".PLACEHOLDER_BRACES."\n\nASSISTANT: Sure {name}\n\nUSER: Reply for Acme.");
 });
 
-it('sends the exact history text through chatPrompt', function (bool $streamed) {
+it('sends the exact history text through a chat template', function (bool $streamed) {
     $fake = Prism::fake([TextResponseFake::make()->withText('ok')->withUsage(new Usage(5, 1))]);
 
     app()->forgetInstance(StreamContext::class);

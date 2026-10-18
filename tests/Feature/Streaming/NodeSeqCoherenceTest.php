@@ -44,7 +44,7 @@ class NodeSeqPrismStreamingNode extends PrismNode
 
     public function execute(StateContract $state): StateContract
     {
-        $text = $this->prompt('Reply with exactly: hello');
+        $text = $this->llm()->prompt('Reply with exactly: hello')->text();
 
         return $state->set('text', $text);
     }

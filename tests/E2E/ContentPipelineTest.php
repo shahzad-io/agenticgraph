@@ -23,7 +23,7 @@ class CPGenerateNode extends PrismNode
 {
     public function execute(StateContract $state): StateContract
     {
-        $text = $this->prompt('Generate content about {topic}', ['topic' => $state->get('topic')]);
+        $text = $this->llm()->prompt('Generate content about {topic}')->vars(['topic' => $state->get('topic')])->text();
 
         return $state->set('content', $text)->set('word_count', strlen($text));
     }

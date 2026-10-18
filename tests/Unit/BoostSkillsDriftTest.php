@@ -103,7 +103,7 @@ function driftReturnTypes(array $classes, string $method): array
     $types = [];
     foreach ($classes as $class) {
         if (! method_exists($class, $method)) {
-            // A call forwarded through __call is taken as fluent (McpRequest returns $this)
+            // A call forwarded through __call is taken as fluent (a proxy returns $this)
             if (method_exists($class, '__call')) {
                 $types[] = $class;
             }

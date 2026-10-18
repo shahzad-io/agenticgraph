@@ -1,17 +1,17 @@
 <?php
 
 use Illuminate\Support\Facades\Http;
+use Prism\Prism\Enums\ToolChoice;
 use Prism\Prism\Tool;
 use Prism\Prism\ValueObjects\ToolOutput;
 use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Llm\LlmResponse;
 use Shahzad\AgenticGraph\Nodes\PrismNode;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\Sinks\MemorySink;
 use Shahzad\AgenticGraph\Streaming\StreamContext;
 use Shahzad\AgenticGraph\Streaming\StreamOptions;
 use Shahzad\AgenticGraph\Streaming\StreamSession;
-use Shahzad\AgenticGraph\Tools\AgentResponse;
-use Shahzad\AgenticGraph\Tools\ToolRun;
 
 /**
  * Real Prism tool execution: the OpenAI provider runs against faked HTTP responses, so the handlers really run.
@@ -32,8 +32,8 @@ class ToolRunProbeNode extends PrismNode
         ];
 
         return match ($state->get('helper')) {
-            'tools' => $state->set('run', $this->tools('Use the tools', $tools)),
-            'agent' => $state->set('agent', $this->agent('Use the tools', $tools, ['maxSteps' => 3])),
+            'tools' => $state->set('run', $this->llm()->prompt('Use the tools')->tools($tools)->run()),
+            'multi-step' => $state->set('run', $this->llm()->prompt('Use the tools')->tools($tools)->toolChoice(ToolChoice::Any)->maxSteps(3)->run()),
         };
     }
 }
@@ -112,11 +112,11 @@ $fourCalls = [
     ['fc_4', 'structured', ['q' => 'A4']],
 ];
 
-function expectFourResults(ToolRun $run): void
+function expectFourResults(LlmResponse $run): void
 {
-    expect($run)->toHaveCount(4)
-        ->and(array_map(fn ($call) => $call->id, $run->calls))->toBe(['fc_1', 'fc_2', 'fc_3', 'fc_4'])
-        ->and(array_map(fn ($result) => $result->toArray(), $run->results))->toBe([
+    expect($run->toolCalls)->toHaveCount(4)
+        ->and(array_map(fn ($call) => $call->id, $run->toolCalls))->toBe(['fc_1', 'fc_2', 'fc_3', 'fc_4'])
+        ->and(array_map(fn ($result) => $result->toArray(), $run->toolResults))->toBe([
             ['tool_call_id' => 'fc_1', 'tool_name' => 'lookup', 'arguments' => ['q' => 'A1'], 'result' => 'found A1', 'error' => null],
             ['tool_call_id' => 'fc_2', 'tool_name' => 'explode', 'arguments' => ['q' => 'A2'], 'result' => 'Tool execution error: boom A2. This error occurred during tool execution, not due to invalid parameters.', 'error' => 'Tool execution error: boom A2. This error occurred during tool execution, not due to invalid parameters.'],
             ['tool_call_id' => 'fc_3', 'tool_name' => 'remote', 'arguments' => ['q' => 'A3'], 'result' => 'ERROR: upstream down', 'error' => 'ERROR: upstream down'],
@@ -124,7 +124,7 @@ function expectFourResults(ToolRun $run): void
         ]);
 }
 
-it('returns calls and results from a non-streamed tools() call', function () use ($fourCalls) {
+it('returns calls and results from a non-streamed tool call', function () use ($fourCalls) {
     Http::fake(['api.openai.com/*' => Http::response(openAiToolCalls($fourCalls))]);
 
     $run = (new ToolRunProbeNode)->execute(new State(['helper' => 'tools']))->get('run');
@@ -134,7 +134,7 @@ it('returns calls and results from a non-streamed tools() call', function () use
     Http::assertSentCount(1); // single step: the results are not sent back
 });
 
-it('returns calls and results from a streamed tools() call, and still streams the tool results', function () use ($fourCalls) {
+it('returns calls and results from a streamed tool call, and still streams the tool results', function () use ($fourCalls) {
     Http::fake(['api.openai.com/*' => Http::response(openAiToolCallStream($fourCalls), 200, ['Content-Type' => 'text/event-stream'])]);
     $sink = new MemorySink;
     app()->instance(StreamContext::class, new StreamContext(new StreamSession('stream-tr', 'exec-tr', new StreamOptions, time()), $sink));
@@ -146,30 +146,30 @@ it('returns calls and results from a streamed tools() call, and still streams th
     expect(array_count_values($types)['tool_result'] ?? 0)->toBe(4);
 });
 
-it('exposes the tool results of every agent() step', function () {
+it('exposes the tool calls and results of every step of a multi-step run', function () {
     Http::fake(['api.openai.com/*' => Http::sequence()
         ->push(openAiToolCalls([['fc_1', 'lookup', ['q' => 'S1']]], 'resp_1'))
         ->push(openAiToolCalls([['fc_2', 'explode', ['q' => 'S2']]], 'resp_2'))
         ->push(openAiText('All done.'))]);
 
-    $response = (new ToolRunProbeNode)->execute(new State(['helper' => 'agent']))->get('agent');
+    $response = (new ToolRunProbeNode)->execute(new State(['helper' => 'multi-step']))->get('run');
 
-    expect($response)->toBeInstanceOf(AgentResponse::class)
+    expect($response)->toBeInstanceOf(LlmResponse::class)
         ->and($response->text)->toBe('All done.')
-        ->and($response->toolResults)->toBe([]) // Prism keeps only the final step's
-        ->and(array_map(fn ($result) => [$result->toolCallId, $result->result, $result->error !== null], $response->results))->toBe([
+        ->and(array_map(fn ($call) => $call->id, $response->toolCalls))->toBe(['fc_1', 'fc_2'])
+        ->and(array_map(fn ($result) => [$result->toolCallId, $result->result, $result->error !== null], $response->toolResults))->toBe([
             ['fc_1', 'found S1', false],
             ['fc_2', 'Tool execution error: boom S2. This error occurred during tool execution, not due to invalid parameters.', true],
         ]);
 });
 
-it('stores a ToolRun in state as plain data', function () use ($fourCalls) {
+it('stores an LlmResponse in state as plain data', function () use ($fourCalls) {
     Http::fake(['api.openai.com/*' => Http::response(openAiToolCalls($fourCalls))]);
 
     $state = (new ToolRunProbeNode)->execute(new State(['helper' => 'tools']));
     $stored = json_decode(json_encode($state->toArray()), true);
 
-    expect($stored['run']['calls'][0]['name'])->toBe('lookup')
-        ->and($stored['run']['results'][1]['error'])->toStartWith('Tool execution error: boom A2')
+    expect($stored['run']['tool_calls'][0]['name'])->toBe('lookup')
+        ->and($stored['run']['tool_results'][1]['error'])->toStartWith('Tool execution error: boom A2')
         ->and($stored['run']['text'])->toBe('');
 });

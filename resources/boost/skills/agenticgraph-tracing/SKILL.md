@@ -77,7 +77,7 @@ graph
 | `node` | One `execute()` attempt | `attempt`, `attempt_of`, `state_diff`, `loop_context` |
 | `route` | A conditional edge or a join decision | `route.*` attributes |
 | `llm` | A model call | `model`, token counts, `cost_usd`, `cached`, `streamed` |
-| `tool` | A tool call made through `tools()`, `agent()` or `withMcp()` | `tool.type`, `tool.provider`, args and result per capture depth |
+| `tool` | A tool call made through `$this->llm()` with `tools()` or `mcp()` | `tool.type`, `tool.provider`, args and result per capture depth |
 | `http` / `db` | Inside a tool or node body | `http.*`, `url.*`, `laravel.http.*`; `db.*`, `laravel.db.*` |
 | `vector` | A vector store operation | `vector.*`, sent by `shahzad/agenticgraph-vector` |
 | `interrupt` / `resume` | Human pause and continuation | `interrupt.reason`, `checkpoint.id` |

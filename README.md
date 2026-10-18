@@ -138,7 +138,7 @@ $handle = $result->handle;
 
 AgenticGraph integrates with PrismPHP to enable LLM-driven nodes and routing.
 
-Example Prism node:
+Example Prism node. Every model call goes through `$this->llm()`, one immutable builder for text, chat, structured output, tools and MCP:
 
 ```php
 use Shahzad\AgenticGraph\Nodes\PrismNode;
@@ -146,7 +146,7 @@ use Shahzad\AgenticGraph\Contracts\StateContract;
 
 class RespondNode extends PrismNode {
     public function execute(StateContract $state): StateContract {
-        $text = $this->prompt('Respond to {topic}', ['topic' => $state->get('topic', 'unknown')]);
+        $text = $this->llm()->prompt('Respond to {topic}')->vars(['topic' => $state->get('topic', 'unknown')])->text();
         return $state->set('response', $text);
     }
 }

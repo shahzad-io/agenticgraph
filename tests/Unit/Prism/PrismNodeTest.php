@@ -3,13 +3,17 @@
 use Illuminate\Contracts\Container\BindingResolutionException;
 use Illuminate\Contracts\View\View;
 use Illuminate\Support\Facades\Event;
+use Prism\Prism\Audio\PendingRequest as PendingAudioRequest;
 use Prism\Prism\Audio\TextResponse;
+use Prism\Prism\Embeddings\PendingRequest as PendingEmbeddingsRequest;
 use Prism\Prism\Enums\FinishReason;
 use Prism\Prism\Facades\Prism;
+use Prism\Prism\Images\PendingRequest as PendingImageRequest;
 use Prism\Prism\Streaming\Events\StreamEndEvent;
 use Prism\Prism\Streaming\Events\TextCompleteEvent;
 use Prism\Prism\Streaming\Events\TextDeltaEvent;
 use Prism\Prism\Streaming\Events\TextStartEvent;
+use Prism\Prism\Structured\PendingRequest as PendingStructuredRequest;
 use Prism\Prism\Testing\EmbeddingsResponseFake;
 use Prism\Prism\Testing\ImageResponseFake;
 use Prism\Prism\Testing\TextResponseFake;
@@ -21,6 +25,7 @@ use Prism\Prism\ValueObjects\Media\Image;
 use Prism\Prism\ValueObjects\Media\Video;
 use Prism\Prism\ValueObjects\Messages\UserMessage;
 use Prism\Prism\ValueObjects\Usage;
+use Shahzad\AgenticGraph\Contracts\PrismClient;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\TokensUsed;
 use Shahzad\AgenticGraph\Nodes\PrismNode;
@@ -39,7 +44,7 @@ class TestPrismNode extends PrismNode
 {
     public function execute(StateContract $state): StateContract
     {
-        $text = $this->prompt('Hello {name}', ['name' => $state->get('name', 'world')]);
+        $text = $this->llm()->prompt('Hello {name}')->vars(['name' => $state->get('name', 'world')])->text();
 
         return $state->set('text', $text);
     }
@@ -50,7 +55,7 @@ class MessagePrismNode extends PrismNode
     public function execute(StateContract $state): StateContract
     {
         $messages = [new UserMessage('Hello')];
-        $text = $this->promptMessages($messages);
+        $text = $this->llm()->history($messages)->text();
 
         return $state->set('text', $text);
     }
@@ -93,11 +98,10 @@ class VideoPrismNode extends PrismNode
 {
     public function execute(StateContract $state): StateContract
     {
-        $text = $this->prompt(
-            'Summarize this video',
-            [],
-            [Video::fromUrl('https://example.com/video.mp4')]
-        );
+        $text = $this->llm()
+            ->prompt('Summarize this video')
+            ->attach([Video::fromUrl('https://example.com/video.mp4')])
+            ->text();
 
         return $state->set('text', $text);
     }
@@ -132,18 +136,49 @@ class FakeStreamingPromptRequest extends PendingTextRequest
     }
 }
 
+/**
+ * Hands out one prepared text request; the node's llm() configures and sends it.
+ */
+class FakeTextPrismClient implements PrismClient
+{
+    public function __construct(private PendingTextRequest $request) {}
+
+    public function text(): PendingTextRequest
+    {
+        return $this->request;
+    }
+
+    public function embeddings(): PendingEmbeddingsRequest
+    {
+        return Prism::embeddings();
+    }
+
+    public function image(): PendingImageRequest
+    {
+        return Prism::image();
+    }
+
+    public function audio(): PendingAudioRequest
+    {
+        return Prism::audio();
+    }
+
+    public function structured(): PendingStructuredRequest
+    {
+        return Prism::structured();
+    }
+}
+
 class StreamingPromptTokensNode extends PrismNode
 {
-    public function __construct(private PendingTextRequest $streamingRequest) {}
-
-    protected function prism(): PendingTextRequest
+    public function __construct(PendingTextRequest $streamingRequest)
     {
-        return $this->streamingRequest;
+        $this->prismClient = new FakeTextPrismClient($streamingRequest);
     }
 
     public function execute(StateContract $state): StateContract
     {
-        $text = $this->prompt('Hello {name}', ['name' => 'stream']);
+        $text = $this->llm()->prompt('Hello {name}')->vars(['name' => 'stream'])->text();
 
         return $state->set('text', $text);
     }
@@ -174,6 +209,8 @@ function bindStreamContextWithSink(StreamSinkInterface $sink, ?string $streamId 
 
 abstract class TestStreamingPrismNodeBase extends PrismNode
 {
+    abstract protected function buildStreamingRequest(StateContract $state): PendingTextRequest;
+
     public function execute(StateContract $state): StateContract
     {
         if (! $this->isStreaming()) {
@@ -437,7 +474,7 @@ class StreamingToolsTokensNode extends StreamingPromptTokensNode
 {
     public function execute(StateContract $state): StateContract
     {
-        return $state->set('tool_calls', $this->tools('Use a tool', []));
+        return $state->set('tool_calls', $this->llm()->prompt('Use a tool')->tools([])->run());
     }
 }
 

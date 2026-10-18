@@ -4,6 +4,31 @@
 
 `agenticgraph.trace.v1` is frozen; later changes are additive. The contract is `spec/tracing-wire-v1.md`, locked by `TraceWireContractFreezeTest`.
 
+### BREAKING (one LLM request builder: `$this->llm()`)
+- `PrismNode::llm()` returns an immutable `Shahzad\AgenticGraph\Llm\LlmRequest`. It replaces `prompt()`, `promptTemplate()`, `chatPrompt()`, `promptMessages()`, `structured()`, `tools()`, `agent()` and `withMcp()`, which are removed, with `withModel()`, `buildStreamingRequest()`, `trackTokensFromResponse()`, `interpolate()`, `shouldCache()`, `getCacheKey()`, `dispatchCachedLlmCall()` and the node-level `withCache()` / `withoutCache()` (caching is now chosen per request; the `$cacheEnabled` and `$cacheTtl` properties stay as node defaults).
+- Removed classes: `Tools\ToolRun`, `Tools\AgentResponse`, `Mcp\McpRequest`, `Mcp\McpResponse`. `run()` returns `Llm\LlmResponse`: `text`, `structured`, `toolCalls` and `toolResults` of every step (`ToolRunResult`, unchanged), `usage`, `finishReason`, `cached`. It is `JsonSerializable`, so it can be stored in state. Its array keys: `text`, `structured`, `tool_calls`, `tool_results`, `usage`, `finish_reason`, `cached`.
+- Templates interpolate, inline content never does: `prompt()` (a string is wrapped in a new `PromptTemplate`) and `chat()` are formatted with `vars()`; `system()`, `user()`, `assistant()` and `history()` reach the model unchanged. A prompt string with literal braces now needs `{{` and `}}` (the old `structured()` sent its string as is).
+- Two templates in one request throw, and so do `user()`, `assistant()` or `history()` with `prompt()` (Prism refuses a prompt and messages together; use `chat()`). `system()` with `prompt()` is sent as the system prompt.
+- Tools: `tools()`, `mcp($server, ['tools' => ...])`, `toolChoice()`, `maxSteps()`. Defaults for every tool request: one step and Prism's tool choice. `agent()` defaulted to `ToolChoice::Any` and 5 steps, `withMcp()` to `ToolChoice::Any`: pass them explicitly.
+- Settings: config, then node properties (`$model`, `$maxTokens`, `$providerOptions`, `$trackTokens`), then `model()` / `maxTokens()` on the request. `providerOptions()` is merged over the node's, the request winning per key. `explain()` returns the resolved request without a model call: messages, every setting with its source, the stream decision, the cache decision and key, tools with choice and steps.
+- Caching: structured replies may now be cached (`withCache()`); requests with tools or MCP never are. The media check is `MessageSerializer::hasMedia` on every path, so a prompt with only `Text` attachments can now be cached. The cache key payload now also covers the system prompt and the schema, so every existing entry misses once after upgrading.
+- Streaming is unchanged: text and chat stream when a sink is bound; a schema streams only when it is a Prism `Schema` and the request uses `prompt()`; single-step tool calls stream; multi-step runs and MCP do not. The streamed schema prompt is no longer interpolated a second time.
+- Named changes: timeouts (`agenticgraph.api.timeout`, `api.connect_timeout`) now apply to structured and MCP requests too. MCP `TokensUsed` (`call_type` `mcp`) now carries the prompt and the response. Tool wrapping is reset per request (a node that once wrapped tools stopped tracing unwrapped tool calls for the rest of its life).
+- `PrismRouter` runs through the same internal executor; its retries, default-route fallback, 100-token cap, cache and `TokensUsed` are unchanged.
+
+| Before | After |
+|---|---|
+| `$this->prompt('Hi {name}', ['name' => $n])` | `$this->llm()->prompt('Hi {name}')->vars(['name' => $n])->text()` |
+| `$this->promptTemplate($t, $vars)` | `$this->llm()->prompt($t)->vars($vars)->text()` |
+| `$this->withoutCache()->chatPrompt($t, $vars)` | `$this->llm()->withoutCache()->chat($t)->vars($vars)->text()` |
+| `$this->promptMessages($messages)` | `$this->llm()->history($messages)->text()` |
+| `$this->prompt($p, [], [$image])` | `$this->llm()->prompt($p)->attach([$image])->text()` |
+| `$this->structured($prompt, $schema)` | `$this->llm()->prompt($prompt)->schema($schema)->structured()` |
+| `$this->tools($prompt, $tools)` | `$this->llm()->prompt($prompt)->tools($tools)->run()` |
+| `$this->agent($p, $tools, ['systemPrompt' => $s, 'toolChoice' => 'lookup', 'maxSteps' => 5])` | `$this->llm()->system($s)->prompt($p)->tools($tools)->toolChoice('lookup')->maxSteps(5)->run()` |
+| `$this->withMcp('docs', ['toolChoice' => ToolChoice::Any, 'maxSteps' => 5])->withPrompt($p)->asMcp()` | `$this->llm()->prompt($p)->mcp('docs')->toolChoice(ToolChoice::Any)->maxSteps(5)->run()` |
+| `$this->withModel('openai:gpt-4o')` | `protected ?string $model = 'openai:gpt-4o';` (or `->model()` on one request) |
+
 ### Changed (trace wire v1.1, pre-release amendment)
 - Queued work that outlives its caller: `TraceContext` takes optional `links` (`[{trace_id, span_id}]`, the span that queued the work). Spans that `Tracer` exports directly under the root of such a context carry `links`, a new optional span key; the OTLP exporter sends it as OTLP span links. The package's own jobs are unchanged.
 - `TraceSegmentMerger`: `trace.ended_at` is the latest segment end (it was the final segment's end), so `duration_ms` covers every segment and `active_ms` is never above it. The root graph span keeps the graph's end; spans with `links` may end after it.

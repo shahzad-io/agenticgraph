@@ -14,11 +14,12 @@ use Shahzad\AgenticGraph\Contracts\LoopAwareRouterInterface;
 use Shahzad\AgenticGraph\Contracts\PrismClient;
 use Shahzad\AgenticGraph\Contracts\RouterInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
-use Shahzad\AgenticGraph\Events\TokensUsed;
 use Shahzad\AgenticGraph\Exceptions\MissingModelException;
 use Shahzad\AgenticGraph\Execution\ExecutionContext;
 use Shahzad\AgenticGraph\Execution\LoopContext;
 use Shahzad\AgenticGraph\Graph\Graph;
+use Shahzad\AgenticGraph\Llm\LlmCall;
+use Shahzad\AgenticGraph\Llm\LlmExecutor;
 
 class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, RouterInterface
 {
@@ -149,43 +150,15 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
      */
     private function executeRouting(string $prompt, string $cacheKey, StateContract $state): string
     {
-        $startTime = microtime(true);
-        [$provider, $model] = $this->parseModel($this->model ?? (string) config('agenticgraph.prism.model'));
-
-        $timeout = (int) config('agenticgraph.api.timeout', 30);
-        $connectTimeout = (int) config('agenticgraph.api.connect_timeout', 10);
-
-        $schema = $this->buildRoutingSchema();
-
-        $response = $this->prismClient()->structured()
-            ->using($provider, $model)
-            ->withSchema($schema)
-            ->withPrompt($prompt)
-            ->withMaxTokens(100)
-            ->withClientOptions([
-                'timeout' => $timeout,
-                'connect_timeout' => $connectTimeout,
-            ])
-            ->asStructured();
-
-        $structured = $response->structured;
-
-        if ($this->trackTokens) {
-            $durationMs = (microtime(true) - $startTime) * 1000;
-            $this->events->dispatch(TokensUsed::fromLlmCall(
-                node: 'PrismRouter',
-                callStartMicrotime: $startTime,
-                callDurationMs: $durationMs,
-                promptTokens: $response->usage->promptTokens,
-                completionTokens: $response->usage->completionTokens,
-                callType: 'structured',
-                model: "{$provider}:{$model}",
-                prompt: $prompt,
-                response: is_array($structured)
-                    ? json_encode($structured, JSON_THROW_ON_ERROR)
-                    : $response->text
-            ));
-        }
+        // The router's own cache is checked in routeWithLoop(); routing never streams and is capped at 100 tokens.
+        $structured = $this->executor()->run(new LlmCall(
+            prompt: $prompt,
+            schema: $this->buildRoutingSchema(),
+            maxTokens: 100,
+            cache: false,
+            stream: false,
+            structuredTraceAsJson: true,
+        ))->structured;
 
         if (! is_array($structured) || ! isset($structured['route']) || ! is_string($structured['route'])) {
             if ((bool) config('agenticgraph.logging.enabled', true)) {
@@ -380,16 +353,20 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
      */
     protected function parseModel(string $value): array
     {
-        if ($value === '') {
-            throw MissingModelException::notConfigured();
-        }
+        return LlmExecutor::parseModel($value);
+    }
 
-        $parts = explode(':', $value, 2);
-        if (count($parts) === 2 && $parts[0] !== '' && $parts[1] !== '') {
-            return [$parts[0], $parts[1]];
-        }
-
-        throw MissingModelException::missingProvider($value);
+    private function executor(): LlmExecutor
+    {
+        return new LlmExecutor(
+            client: $this->prismClient(),
+            cache: $this->cache,
+            events: $this->events,
+            nodeName: 'PrismRouter',
+            cacheScope: static::class,
+            model: $this->model,
+            trackTokens: $this->trackTokens,
+        );
     }
 
     protected function prismClient(): PrismClient

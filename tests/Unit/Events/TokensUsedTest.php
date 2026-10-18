@@ -16,7 +16,7 @@ class TokensNode extends PrismNode
 {
     public function execute(StateContract $state): StateContract
     {
-        $text = $this->prompt('Hi {name}', ['name' => 'x']);
+        $text = $this->llm()->prompt('Hi {name}')->vars(['name' => 'x'])->text();
 
         return $state->set('t', $text);
     }

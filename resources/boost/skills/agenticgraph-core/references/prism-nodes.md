@@ -2,6 +2,8 @@
 
 Docs: `/docs/nodes`, `/docs/api/nodes`, `/docs/mcp`
 
+Every model call starts with `$this->llm()`. Each builder method returns a new request; the node is never changed.
+
 ## A prompt
 
 ```php
@@ -16,18 +18,21 @@ final class DraftNode extends PrismNode
 
     public function execute(StateContract $state): StateContract
     {
-        $draft = $this->prompt('Write a short post about {topic}.', [
-            'topic' => $state->get('topic'),
-        ]);
+        $draft = $this->llm()
+            ->prompt('Write a short post about {topic}.')
+            ->vars(['topic' => $state->get('topic')])
+            ->text();
 
         return $state->set('draft', $draft);
     }
 }
 ```
 
+A prompt string is a template: `{word}` is a placeholder and `{{ }}` are literal braces. Put dynamic text (model output, JSON, user input) in `vars()`, never into the template string. `system()`, `user()`, `assistant()` and `history()` are literal.
+
 ## Structured output
 
-The root schema should be an object. `structured()` takes a string, so format a template first.
+The root schema should be an object. `structured()` returns an array.
 
 ```php
 namespace App\Nodes;
@@ -61,16 +66,20 @@ final class LeadProfileNode extends PrismNode
             requiredFields: ['name', 'email', 'company', 'pain_points'],
         );
 
-        $result = $this->structured("Normalize this signup payload: {$signup}", $schema);
+        $lead = $this->llm()
+            ->prompt('Normalize this signup payload: {signup}')
+            ->vars(['signup' => $signup])
+            ->schema($schema)
+            ->structured();
 
-        return $state->set('lead', is_array($result) ? $result : []);
+        return $state->set('lead', $lead);
     }
 }
 ```
 
-## A tool loop with agent()
+## A tool loop
 
-`agent()` runs Prism's multi-step tool loop and returns a `TextResponse`. `maxSteps` defaults to 5. Tools passed here are traced; tools added to raw `prism()` are not.
+`tools()` defaults to one step and Prism's tool choice. Raise `maxSteps()` so the model can call a tool and then answer. Tools passed to `llm()` are traced; tools added to raw `prism()` are not. Tool requests never cache.
 
 ```php
 namespace App\Nodes;
@@ -103,19 +112,24 @@ final class CurrencyNode extends PrismNode
                 Http::get('https://api.example.com/convert', $input)->json()
             ));
 
-        $response = $this->agent((string) $state->get('message'), [$convert], [
-            'systemPrompt' => 'You are a currency conversion agent.',
-            'maxSteps' => 5,
-        ]);
+        $response = $this->llm()
+            ->system('You are a currency conversion agent.')
+            ->prompt('{message}')
+            ->vars(['message' => (string) $state->get('message')])
+            ->tools([$convert])
+            ->maxSteps(5)
+            ->run();
 
         return $state->set('response', $response->text);
     }
 }
 ```
 
-`tools($prompt, $tools)` is the single-step variant: it returns `ToolCall[]` and no text answer.
+`run()` returns an `LlmResponse`: `text`, `structured`, `toolCalls` and `toolResults` of every step, `usage`, `finishReason` and `cached`. It is `JsonSerializable`, so it can be stored in state. With one step it holds the requested calls and what each handler returned.
 
 ## MCP tools
+
+`mcp($server)` adds the server's tools through Relay into the same path as `tools()`. MCP requests never stream and never cache.
 
 ```php
 namespace App\Nodes;
@@ -128,14 +142,18 @@ final class LibraryDocsNode extends PrismNode
 {
     public function execute(StateContract $state): StateContract
     {
-        $mcp = $this->withMcp('context7', ['toolChoice' => ToolChoice::Any, 'maxSteps' => 5])
-            ->withSystemPrompt('Resolve the library id, query its docs, then answer.')
-            ->withPrompt((string) $state->get('question'))
-            ->asMcp();
+        $response = $this->llm()
+            ->system('Resolve the library id, query its docs, then answer.')
+            ->prompt('{question}')
+            ->vars(['question' => (string) $state->get('question')])
+            ->mcp('context7')
+            ->toolChoice(ToolChoice::Any)
+            ->maxSteps(5)
+            ->run();
 
         return $state
-            ->set('answer', $mcp->cleanText())
-            ->set('tool_calls', $mcp->toolCalls());
+            ->set('answer', $response->text)
+            ->set('tool_calls', $response->toArray()['tool_calls']);
     }
 }
 ```

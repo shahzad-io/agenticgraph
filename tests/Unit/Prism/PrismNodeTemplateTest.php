@@ -23,9 +23,9 @@ class PromptTemplatePrismNode extends PrismNode
     public function execute(StateContract $state): StateContract
     {
         $template = PromptTemplate::create('Summarize {topic} in one word.');
-        $text = $this->promptTemplate($template, [
+        $text = $this->llm()->prompt($template)->vars([
             'topic' => (string) $state->get('topic', 'testing'),
-        ]);
+        ])->text();
 
         return $state->set('text', $text);
     }
@@ -41,9 +41,9 @@ class ChatPromptPrismNode extends PrismNode
             ->assistant('positive')
             ->user('Classify: {text}');
 
-        $text = $this->chatPrompt($template, [
+        $text = $this->llm()->chat($template)->vars([
             'text' => (string) $state->get('text', 'neutral example'),
-        ]);
+        ])->text();
 
         return $state->set('text', $text);
     }
@@ -53,8 +53,7 @@ class StructuredTemplatePrismNode extends PrismNode
 {
     public function execute(StateContract $state): StateContract
     {
-        $prompt = PromptTemplate::create('Classify sentiment of: {text}')
-            ->format(['text' => (string) $state->get('text', '')]);
+        $prompt = PromptTemplate::create('Classify sentiment of: {text}');
 
         $schema = new ObjectSchema(
             name: 'sentiment',
@@ -63,9 +62,17 @@ class StructuredTemplatePrismNode extends PrismNode
             requiredFields: ['label'],
         );
 
-        $structured = $this->structured($prompt, $schema);
+        $structured = $this->llm()->prompt($prompt)->vars(['text' => (string) $state->get('text', '')])->schema($schema)->structured();
 
-        return $state->set('label', is_array($structured) ? ($structured['label'] ?? null) : null);
+        return $state->set('label', $structured['label'] ?? null);
+    }
+}
+
+class InterpolatingPromptPrismNode extends PrismNode
+{
+    public function execute(StateContract $state): StateContract
+    {
+        return $state->set('text', $this->llm()->prompt('Hello {name}')->vars(['name' => $state->get('name')])->text());
     }
 }
 
@@ -73,7 +80,7 @@ class MissingPromptVariablePrismNode extends PrismNode
 {
     public function execute(StateContract $state): StateContract
     {
-        $this->prompt('Hello {name}', []);
+        $this->llm()->prompt('Hello {name}')->text();
 
         return $state;
     }
@@ -96,13 +103,13 @@ it('prompt still interpolates supplied variables', function () {
         TextResponseFake::make()->withText('Hello John')->withUsage(new Usage(3, 4)),
     ]);
 
-    $node = new TestPrismNode;
+    $node = new InterpolatingPromptPrismNode;
     $result = $node->execute(new State(['name' => 'John']));
 
     expect($result->get('text'))->toContain('Hello John');
 });
 
-it('promptTemplate renders and calls the LLM via Prism fake', function () {
+it('a prompt template renders and calls the LLM via Prism fake', function () {
     if (! class_exists(Prism::class)) {
         expect(true)->toBeTrue();
 
@@ -125,7 +132,7 @@ it('promptTemplate renders and calls the LLM via Prism fake', function () {
     });
 });
 
-it('chatPrompt sends native Prism messages instead of a flattened prompt string', function () {
+it('a chat template sends native Prism messages instead of a flattened prompt string', function () {
     if (! class_exists(Prism::class)) {
         expect(true)->toBeTrue();
 
@@ -156,7 +163,7 @@ it('chatPrompt sends native Prism messages instead of a flattened prompt string'
     });
 });
 
-it('structured accepts a template-formatted prompt string', function () {
+it('structured output accepts a prompt template', function () {
     if (! class_exists(Prism::class)) {
         expect(true)->toBeTrue();
 
