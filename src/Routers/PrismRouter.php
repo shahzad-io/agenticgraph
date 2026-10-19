@@ -20,6 +20,9 @@ use Shahzad\AgenticGraph\Execution\LoopContext;
 use Shahzad\AgenticGraph\Graph\Graph;
 use Shahzad\AgenticGraph\Llm\LlmCall;
 use Shahzad\AgenticGraph\Llm\LlmExecutor;
+use Shahzad\AgenticGraph\Prompts\ChatPromptMessages;
+use Shahzad\AgenticGraph\Prompts\ChatPromptTemplate;
+use Shahzad\AgenticGraph\Prompts\PromptFile;
 
 class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, RouterInterface
 {
@@ -30,6 +33,9 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
     protected bool $includeLoopContextInPrompt = true;
 
     protected ?PrismClient $prismClient = null;
+
+    /** The routing prompt as a prompt file (Prompts::get()) or chat template, formatted with routingVars(); null uses buildPrompt(). */
+    protected ?ChatPromptTemplate $prompt = null;
 
     private Dispatcher $events;
 
@@ -44,9 +50,11 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
 
     /**
      * @param  array<string, string>  $routes
+     * @param  ChatPromptTemplate|null  $prompt  a prompt file (Prompts::get()) or chat template over routingVars(); null uses buildPrompt()
      */
-    public function __construct(array $routes, ?string $defaultRoute = null, ?Dispatcher $events = null, ?LoggerInterface $logger = null, ?CacheRepository $cache = null, ?PrismClient $prismClient = null, ?Container $container = null)
+    public function __construct(array $routes, ?string $defaultRoute = null, ?Dispatcher $events = null, ?LoggerInterface $logger = null, ?CacheRepository $cache = null, ?PrismClient $prismClient = null, ?Container $container = null, ?ChatPromptTemplate $prompt = null)
     {
+        $this->prompt = $prompt;
         $this->routes = $routes;
         $this->defaultRoute = $defaultRoute;
         $this->events = $events ?? app(Dispatcher::class);
@@ -83,8 +91,8 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
     protected function routeWithLoop(StateContract $state, ?LoopContext $loop): string|array
     {
         $this->lastRouteFlags = ['from_cache' => false, 'fallback' => false];
-        $prompt = $this->buildPromptWithLoop($state, $loop);
-        $cacheKey = $this->buildCacheKey($prompt);
+        [$call, $builder] = $this->routingCall($state, $loop);
+        $cacheKey = $this->buildCacheKey((string) $call->promptForTrace());
 
         if (config('agenticgraph.prism.cache_enabled', false) && $this->cache->has($cacheKey)) {
             $cachedRoute = $this->cache->get($cacheKey);
@@ -110,7 +118,7 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
 
         for ($attempt = 1; $attempt <= $maxRetries; $attempt++) {
             try {
-                $route = $this->executeRouting($prompt, $cacheKey, $state);
+                $route = $this->executeRouting($call, $builder, $cacheKey);
                 $this->afterRoute($state, $route, $loop, false);
 
                 return $route;
@@ -146,20 +154,44 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
     }
 
     /**
-     * Execute the actual routing logic.
+     * The routing request: buildPromptWithLoop() as the prompt, or $prompt formatted with routingVars() and the loop
+     * context appended to its last message. The router's own cache is checked in routeWithLoop(); routing never
+     * streams and is capped at 100 tokens.
+     *
+     * @return array{0: LlmCall, 1: array{vars?: array<string, mixed>, template_vars?: list<string>}}
      */
-    private function executeRouting(string $prompt, string $cacheKey, StateContract $state): string
+    private function routingCall(StateContract $state, ?LoopContext $loop): array
     {
-        // The router's own cache is checked in routeWithLoop(); routing never streams and is capped at 100 tokens.
-        $structured = $this->executor()->run(new LlmCall(
-            prompt: $prompt,
-            schema: $this->buildRoutingSchema(),
-            maxTokens: 100,
-            cache: false,
-            stream: false,
-            structuredTraceAsJson: true,
-            structuredRetries: 0,
-        ))->structured;
+        $settings = ['schema' => $this->buildRoutingSchema(), 'maxTokens' => 100, 'cache' => false, 'stream' => false, 'structuredTraceAsJson' => true, 'structuredRetries' => 0];
+        if ($this->prompt === null) {
+            return [new LlmCall(...$settings, prompt: $this->buildPromptWithLoop($state, $loop)), []];
+        }
+
+        $vars = $this->routingVars($state);
+        $messages = $this->prompt->format($vars);
+        if ($this->shouldAppendLoopContext($loop)) {
+            $last = array_key_last($messages);
+            if ($last === null || isset($messages[$last]['message'])) {
+                $messages[] = ['role' => 'user', 'content' => ltrim($this->formatLoopContextForPrompt($loop))];
+            } else {
+                $messages[$last]['content'] .= $this->formatLoopContextForPrompt($loop);
+            }
+        }
+
+        return [
+            new LlmCall(...$settings, messages: ChatPromptMessages::toPrismMessages($messages), promptFile: $this->prompt instanceof PromptFile ? $this->prompt->meta() : null),
+            ['vars' => $vars, 'template_vars' => $this->prompt->getInterpolatedVariables()],
+        ];
+    }
+
+    /**
+     * Execute the actual routing logic.
+     *
+     * @param  array{vars?: array<string, mixed>, template_vars?: list<string>}  $builder
+     */
+    private function executeRouting(LlmCall $call, array $builder, string $cacheKey): string
+    {
+        $structured = $this->executor()->run($call, $builder)->structured;
 
         if (! is_array($structured) || ! isset($structured['route']) || ! is_string($structured['route'])) {
             if ((bool) config('agenticgraph.logging.enabled', true)) {
@@ -254,13 +286,28 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
 
     protected function buildPrompt(StateContract $state): string
     {
+        return "Choose the best route for the current state.\n\nAvailable routes:\n{$this->routesText()}\n\nCurrent state:\n".json_encode($state->toArray());
+    }
+
+    /**
+     * Variables for $prompt: routes (one "- key: description" line each) and state (the state as JSON). Override to
+     * add more, merging over these.
+     *
+     * @return array<string, mixed>
+     */
+    protected function routingVars(StateContract $state): array
+    {
+        return ['routes' => $this->routesText(), 'state' => json_encode($state->toArray())];
+    }
+
+    protected function routesText(): string
+    {
         $routes = [];
         foreach ($this->routes as $route => $description) {
             $routes[] = "- {$route}: {$description}";
         }
-        $routesText = implode("\n", $routes);
 
-        return "Choose the best route for the current state.\n\nAvailable routes:\n{$routesText}\n\nCurrent state:\n".json_encode($state->toArray());
+        return implode("\n", $routes);
     }
 
     /**

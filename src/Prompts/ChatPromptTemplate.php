@@ -220,6 +220,23 @@ class ChatPromptTemplate
     }
 
     /**
+     * The variables interpolated into message text: getVariables() without the messages placeholders.
+     *
+     * @return list<string>
+     */
+    public function getInterpolatedVariables(): array
+    {
+        $placeholders = [];
+        foreach ($this->messages as $message) {
+            if ($message instanceof MessagesPlaceholder) {
+                $placeholders[] = $message->getVariable();
+            }
+        }
+
+        return array_values(array_diff($this->getVariables(), $placeholders));
+    }
+
+    /**
      * Create a new chat prompt template
      */
     public static function create(): self

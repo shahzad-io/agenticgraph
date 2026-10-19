@@ -44,6 +44,7 @@ use Shahzad\AgenticGraph\Facades\Trace;
 use Shahzad\AgenticGraph\Prompts\MessageSerializer;
 use Shahzad\AgenticGraph\Streaming\PrismStreamAdapter;
 use Shahzad\AgenticGraph\Streaming\StreamContext;
+use Shahzad\AgenticGraph\Testing\LlmFake;
 use Shahzad\AgenticGraph\Tools\ToolRunResult;
 use Shahzad\AgenticGraph\Tracing\CaptureDepth;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
@@ -267,13 +268,19 @@ final class LlmExecutor
         ];
     }
 
-    public function run(LlmCall $call): LlmResponse
+    /**
+     * @param  array{vars?: array<string, mixed>, template_vars?: list<string>, history?: list<array{role: string, content: string}>}  $builder  what LlmRequest resolved before formatting, for Llm::fake()
+     */
+    public function run(LlmCall $call, array $builder = []): LlmResponse
     {
         $this->toolErrors = [];
         $this->toolsWrapped = false;
         $startTime = microtime(true);
         $settings = $this->settings($call);
         $model = implode(':', self::parseModel($settings['model']['value']));
+        if (app()->bound(LlmFake::class)) {
+            app(LlmFake::class)->record(['node' => $this->nodeName, 'vars' => [], 'template_vars' => [], 'history' => [], ...$builder, ...$this->explain($call), 'context' => $call->context]);
+        }
 
         try {
             $response = $this->perform($call, $settings, $model, $startTime);

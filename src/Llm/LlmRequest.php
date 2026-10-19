@@ -332,7 +332,13 @@ final class LlmRequest
 
     public function run(): LlmResponse
     {
-        return $this->executor->run($this->toCall());
+        $call = $this->toCall();
+
+        return $this->executor->run($call, [
+            'vars' => $call->context !== null ? [...$this->vars, $call->context['as'] => $call->context['text']] : $this->vars,
+            'template_vars' => $this->template instanceof ChatPromptTemplate ? $this->template->getInterpolatedVariables() : ($this->template?->getVariables() ?? []),
+            'history' => array_map(fn (array $message): array => ['role' => $message['role'], 'content' => $message['content']], $this->inline),
+        ]);
     }
 
     /**

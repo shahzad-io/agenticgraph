@@ -17,27 +17,26 @@ it('adds tax', function () {
 
 ## A PrismNode with a faked model
 
-The fakes are a queue: one per model call, in order.
+`Llm::fake()` queues the replies, one per provider request, in order, and records what each call resolved.
 
 ```php
 use App\Nodes\SummarizeNode;
-use Prism\Prism\Facades\Prism;
-use Prism\Prism\Testing\TextResponseFake;
-use Prism\Prism\ValueObjects\Usage;
 use Shahzad\AgenticGraph\State\State;
+use Shahzad\AgenticGraph\Testing\Llm;
 
 it('writes the faked text onto state', function () {
-    Prism::fake([
-        TextResponseFake::make()->withText('Hello John')->withUsage(new Usage(10, 20)),
-    ]);
+    $llm = Llm::fake(['Hello John']);
 
     $result = (new SummarizeNode)->execute(new State(['name' => 'John']));
 
     expect($result->get('text'))->toContain('Hello John');
+    $llm->assertPrompted(fn (array $call) => $call['vars']['name'] === 'John');
+    $llm->assertSettings(['model' => ['value' => 'openai:gpt-4o-mini', 'source' => 'node']]); // example model
+    $llm->assertNotInterpolated('history');
 });
 ```
 
-Structured nodes use `StructuredResponseFake`.
+A queued array is structured data, a `Throwable` is a failed attempt (retry tests), a Prism `TextResponseFake` passes through (tool calls, usage). A structured retry or a tool step takes the next entry. Routers are recorded too (`node` is `PrismRouter`). `$llm->prism()` is the Prism fake underneath.
 
 ## A graph
 

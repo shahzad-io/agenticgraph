@@ -20,6 +20,7 @@ Other skills, use them when installed: `agenticgraph-streaming` for `stream()`, 
 5. A string passed to `prompt()` is a template. Never join or interpolate runtime values (visitor text, model output, retrieved content) into prompt text; pass them through `vars()` or `history()`. Write literal braces as `{{` and `}}`.
 6. Two templates in one request throw. So do a schema with tools, and a request with only `system()`.
 7. On reasoning models `$maxTokens` includes the reasoning tokens: a limit that suits a normal model can give an empty reply (streamed) or a `max tokens exceeded` error (OpenAI, not streamed and structured). A streamed call cut by the limit returns `length` with the real usage. Set the reasoning level on the node (`protected ?string $reasoning`, one of `off`, `low`, `medium`, `high`) or with `->reasoning()` on one request; never in config, and never through raw `$providerOptions` when a level covers it.
+8. Test LLM nodes and routers with `Llm::fake()` (`Shahzad\AgenticGraph\Testing\Llm`), not `Prism::fake()`: it asserts what the node resolved (vars, settings with their sources, prompt file, history). Keep `Prism::fake()` for code that calls Prism directly.
 
 ## Task: install and configure
 
@@ -218,7 +219,7 @@ final class QualityRouter extends AbstractRouter
 ```
 
 - `$routes` is `node id => description`, not a list of names.
-- `PrismRouter` asks the model to pick one route from the descriptions. It never fans out. To add rules, override `buildPrompt()`, not `route()`.
+- `PrismRouter` asks the model to pick one route from the descriptions. It never fans out. To add rules, override `buildPrompt()`, not `route()`. A versioned routing prompt: pass `prompt: Prompts::get('dir.name')` to the constructor and override `routingVars()` (defaults `routes`, `state`).
 - More router shapes (PrismRouter subclass, loop-aware, fan-out): [references/routers.md](references/routers.md).
 
 Docs: `/docs/edges`, `/docs/routing`
@@ -347,7 +348,7 @@ Docs: `/docs/guide-cli`
 ## Task: test a graph or a node
 
 - Test node logic by calling `execute()` on the node with a `State`. No graph needed.
-- Fake the model: `Prism::fake([TextResponseFake::make()->withText('...')])`. One fake per model call, in order.
+- Fake the model: `$llm = Llm::fake(['reply', ['route' => 'billing'], new RuntimeException('timeout')])`. One entry per provider request, in order: text, structured data, a failure, or a Prism response fake (tool runs). Assert with `assertPrompted(fn)`, `assertNotInterpolated($var)`, `assertSettings([...])`, `assertSentCount($n)`, `assertNothingSent()`.
 - Test a graph with `AgenticGraph::run()`. Assert `status()` and `getFinalState()`. `GraphExecutor::execute()` returns `State`, not a handle.
 - Interrupts: sync run, assert `isInterrupted()` and `interruptedAtNode()`, then `$handle->resume([...])`.
 - Async: `Bus::fake()`, `AgenticGraph::dispatch()`, assert the job. `Event::fake()` swallows every listener.

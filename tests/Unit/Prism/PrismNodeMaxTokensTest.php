@@ -19,6 +19,7 @@ use Shahzad\AgenticGraph\Streaming\Sinks\MemorySink;
 use Shahzad\AgenticGraph\Streaming\StreamContext;
 use Shahzad\AgenticGraph\Streaming\StreamOptions;
 use Shahzad\AgenticGraph\Streaming\StreamSession;
+use Shahzad\AgenticGraph\Testing\Llm;
 
 /**
  * Runs one request path, chosen by state 'path'. $maxTokens, $providerOptions and $model come from the constructor so one class covers precedence.
@@ -173,10 +174,10 @@ it('throws a clear error when no model is configured', function () {
 
 it('uses the node model when config has none', function () {
     config()->set('agenticgraph.prism.model', null);
-    $requests = requestsRecorded(new MaxTokensProbeNode(model: 'anthropic:claude-x'), 'prompt', false, [maxTokensText()]);
+    $llm = Llm::fake([maxTokensText()]);
+    (new MaxTokensProbeNode(model: 'anthropic:claude-x'))->execute(new State(['path' => 'prompt']));
 
-    expect($requests[0]->provider())->toBe('anthropic')
-        ->and($requests[0]->model())->toBe('claude-x');
+    $llm->assertSettings(['model' => ['value' => 'anthropic:claude-x', 'source' => 'node']]);
 });
 
 it('throws when the model has no provider prefix', function (string $model) {
