@@ -179,6 +179,26 @@ it('adds thought_tokens to the llm span only when the provider reported them', f
         ->and($exporter->spans[0]['thought_tokens'] ?? null)->toBe($thoughtTokens);
 })->with([0, 12, null]);
 
+it('adds context.count and context.ids to the llm span attributes only when context() was used', function (?int $count) {
+    $exporter = new MockPulseExporter;
+    (new TracingListener($exporter))->onTokensUsed(new TokensUsed(
+        node: 'node-a',
+        promptTokens: 1,
+        completionTokens: 1,
+        totalTokens: 2,
+        executionId: 'exec_context',
+        spanId: 'span_c',
+        model: 'openai:o3',
+        durationMs: 1.0,
+        startedAt: new \DateTimeImmutable('2024-01-01 10:00:00'),
+        endedAt: new \DateTimeImmutable('2024-01-01 10:00:00.001'),
+        contextCount: $count,
+        contextIds: $count === null ? null : array_slice(['a', 'b'], 0, $count),
+    ));
+
+    expect($exporter->spans[0]['attributes'] ?? null)->toBe($count === null ? null : ['context.count' => $count, 'context.ids' => array_slice(['a', 'b'], 0, $count)]);
+})->with([0, 2, null]);
+
 it('puts interrupt and resume fields in attributes, keeping state_snapshot nested', function (): void {
     $exporter = new MockPulseExporter;
     $listener = new TracingListener($exporter);

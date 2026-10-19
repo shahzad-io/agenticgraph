@@ -349,6 +349,7 @@ class TracingListener
             ...($event->thoughtTokens !== null ? ['thought_tokens' => $event->thoughtTokens] : []),
             ...($event->cacheReadTokens !== null ? ['cache_read_tokens' => $event->cacheReadTokens] : []),
             ...($event->cacheWriteTokens !== null ? ['cache_write_tokens' => $event->cacheWriteTokens] : []),
+            ...($event->contextCount !== null ? ['attributes' => ['context.count' => $event->contextCount, 'context.ids' => $event->contextIds ?? []]] : []),
         ]);
 
         // Build LLM call data with optional prompt/response capture

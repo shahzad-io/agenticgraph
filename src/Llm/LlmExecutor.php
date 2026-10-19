@@ -262,6 +262,7 @@ final class LlmExecutor
                 'max_steps' => $call->maxSteps ?? 1,
             ],
             'schema' => $call->schema instanceof Schema ? $call->schema->toArray() : $call->schema,
+            'context' => $call->context !== null ? ['var' => $call->context['as'], 'count' => count($call->context['items']), 'text' => $call->context['text']] : null,
         ];
     }
 
@@ -275,6 +276,9 @@ final class LlmExecutor
 
         try {
             $response = $this->perform($call, $settings, $model, $startTime);
+            if ($call->context !== null) {
+                $response = $response->withSources($call->sources());
+            }
         } catch (PrismException $e) {
             throw $this->reasoningRejection($settings, $e) ?? $e;
         }
@@ -455,7 +459,7 @@ final class LlmExecutor
     private function text(LlmCall $call, array $settings, string $model, float $startTime): LlmResponse
     {
         $response = $this->textRequest($call, $settings)->asText();
-        $this->dispatchUsage($startTime, $model, 'text', $this->resolveUsage($response), $call->promptForTrace(), $response->text);
+        $this->dispatchUsage($startTime, $model, 'text', $this->resolveUsage($response), $call->promptForTrace(), $response->text, context: $call->context);
 
         return new LlmResponse(text: $response->text, usage: $response->usage, finishReason: $response->finishReason);
     }
@@ -466,7 +470,7 @@ final class LlmExecutor
     private function streamText(LlmCall $call, array $settings, string $model, float $startTime): LlmResponse
     {
         $stream = $this->stream($this->textRequest($call, $settings));
-        $this->dispatchUsage($startTime, $model, 'text', $stream['usage'], $call->promptForTrace(), $stream['text'], streamed: true);
+        $this->dispatchUsage($startTime, $model, 'text', $stream['usage'], $call->promptForTrace(), $stream['text'], streamed: true, context: $call->context);
 
         return new LlmResponse(text: $stream['text'], usage: $stream['usage'], finishReason: $stream['finishReason']);
     }
@@ -558,7 +562,7 @@ final class LlmExecutor
         $traceResponse = $call->structuredTraceAsJson && is_array($response->structured)
             ? json_encode($response->structured, JSON_THROW_ON_ERROR)
             : $response->text;
-        $this->dispatchUsage($startTime, $model, 'structured', $this->resolveUsage($response), $call->promptForTrace(), $traceResponse);
+        $this->dispatchUsage($startTime, $model, 'structured', $this->resolveUsage($response), $call->promptForTrace(), $traceResponse, context: $call->context);
 
         return new LlmResponse(text: $response->text, structured: $response->structured, usage: $response->usage, finishReason: $response->finishReason);
     }
@@ -574,7 +578,7 @@ final class LlmExecutor
         $schemaPrompt = $this->buildStructuredPrompt($call->prompt, $call->schema);
         $streamCall = new LlmCall(prompt: $schemaPrompt, media: $call->media, system: $call->system);
         $stream = $this->stream($this->textRequest($streamCall, $settings));
-        $this->dispatchUsage($startTime, $model, 'text', $stream['usage'], $schemaPrompt, $stream['text'], streamed: true);
+        $this->dispatchUsage($startTime, $model, 'text', $stream['usage'], $schemaPrompt, $stream['text'], streamed: true, context: $call->context);
 
         try {
             $structured = $this->decodeStructuredResponseText($stream['text']);
@@ -632,7 +636,7 @@ final class LlmExecutor
         $steps = array_map(fn (array $step): LlmStep => new LlmStep($step['text'], array_values($step['toolCalls']), $this->toolRunResults(array_values($step['toolResults'])), $step['usage'], $step['finishReason']), array_values($raw));
         $toolCalls = array_merge(...array_map(fn (LlmStep $step): array => $step->toolCalls, $steps));
         $this->dispatchToolCalls($toolCalls, $toolType);
-        $this->dispatchUsage($startTime, $model, $callType, $traceUsage, $call->promptForTrace(), $text, streamed: $streamed);
+        $this->dispatchUsage($startTime, $model, $callType, $traceUsage, $call->promptForTrace(), $text, streamed: $streamed, context: $call->context);
 
         return new LlmResponse(
             text: $text,
@@ -659,6 +663,8 @@ final class LlmExecutor
                 prompt: (string) $call->promptForTrace(),
                 response: $text,
                 cacheKey: $cacheKey,
+                contextCount: $call->context !== null ? count($call->context['items']) : null,
+                contextIds: $call->context !== null ? self::contextIds($call->context) : null,
             ));
         }
 
@@ -775,8 +781,9 @@ final class LlmExecutor
 
     /**
      * @param  array{promptTokens: int, completionTokens: int, thoughtTokens: int|null, cacheReadTokens: int|null, cacheWriteTokens: int|null}|Usage|null  $usage
+     * @param  array{items: list<array{id: string|int}>}|null  $context
      */
-    private function dispatchUsage(float $startTime, string $model, string $callType, array|Usage|null $usage, ?string $prompt, ?string $response, bool $streamed = false): void
+    private function dispatchUsage(float $startTime, string $model, string $callType, array|Usage|null $usage, ?string $prompt, ?string $response, bool $streamed = false, ?array $context = null): void
     {
         if (! $this->trackTokens || $usage === null) {
             return;
@@ -796,7 +803,20 @@ final class LlmExecutor
             prompt: $prompt,
             response: $response,
             streamed: $streamed,
+            contextCount: $context !== null ? count($context['items']) : null,
+            contextIds: $context !== null ? self::contextIds($context) : null,
         ));
+    }
+
+    /**
+     * The llm span's context.ids: the first 20 item ids, as strings.
+     *
+     * @param  array{items: list<array{id: string|int}>}  $context
+     * @return list<string>
+     */
+    private static function contextIds(array $context): array
+    {
+        return array_map(fn (array $item): string => (string) $item['id'], array_slice($context['items'], 0, 20));
     }
 
     /**

@@ -77,6 +77,9 @@ final class LlmRequest
     /** @var class-string|null */
     private ?string $dto = null;
 
+    /** @var array{as: string, items: list<array{id: string|int, content: string, metadata: array<string, mixed>, score: float|null}>, format: PromptTemplate|null, separator: string}|null */
+    private ?array $context = null;
+
     public function __construct(private readonly LlmExecutor $executor) {}
 
     /** A string is wrapped in a new PromptTemplate. Interpolated with vars(). */
@@ -134,6 +137,36 @@ final class LlmRequest
     public function vars(array $vars): self
     {
         return $this->with('vars', array_merge($this->vars, $vars));
+    }
+
+    /**
+     * Retrieved items as one variable. $items is a list of arrays (id, content, optional metadata and score) or any
+     * object with toContextItems() returning that list (a vector SearchResult). Each item renders as its content, or
+     * through $format with the item's metadata plus id, content and score as variables. The joined text is a value:
+     * never interpolated again. run()->sources() returns the items used.
+     *
+     *     $this->llm()->prompt("Answer from:\n{context}\n\nQ: {q}")->vars(['q' => $q])->context($hits)->text();
+     *
+     * @param  iterable<mixed>|object  $items
+     */
+    public function context(iterable|object $items, string $as = 'context', ?PromptTemplate $format = null, string $separator = "\n\n"): self
+    {
+        if (! is_iterable($items)) {
+            if (! method_exists($items, 'toContextItems')) {
+                throw new \InvalidArgumentException('context() takes a list of items or an object with toContextItems(), got ['.$items::class.'].');
+            }
+            $items = $items->toContextItems();
+        }
+
+        $list = [];
+        foreach ($items as $index => $item) {
+            if (! is_array($item) || ! array_key_exists('id', $item) || ! (is_string($item['id']) || is_int($item['id'])) || ! is_string($item['content'] ?? null)) {
+                throw new \InvalidArgumentException("context() item [{$index}] needs an id (string or int) and a string content.");
+            }
+            $list[] = ['id' => $item['id'], 'content' => $item['content'], 'metadata' => (array) ($item['metadata'] ?? []), 'score' => isset($item['score']) ? (float) $item['score'] : null];
+        }
+
+        return $this->with('context', ['as' => $as, 'items' => $list, 'format' => $format, 'separator' => $separator]);
     }
 
     /**
@@ -321,13 +354,27 @@ final class LlmRequest
             throw new \LogicException('schema() cannot be combined with tools() or mcp().');
         }
 
+        $vars = $this->vars;
+        $context = null;
+        if ($this->context !== null) {
+            if (array_key_exists($this->context['as'], $vars)) {
+                throw new \LogicException("context() sets the variable [{$this->context['as']}]; vars() sets it too.");
+            }
+            $format = $this->context['format'];
+            $vars[$this->context['as']] = implode($this->context['separator'], array_map(
+                fn (array $item): string => $format === null ? $item['content'] : $format->format([...$item['metadata'], 'id' => $item['id'], 'content' => $item['content'], 'score' => $item['score']]),
+                $this->context['items'],
+            ));
+            $context = ['as' => $this->context['as'], 'text' => $vars[$this->context['as']], 'items' => $this->context['items']];
+        }
+
         $prompt = null;
         $messages = [];
         if ($this->template instanceof PromptTemplate) {
-            $prompt = $this->template->format($this->vars);
+            $prompt = $this->template->format($vars);
         } else {
             $formatted = [
-                ...($this->template instanceof ChatPromptTemplate ? $this->template->format($this->vars) : []),
+                ...($this->template instanceof ChatPromptTemplate ? $this->template->format($vars) : []),
                 ...$this->inline,
             ];
             if ($formatted === []) {
@@ -359,6 +406,7 @@ final class LlmRequest
             dto: $this->dto,
             cache: $this->cache,
             cacheTtl: $this->cacheTtl,
+            context: $context,
         );
     }
 

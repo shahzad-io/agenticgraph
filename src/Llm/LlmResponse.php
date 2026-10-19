@@ -12,7 +12,7 @@ use Shahzad\AgenticGraph\Tools\ToolRunResult;
 
 /**
  * What one request did: the text (of the final step, streamed or not), the structured data (with schema()), the tool
- * calls and results of every step, each step of a tool or MCP run, usage, finish reason, and whether it came from the cache. Stored in state it serializes through toArray().
+ * calls and results of every step, each step of a tool or MCP run, usage, finish reason, whether it came from the cache, and the context() sources. Stored in state it serializes through toArray().
  */
 final class LlmResponse implements JsonSerializable
 {
@@ -24,6 +24,7 @@ final class LlmResponse implements JsonSerializable
      * @param  object|null  $data  the structured reply hydrated by as(); not serialized (structured holds the array)
      * @param  int  $attempts  model calls the structured reply took; usage covers all of them, or is null when one is unknown
      * @param  list<LlmStep>  $steps  each model call of a tool or MCP run (empty for text and structured calls); usage is their sum
+     * @param  list<array{id: string|int, metadata: array<string, mixed>, score: float|null}>  $sources  the items context() put in the prompt
      */
     public function __construct(
         public readonly string $text = '',
@@ -37,18 +38,37 @@ final class LlmResponse implements JsonSerializable
         public readonly ?object $data = null,
         public readonly int $attempts = 1,
         public readonly array $steps = [],
+        private readonly array $sources = [],
     ) {}
+
+    /**
+     * The items context() put in the prompt (id, metadata, score), in order; empty without context().
+     *
+     * @return list<array{id: string|int, metadata: array<string, mixed>, score: float|null}>
+     */
+    public function sources(): array
+    {
+        return $this->sources;
+    }
+
+    /**
+     * @param  list<array{id: string|int, metadata: array<string, mixed>, score: float|null}>  $sources
+     */
+    public function withSources(array $sources): self
+    {
+        return new self($this->text, $this->structured, $this->toolCalls, $this->toolResults, $this->usage, $this->finishReason, $this->cached, $this->warnings, $this->data, $this->attempts, $this->steps, $sources);
+    }
 
     /**
      * @param  list<string>  $warnings
      */
     public function withWarnings(array $warnings): self
     {
-        return new self($this->text, $this->structured, $this->toolCalls, $this->toolResults, $this->usage, $this->finishReason, $this->cached, $warnings, $this->data, $this->attempts, $this->steps);
+        return new self($this->text, $this->structured, $this->toolCalls, $this->toolResults, $this->usage, $this->finishReason, $this->cached, $warnings, $this->data, $this->attempts, $this->steps, $this->sources);
     }
 
     /**
-     * @return array{text: string, structured: array<mixed>|null, tool_calls: list<array<string, mixed>>, tool_results: list<array<string, mixed>>, usage: array{prompt_tokens: int, completion_tokens: int, thought_tokens: int|null, cache_read_tokens: int|null, cache_write_tokens: int|null}|null, finish_reason: string|null, cached: bool, warnings: list<string>, attempts: int, steps: list<array<string, mixed>>}
+     * @return array{text: string, structured: array<mixed>|null, tool_calls: list<array<string, mixed>>, tool_results: list<array<string, mixed>>, usage: array{prompt_tokens: int, completion_tokens: int, thought_tokens: int|null, cache_read_tokens: int|null, cache_write_tokens: int|null}|null, finish_reason: string|null, cached: bool, warnings: list<string>, attempts: int, steps: list<array<string, mixed>>, sources: list<array{id: string|int, metadata: array<string, mixed>, score: float|null}>}
      */
     public function toArray(): array
     {
@@ -63,6 +83,7 @@ final class LlmResponse implements JsonSerializable
             'warnings' => $this->warnings,
             'attempts' => $this->attempts,
             'steps' => array_map(fn (LlmStep $step): array => $step->toArray(), $this->steps),
+            'sources' => $this->sources,
         ];
     }
 

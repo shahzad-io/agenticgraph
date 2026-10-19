@@ -31,6 +31,23 @@ final class DraftNode extends PrismNode
 
 A prompt string is a template: `{word}` is a placeholder and `{{ }}` are literal braces. Put dynamic text (model output, JSON, user input) in `vars()`, never into the template string. `system()`, `user()`, `assistant()` and `history()` are literal.
 
+## Retrieved context
+
+```php
+use Shahzad\AgenticGraph\Prompts\PromptTemplate;
+
+// $state->get('documents') holds a vector SearchResult's toContextItems(), or pass the SearchResult itself.
+$response = $this->llm()
+    ->prompt("Answer from these sections only.\n\n{context}\n\nQuestion: {question}")
+    ->vars(['question' => (string) $state->get('question')])
+    ->context($state->get('documents', []), format: new PromptTemplate("Title: {title}\n{content}"), separator: "\n\n---\n\n")
+    ->run();
+
+return $state->set('answer', $response->text)->set('sources', $response->sources());
+```
+
+Without `format:` each item is its `content`. The template sees the item's metadata keys plus `id`, `content` and `score`; a missing key throws. Zero items give an empty `{context}`: put any "nothing matched" wording in the template.
+
 ## Structured output
 
 The root schema should be an object. `structured()` returns an array.
@@ -149,7 +166,7 @@ final class CurrencyNode extends PrismNode
 }
 ```
 
-`run()` returns an `LlmResponse`: `text`, `structured`, `toolCalls` and `toolResults` of every step, `usage`, `finishReason` and `cached`. It is `JsonSerializable`, so it can be stored in state. With one step it holds the requested calls and what each handler returned.
+`run()` returns an `LlmResponse`: `text`, `structured`, `toolCalls` and `toolResults` of every step, `usage`, `finishReason`, `cached` and `sources()` (the `context()` items). It is `JsonSerializable`, so it can be stored in state. With one step it holds the requested calls and what each handler returned.
 
 **Usage semantics (Prism 0.102).** One meaning on every provider, in `LlmResponse::$usage`, `toArray()['usage']`, `TokensUsed` and the llm span: `prompt_tokens` is the **uncached** input; `cache_read_tokens` and `cache_write_tokens` are cached input, never inside `prompt_tokens` (so the full input is the sum of the three); `completion_tokens` includes reasoning; `thought_tokens` is the reasoning part of it. The two cache fields and `thought_tokens` are `null` when the provider does not report them and `0` when it reports zero. Cost uses the model's `cache_read` / `cache_write` rate from `config/model_pricing.php` when the entry has one, else its `input` rate. Streamed usage is the sum of every step.
 

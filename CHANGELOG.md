@@ -2,6 +2,12 @@
 
 ## 0.2.0 (unreleased)
 
+### `context()` (B13b C)
+- New: `context($items, as: 'context', format: ?PromptTemplate, separator: "\n\n")` on `LlmRequest`. `$items` is a list of plain items (`id` string or int, `content`, optional `metadata` and `score`) or any object with `toContextItems(): array` returning that list (structural, no shared interface; core does not import the vector package). Each item renders as its content, or through the `PromptTemplate` with its metadata plus `id`, `content` and `score` (a missing key throws `TemplateException`). The joined text reaches the prompt as the variable `as`, never interpolated again; the same name in `vars()` throws `LogicException`.
+- New: `LlmResponse::sources()` (the items used: `id`, `metadata`, `score`, in prompt order; also on a cache hit) and `sources` in `toArray()` (`[]` without `context()`).
+- New: `explain()['context']` (`var`, `count`, the formatted `text`; `null` without `context()`).
+- Trace wire, additive (v1.1): an llm span whose request used `context()` carries `attributes` with `context.count` and `context.ids` (the first 20 ids, as strings). Registry, wire doc, JSON Schema, OTLP note (the `attributes` object passes through; the id list as its JSON string) and a freeze-corpus case. `TokensUsed` gains `contextCount` and `contextIds`.
+
 ### Multi-step streaming (B13b B)
 - Tool runs with `maxSteps > 1` and MCP now stream every step when a sink is bound (they ran non-streamed before). `explain()['stream']` follows.
 - **BREAKING (stream wire):** Prism's StreamStart and StreamEnd map to new `stream_start` and `stream_end` events (they were `step_start` and `step_finish`, so one step gave two of each). `stream_end` carries the request's `finish_reason` and cumulative `usage` (plus `citations`, `additional_content`); `stream_start` carries `model`, `provider`, `metadata`. `step_start` and `step_finish` are now one pair per step; `step_finish` gains that step's `finish_reason` and `usage`. Every streamed graph's sequence changes.

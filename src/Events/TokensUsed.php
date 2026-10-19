@@ -47,8 +47,15 @@ class TokensUsed implements ShouldQueue
         public readonly ?int $cacheReadTokens = null,
         /** Input tokens written to the provider's cache, not part of promptTokens. Null: not reported. */
         public readonly ?int $cacheWriteTokens = null,
+        /** Items context() put in the prompt. Null: context() was not used. */
+        public readonly ?int $contextCount = null,
+        /** @var list<string>|null The first 20 of those items' ids. */
+        public readonly ?array $contextIds = null,
     ) {}
 
+    /**
+     * @param  list<string>|null  $contextIds
+     */
     public static function fromLlmCall(
         string $node,
         float $callStartMicrotime,
@@ -63,6 +70,8 @@ class TokensUsed implements ShouldQueue
         ?int $thoughtTokens = null,
         ?int $cacheReadTokens = null,
         ?int $cacheWriteTokens = null,
+        ?int $contextCount = null,
+        ?array $contextIds = null,
     ): self {
         $clock = ExecutionClock::tryGet();
         $traceContext = TraceContext::tryGet();
@@ -112,9 +121,14 @@ class TokensUsed implements ShouldQueue
             thoughtTokens: $thoughtTokens,
             cacheReadTokens: $cacheReadTokens,
             cacheWriteTokens: $cacheWriteTokens,
+            contextCount: $contextCount,
+            contextIds: $contextIds,
         );
     }
 
+    /**
+     * @param  list<string>|null  $contextIds
+     */
     public static function fromCacheHit(
         string $node,
         float $callStartMicrotime,
@@ -123,6 +137,8 @@ class TokensUsed implements ShouldQueue
         ?string $prompt = null,
         ?string $response = null,
         ?string $cacheKey = null,
+        ?int $contextCount = null,
+        ?array $contextIds = null,
     ): self {
         $clock = ExecutionClock::tryGet();
         $traceContext = TraceContext::tryGet();
@@ -166,6 +182,8 @@ class TokensUsed implements ShouldQueue
             response: self::responseForEvent($response),
             cached: true,
             cacheKey: $cacheKey,
+            contextCount: $contextCount,
+            contextIds: $contextIds,
         );
     }
 
