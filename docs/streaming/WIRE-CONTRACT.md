@@ -176,8 +176,10 @@ Field types below reflect **what the adapter actually emits** (JSON types after 
 | `thinking_start` | `{ id: string, timestamp: integer }` |
 | `thinking_delta` | `{ id: string, delta: string, summary: object \| null, timestamp: integer }` — `summary` is `array<string, mixed> \| null` (`ThinkingEvent::$summary`) |
 | `thinking_complete` | `{ id: string, summary: object \| null, timestamp: integer }` — `summary` is `array<string, mixed> \| null` |
-| `step_start` | `{ id: string, timestamp: integer }` plus optional legacy fields when mapped from `StreamStartEvent` (see below) |
-| `step_finish` | `{ id: string, timestamp: integer }` plus optional legacy fields when mapped from `StreamEndEvent` (see below) |
+| `stream_start` | `{ id: string, timestamp: integer, model: string, provider: string, metadata: object \| null }`. From `StreamStartEvent`: once per model request, before the first step |
+| `step_start` | `{ id: string, timestamp: integer }`. From `StepStartEvent`: once per step (one model call of a tool run) |
+| `step_finish` | `{ id: string, timestamp: integer, finish_reason: string \| null, usage: object \| null }`. From `StepFinishEvent`: once per step, with **that step's** finish reason and usage (see below) |
+| `stream_end` | `{ id: string, timestamp: integer, finish_reason: string, usage: object \| null, citations: array \| null, additional_content: object }`. From `StreamEndEvent`: once per model request, after the last step, with the request's finish reason and **cumulative** usage (see below) |
 | `provider_tool_event` | `{ event_key: string, tool_type: string, status: string, item_id: string, data: object, timestamp: integer }` — `data` is `array<string, mixed>` |
 | `artifact` | `{ tool_call_id: null, tool_name: null, message_id: string, artifact: object, block_index: integer \| null, metadata: object \| null, timestamp: integer }` — mapped from `CitationEvent` only; adapter hardcodes `tool_call_id`/`tool_name` as `null` (lines 189–190); `artifact` is the `Citation` value object JSON-encoded (camelCase keys, see below) |
 | `error` | `{ error_type: string, message: string, recoverable: boolean, metadata: object \| null, timestamp: integer }` — `metadata` is `array<string, mixed> \| null` |
@@ -201,30 +203,18 @@ Emitted as JSON from `Citation` public properties (`PrismStreamAdapter.php:192`)
 
 `sourceType` / `sourcePositionType` are backed enum **values** (strings). `source` is `string|integer`.
 
-#### Legacy `step_start` fields (`StreamStartEvent` mapping only)
+#### Steps (B13b)
 
-Present only when `step_start` is produced from Prism `StreamStartEvent` (not from `StepStartEvent`):
+One streamed model request is `stream_start`, then per step `step_start`, its text, thinking and `tool_call` events, the `tool_result` events (tools run between `tool_call` and `tool_result` with no events, so a slow tool is a quiet gap), `step_finish`, and finally `stream_end`. A single-step request has one pair. Each step has its own `message_id`. A run that stops on `maxSteps` ends with `step_finish` (`ToolCalls`) and `stream_end`, without a final text.
 
-| Field | Type |
-|-------|------|
-| `model` | `string` |
-| `provider` | `string` |
-| `metadata` | `object \| null` (`array<string, mixed> \| null`) |
+| Field | On | Type |
+|-------|----|------|
+| `finish_reason` | `step_finish`, `stream_end` | `string` (enum name, e.g. `"Stop"`, `"ToolCalls"`); nullable on `step_finish` when the provider gives none |
+| `usage` | `step_finish` (that step), `stream_end` (sum of the steps) | `object \| null`: `{ prompt_tokens, completion_tokens, cache_write_input_tokens, cache_read_input_tokens, thought_tokens }` (integers; cache/thought fields nullable) |
+| `citations` | `stream_end` | `array \| null`: provider-specific citation parts; shape varies (loose; do not build logic against the inner structure) |
+| `additional_content` | `stream_end` | `object` (`array<string, mixed>`; defaults to `{}`) |
 
-`StepStartEvent` mapping emits only `{ id, timestamp }`.
-
-#### Legacy `step_finish` fields (`StreamEndEvent` mapping only)
-
-Present only when `step_finish` is produced from Prism `StreamEndEvent` (not from `StepFinishEvent`):
-
-| Field | Type |
-|-------|------|
-| `finish_reason` | `string` (enum name, e.g. `"Stop"`) |
-| `usage` | `object \| null` — `{ prompt_tokens, completion_tokens, cache_write_input_tokens, cache_read_input_tokens, thought_tokens }` (integers; cache/thought fields nullable) |
-| `citations` | `array \| null` — provider-specific citation parts; shape varies (loose; do not build logic against the inner structure) |
-| `additional_content` | `object` (`array<string, mixed>`; defaults to `{}`) |
-
-`StepFinishEvent` mapping emits only `{ id, timestamp }`.
+Before B13b, `StreamStartEvent` and `StreamEndEvent` were also mapped to `step_start` and `step_finish` (so one step gave two of each, told apart only by the optional keys), and `step_finish` from a step carried only `{ id, timestamp }`.
 
 Prism content events: **no** `payload.stream` nesting; `node_seq` continues the per-node sequence.
 
@@ -400,7 +390,7 @@ export type PrismContentEventType =
   | 'text_start' | 'text_delta' | 'text_complete'
   | 'tool_call' | 'tool_result'
   | 'thinking_start' | 'thinking_delta' | 'thinking_complete'
-  | 'step_start' | 'step_finish'
+  | 'stream_start' | 'step_start' | 'step_finish' | 'stream_end'
   | 'provider_tool_event' | 'artifact' | 'error';
 
 export type StreamEvent = {
@@ -424,3 +414,4 @@ export type ExecutionTerminalPayload = {
 | **1.1** | 2026-10 | Pre-release amendment (allowed only because the contract was not yet publicly released). `final_state` is nullable and `null` by default in `execution_terminal`, broadcast `stream_close.meta` and `stream_replay_unavailable`; opt in with `AGENTICGRAPH_STREAM_EXPOSE_FINAL_STATE=true` and an optional `keys` allowlist. When exposed it is the plain state object, not the storage envelope. `execution_terminal` is documented as always emitted regardless of stream filters, and as the last event of a run (`graph_failed` before it, one `stream_close`). Breaking for clients that assume an object |
 | **1.1** | 2026-10 | Additive (B1): `graph_failed` has an optional `reason` string. `agenticgraph:interrupt:expire` sets `interrupt_expired`, then the failed `execution_terminal` follows as for any failure. Clients that ignore unknown payload keys need no change. |
 | **1.1** | 2026-10 | Pre-release amendment (B2, allowed only because the contract was not yet publicly released). SSE control events (`stream_heartbeat`, new `stream_reconnect`, `stream_replay_unavailable`) have no `id:` and no `seq`, and carry a `control` key instead of the 9 wire fields. `stream_replay_unavailable` used to claim the next real seq. Every SSE response starts with `retry:`. An `interrupted` terminal no longer closes the response. Max duration ends with control `reconnect`. Replay-unavailable only when the cursor is below the first stored seq or the stream is empty with `cursor > 0`, never during a wait. Breaking for SSE clients that read heartbeat or replay-unavailable as wire bodies |
+| **1.1** | 2026-10 | Pre-release amendment (B13b B, allowed only because the contract was not yet publicly released). New Prism content types `stream_start` and `stream_end` (Prism `StreamStartEvent`, `StreamEndEvent`; they were mapped to `step_start` and `step_finish`). `step_start` and `step_finish` are now one pair per step; `step_finish` carries that step's `finish_reason` and `usage`, `stream_end` the request's and the cumulative `usage`. Multi-step tool runs and MCP stream. Breaking for clients that counted step events or read `usage` from `step_finish` |

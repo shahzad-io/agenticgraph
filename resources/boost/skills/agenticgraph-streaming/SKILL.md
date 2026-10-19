@@ -103,13 +103,13 @@ $this->whenStreaming(function () use ($items): void {
 ```
 
 - `streamEvent()` is a no-op without a sink, for example in a `run()` or `dispatch()` graph.
-- `$this->llm()` streams by itself when a sink is bound, and `text()` still returns the full string. There is no special streaming node. Text, chat, structured with a Prism `Schema` and single-step tools stream; `maxSteps > 1` and MCP do not.
+- `$this->llm()` streams by itself when a sink is bound, and `text()` still returns the full string. There is no special streaming node. Text, chat, structured with a Prism `Schema`, tool runs (every step) and MCP stream. Tools run between steps with no events, so a slow tool is a quiet gap. `run()->text` and the hooks' `finalText` are the final step; `run()->steps` and the hooks' `text` hold the narration; the app decides which to persist. A structured retry after a streamed attempt runs without streaming (its reply is not on the wire).
 
 ## Events
 
 - **Lifecycle**, from the coordinator: `graph_start`, `graph_complete`, `graph_failed`, `node_start`, `node_complete`, `node_error`, `node_interrupt`, `stream_resume`.
 - **Terminal**: `execution_terminal` (SSE; `status` is `completed`, `interrupted` or `failed`, plus `final_state`), `stream_close` (broadcast; `{status, meta}`), `stream_error`.
-- **Prism**, from `$this->llm()`: `text_start`, `text_delta`, `text_complete`, `tool_call`, `tool_result`, `thinking_*`, `step_start`, `step_finish`, `provider_tool_event`, `artifact`, `error`.
+- **Prism**, from `$this->llm()`: `text_start`, `text_delta`, `text_complete`, `tool_call`, `tool_result`, `thinking_*`, `stream_start`, `step_start`, `step_finish`, `stream_end`, `provider_tool_event`, `artifact`, `error`. One `stream_start` and one `stream_end` per model request (end: cumulative `usage` and `finish_reason`); one `step_start` and `step_finish` per step (finish: that step's `usage` and `finish_reason`). Each step has its own `message_id`.
 - **Yours**: any string through `streamEvent($type, $payload)`.
 - `stream_heartbeat` and `stream_replay_unavailable` are SSE only and may change.
 - The type is the SSE `event:` line or the broadcast event name. It is not in the JSON body.

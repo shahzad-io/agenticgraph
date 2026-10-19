@@ -178,7 +178,7 @@ final class LlmRequest
         return $this->with('toolChoice', $choice);
     }
 
-    /** More than one step sends tool results back to the model; such runs do not stream. */
+    /** More than one step sends tool results back to the model; a bound sink streams every step. */
     public function maxSteps(int $steps): self
     {
         return $this->with('maxSteps', $steps);

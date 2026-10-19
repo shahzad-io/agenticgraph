@@ -162,7 +162,7 @@ test('prism stream adapter ignores unknown events', function () {
     expect($adapter->adapt($event))->toBeNull();
 });
 
-test('prism stream adapter maps step events', function () {
+test('prism stream adapter maps stream start and stream end to their own events', function () {
     $session = new StreamSession(
         streamId: 'stream-5',
         executionId: 'exec-5',
@@ -183,20 +183,24 @@ test('prism stream adapter maps step events', function () {
     $endMapped = $adapter->adapt($end);
 
     expect($startMapped)->not->toBeNull()
-        ->and($startMapped->type())->toBe('step_start')
+        ->and($startMapped->type())->toBe('stream_start')
         ->and($startMapped->payload())->toMatchArray([
             'id' => 'evt-5',
             'timestamp' => 200,
+            'model' => 'gpt-4',
+            'provider' => 'openai',
         ])
         ->and($endMapped)->not->toBeNull()
-        ->and($endMapped->type())->toBe('step_finish')
+        ->and($endMapped->type())->toBe('stream_end')
         ->and($endMapped->payload())->toMatchArray([
             'id' => 'evt-6',
             'timestamp' => 210,
+            'finish_reason' => 'Stop',
+            'usage' => ['prompt_tokens' => 3, 'completion_tokens' => 4, 'cache_write_input_tokens' => null, 'cache_read_input_tokens' => null, 'thought_tokens' => null],
         ]);
 });
 
-test('prism stream adapter maps prism 0.99 step start and step finish events', function () {
+test('prism stream adapter maps step start and step finish, with the step usage and finish reason', function () {
     $session = new StreamSession(
         streamId: 'stream-6',
         executionId: 'exec-6',
@@ -211,7 +215,7 @@ test('prism stream adapter maps prism 0.99 step start and step finish events', f
     );
 
     $stepStart = new StepStartEvent('step-start-1', 300);
-    $stepFinish = new StepFinishEvent('step-finish-1', 310);
+    $stepFinish = new StepFinishEvent('step-finish-1', 310, new Usage(7, 2), finishReason: FinishReason::ToolCalls);
     $textDelta = new TextDeltaEvent('evt-delta', 305, 'Hello', 'msg-1');
 
     $startMapped = $adapter->adapt($stepStart);
@@ -226,9 +230,11 @@ test('prism stream adapter maps prism 0.99 step start and step finish events', f
         ])
         ->and($finishMapped)->not->toBeNull()
         ->and($finishMapped->type())->toBe('step_finish')
-        ->and($finishMapped->payload())->toMatchArray([
+        ->and($finishMapped->payload())->toBe([
             'id' => 'step-finish-1',
             'timestamp' => 310,
+            'finish_reason' => 'ToolCalls',
+            'usage' => ['prompt_tokens' => 7, 'completion_tokens' => 2, 'cache_write_input_tokens' => null, 'cache_read_input_tokens' => null, 'thought_tokens' => null],
         ])
         ->and($deltaMapped)->not->toBeNull()
         ->and($deltaMapped->type())->toBe('text_delta')
@@ -276,19 +282,17 @@ test('node stream accumulator rebuilds thinking deltas', function () {
     expect($result->get('thinking'))->toBe('Step 1 Step 2');
 });
 
-test('node stream accumulator handles multiple messages', function () {
+test('node stream accumulator keeps the final step text as a string (one message id per step)', function () {
     $state = new State;
     $accumulator = new NodeStreamAccumulator($state);
 
-    $accumulator->apply(makeStreamEvent('text_delta', ['message_id' => 'msg-1', 'delta' => 'Hello']));
-    $accumulator->apply(makeStreamEvent('text_delta', ['message_id' => 'msg-2', 'delta' => 'World']));
+    $accumulator->apply(makeStreamEvent('step_start', ['id' => 'step-1']));
+    $accumulator->apply(makeStreamEvent('text_delta', ['message_id' => 'msg-1', 'delta' => 'Checking.']));
+    $accumulator->apply(makeStreamEvent('step_finish', ['id' => 'step-1-end']));
+    $accumulator->apply(makeStreamEvent('step_start', ['id' => 'step-2']));
+    $accumulator->apply(makeStreamEvent('text_delta', ['message_id' => 'msg-2', 'delta' => 'Final.']));
 
-    $result = $accumulator->finalize();
-
-    expect($result->get('text'))->toBe([
-        'msg-1' => 'Hello',
-        'msg-2' => 'World',
-    ]);
+    expect($accumulator->finalize()->get('text'))->toBe('Final.');
 });
 
 test('node stream accumulator handles empty streams', function () {

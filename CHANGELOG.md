@@ -2,6 +2,14 @@
 
 ## 0.2.0 (unreleased)
 
+### Multi-step streaming (B13b B)
+- Tool runs with `maxSteps > 1` and MCP now stream every step when a sink is bound (they ran non-streamed before). `explain()['stream']` follows.
+- **BREAKING (stream wire):** Prism's StreamStart and StreamEnd map to new `stream_start` and `stream_end` events (they were `step_start` and `step_finish`, so one step gave two of each). `stream_end` carries the request's `finish_reason` and cumulative `usage` (plus `citations`, `additional_content`); `stream_start` carries `model`, `provider`, `metadata`. `step_start` and `step_finish` are now one pair per step; `step_finish` gains that step's `finish_reason` and `usage`. Every streamed graph's sequence changes.
+- **Behavior change:** a streamed tool run's `LlmResponse::$text` is the final step's text, as non-streamed (it concatenated every step). New `LlmResponse::$steps` (`list<LlmStep>`: text, tool calls, results, usage, finish reason per step) for tool and MCP runs, and `steps` in `toArray()`.
+- **Behavior change:** `NodeStreamAccumulator` sets `text` to the final step's text as a string (it was an array when a node streamed several message ids).
+- A streamed node attempt that already emitted content is not retried at node level (unchanged rule), so a multi-step run that fails in a later step fails the node.
+- Documented: a structured retry after a streamed attempt runs without streaming (unchanged since B13b A); its reply is in the result, not on the wire.
+
 ### Structured output: retry, `as()`, `structuredMode()` (B13b A)
 - New: `structuredMode(string|StructuredMode)` on `LlmRequest` (`auto`, `json`, `structured`). Only the OpenAI provider reads it; any other provider throws a `LogicException` before the call. Shown in `explain()['settings']['structured_mode']`; in the cache key only when set.
 - New: structured retry. A reply that does not decode, or does not fit `as()`, is sent again with the failed reply and the error appended. Config `agenticgraph.prism.structured.retries` (`AGENTICGRAPH_PRISM_STRUCTURED_RETRIES`, default `1`, read with that default in code; `0` throws at once). `PrismRouter` pins 0 (it has its own retry). **Behavior change:** the silent streamed-to-non-streamed fallback is gone; the streamed reply is attempt 1 and a failure retries or throws.

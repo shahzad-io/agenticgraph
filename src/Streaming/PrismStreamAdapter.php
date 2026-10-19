@@ -20,6 +20,7 @@ use Prism\Prism\Streaming\Events\ThinkingEvent;
 use Prism\Prism\Streaming\Events\ThinkingStartEvent;
 use Prism\Prism\Streaming\Events\ToolCallEvent;
 use Prism\Prism\Streaming\Events\ToolResultEvent;
+use Prism\Prism\ValueObjects\Usage;
 use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
 
 final class PrismStreamAdapter
@@ -78,6 +79,10 @@ final class PrismStreamAdapter
         }
     }
 
+    /**
+     * stream_start and stream_end wrap the whole request (end: cumulative usage); step_start and step_finish wrap each
+     * model call of a tool run (finish: that step's usage and finish reason).
+     */
     private function resolveType(PrismStreamEvent $event): ?string
     {
         return match (true) {
@@ -89,8 +94,8 @@ final class PrismStreamAdapter
             $event instanceof ThinkingStartEvent => 'thinking_start',
             $event instanceof ThinkingEvent => 'thinking_delta',
             $event instanceof ThinkingCompleteEvent => 'thinking_complete',
-            $event instanceof StreamStartEvent => 'step_start',
-            $event instanceof StreamEndEvent => 'step_finish',
+            $event instanceof StreamStartEvent => 'stream_start',
+            $event instanceof StreamEndEvent => 'stream_end',
             $event instanceof StepStartEvent => 'step_start',
             $event instanceof StepFinishEvent => 'step_finish',
             $event instanceof ProviderToolEvent => 'provider_tool_event',
@@ -159,13 +164,7 @@ final class PrismStreamAdapter
                 'id' => $event->id,
                 'timestamp' => $event->timestamp,
                 'finish_reason' => $event->finishReason->name,
-                'usage' => $event->usage ? [
-                    'prompt_tokens' => $event->usage->promptTokens,
-                    'completion_tokens' => $event->usage->completionTokens,
-                    'cache_write_input_tokens' => $event->usage->cacheWriteInputTokens,
-                    'cache_read_input_tokens' => $event->usage->cacheReadInputTokens,
-                    'thought_tokens' => $event->usage->thoughtTokens,
-                ] : null,
+                'usage' => $this->usage($event->usage),
                 'citations' => $event->citations,
                 'additional_content' => $event->additionalContent,
             ],
@@ -176,6 +175,8 @@ final class PrismStreamAdapter
             $event instanceof StepFinishEvent => [
                 'id' => $event->id,
                 'timestamp' => $event->timestamp,
+                'finish_reason' => $event->finishReason?->name,
+                'usage' => $this->usage($event->usage),
             ],
             $event instanceof ProviderToolEvent => [
                 'event_key' => $event->eventKey(),
@@ -203,5 +204,19 @@ final class PrismStreamAdapter
             ],
             default => null,
         };
+    }
+
+    /**
+     * @return array{prompt_tokens: int, completion_tokens: int, cache_write_input_tokens: int|null, cache_read_input_tokens: int|null, thought_tokens: int|null}|null
+     */
+    private function usage(?Usage $usage): ?array
+    {
+        return $usage === null ? null : [
+            'prompt_tokens' => $usage->promptTokens,
+            'completion_tokens' => $usage->completionTokens,
+            'cache_write_input_tokens' => $usage->cacheWriteInputTokens,
+            'cache_read_input_tokens' => $usage->cacheReadInputTokens,
+            'thought_tokens' => $usage->thoughtTokens,
+        ];
     }
 }

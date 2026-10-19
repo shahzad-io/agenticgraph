@@ -14,12 +14,15 @@ use Prism\Prism\Enums\StructuredMode;
 use Prism\Prism\Exceptions\PrismException;
 use Prism\Prism\Exceptions\PrismStructuredDecodingException;
 use Prism\Prism\Streaming\Events\ErrorEvent;
+use Prism\Prism\Streaming\Events\StepFinishEvent;
+use Prism\Prism\Streaming\Events\StepStartEvent;
 use Prism\Prism\Streaming\Events\StreamEndEvent;
+use Prism\Prism\Streaming\Events\StreamStartEvent;
 use Prism\Prism\Streaming\Events\ToolCallEvent;
 use Prism\Prism\Streaming\Events\ToolResultEvent;
 use Prism\Prism\Structured\PendingRequest as PendingStructuredRequest;
 use Prism\Prism\Text\PendingRequest as PendingTextRequest;
-use Prism\Prism\Text\Response as TextResponse;
+use Prism\Prism\Text\Step;
 use Prism\Prism\Tool;
 use Prism\Prism\ValueObjects\Messages\AssistantMessage;
 use Prism\Prism\ValueObjects\Messages\SystemMessage;
@@ -50,8 +53,8 @@ use Shahzad\AgenticGraph\Tracing\TraceContext;
  * (timeouts on every path), streams, caches, wraps tools for tracing and dispatches TokensUsed.
  *
  * Streaming matrix: text streams when a sink is bound; a schema streams only when it is a Prism Schema and the
- * request uses prompt() (schema prompt; a reply that fails is retried non-streamed, see structured.retries); single-step tool calls stream; multi-step tool runs
- * and MCP do not. Caching: off by default; never for tools, MCP, streamed calls or media.
+ * request uses prompt() (schema prompt; a reply that fails is retried non-streamed, see structured.retries); tool runs
+ * stream every step, MCP included. Caching: off by default; never for tools, MCP, streamed calls or media.
  *
  * @internal Used by {@see LlmRequest} and PrismRouter.
  */
@@ -196,10 +199,6 @@ final class LlmExecutor
     {
         if ($call->stream === false || $this->streamContext() === null) {
             return false;
-        }
-
-        if ($call->toolRequest) {
-            return $call->mcp === [] && ($call->maxSteps ?? 1) <= 1;
         }
 
         if ($call->schema !== null) {
@@ -616,53 +615,33 @@ final class LlmExecutor
             $request->withMaxSteps($call->maxSteps);
         }
 
-        if ($this->streams($call)) {
+        $streamed = $this->streams($call);
+        if ($streamed) {
             $stream = $this->stream($request);
-            $this->dispatchToolCalls($stream['toolCalls'], $toolType);
-            $this->dispatchUsage($startTime, $model, $callType, $stream['usage'], $call->promptForTrace(), $stream['text'], streamed: true);
-
-            return new LlmResponse(
-                text: $stream['text'],
-                toolCalls: $stream['toolCalls'],
-                toolResults: $this->toolRunResults($stream['toolResults']),
-                usage: $stream['usage'],
-                finishReason: $stream['finishReason'],
-            );
+            [$text, $usage, $finishReason, $raw] = [$stream['text'], $stream['usage'], $stream['finishReason'], $stream['steps']];
+            $traceUsage = $usage;
+        } else {
+            $response = $request->asText();
+            [$text, $usage, $finishReason, $traceUsage] = [$response->text, $response->usage, $response->finishReason, $this->resolveUsage($response)];
+            $raw = $response->steps->isEmpty()
+                ? [['text' => $response->text, 'toolCalls' => $response->toolCalls, 'toolResults' => $response->toolResults, 'usage' => $response->usage, 'finishReason' => $response->finishReason]]
+                : $response->steps->map(fn (Step $step): array => ['text' => $step->text, 'toolCalls' => $step->toolCalls, 'toolResults' => $step->toolResults, 'usage' => $step->usage, 'finishReason' => $step->finishReason])->all();
         }
 
-        $response = $request->asText();
-        [$toolCalls, $toolResults] = $this->toolsOfEveryStep($response);
+        // Pairs results with wrapper errors step by step, in call order (toolRunResults consumes them).
+        $steps = array_map(fn (array $step): LlmStep => new LlmStep($step['text'], array_values($step['toolCalls']), $this->toolRunResults(array_values($step['toolResults'])), $step['usage'], $step['finishReason']), array_values($raw));
+        $toolCalls = array_merge(...array_map(fn (LlmStep $step): array => $step->toolCalls, $steps));
         $this->dispatchToolCalls($toolCalls, $toolType);
-        $this->dispatchUsage($startTime, $model, $callType, $this->resolveUsage($response), $call->promptForTrace(), $response->text);
+        $this->dispatchUsage($startTime, $model, $callType, $traceUsage, $call->promptForTrace(), $text, streamed: $streamed);
 
         return new LlmResponse(
-            text: $response->text,
+            text: $text,
             toolCalls: $toolCalls,
-            toolResults: $this->toolRunResults($toolResults),
-            usage: $response->usage,
-            finishReason: $response->finishReason,
+            toolResults: array_merge(...array_map(fn (LlmStep $step): array => $step->toolResults, $steps)),
+            usage: $usage,
+            finishReason: $finishReason,
+            steps: $steps,
         );
-    }
-
-    /**
-     * Prism's own toolCalls and toolResults hold only the final step's.
-     *
-     * @return array{0: list<ToolCall>, 1: list<ToolResult>}
-     */
-    private function toolsOfEveryStep(TextResponse $response): array
-    {
-        if ($response->steps->isEmpty()) {
-            return [array_values($response->toolCalls), array_values($response->toolResults)];
-        }
-
-        $toolCalls = [];
-        $toolResults = [];
-        foreach ($response->steps as $step) {
-            array_push($toolCalls, ...$step->toolCalls);
-            array_push($toolResults, ...$step->toolResults);
-        }
-
-        return [$toolCalls, $toolResults];
     }
 
     private function cacheHit(LlmCall $call, string $model, string $cacheKey, float $startTime): LlmResponse
@@ -691,8 +670,9 @@ final class LlmExecutor
 
     /**
      * Emits every adapted event to the sink, in order, through one adapter for the request (the B2 wire contract).
+     * Text is the final step's, as non-streamed; usage and finish reason are the request's (StreamEnd), each step keeps its own.
      *
-     * @return array{text: string, usage: Usage|null, finishReason: FinishReason|null, toolCalls: list<ToolCall>, toolResults: list<ToolResult>}
+     * @return array{text: string, usage: Usage|null, finishReason: FinishReason|null, steps: list<array{text: string, toolCalls: list<ToolCall>, toolResults: list<ToolResult>, usage: Usage|null, finishReason: FinishReason|null}>}
      */
     private function stream(PendingTextRequest $request): array
     {
@@ -706,12 +686,23 @@ final class LlmExecutor
             spanId: $traceContext?->getSpanId(),
             parentSpanId: $traceContext?->getParentSpanId()
         );
-        $result = ['text' => '', 'usage' => null, 'finishReason' => null, 'toolCalls' => [], 'toolResults' => []];
+        $result = ['text' => '', 'usage' => null, 'finishReason' => null, 'steps' => []];
+        $blank = ['text' => '', 'toolCalls' => [], 'toolResults' => [], 'usage' => null, 'finishReason' => null];
+        $step = $blank;
         $error = null;
 
         foreach ($request->asStream() as $event) {
+            if ($event instanceof StepStartEvent || ($result['steps'] === [] && ! $event instanceof StreamStartEvent)) {
+                $result['steps'][] = $blank;
+            }
+            if ($result['steps'] !== []) {
+                $step = &$result['steps'][array_key_last($result['steps'])];
+            }
             if ($event instanceof ErrorEvent) {
                 $error = $event;
+            }
+            if ($event instanceof StepFinishEvent) {
+                [$step['usage'], $step['finishReason']] = [$event->usage, $event->finishReason];
             }
             if ($event instanceof StreamEndEvent) {
                 $result['finishReason'] = $event->finishReason;
@@ -720,7 +711,7 @@ final class LlmExecutor
                 }
             }
             if ($event instanceof ToolResultEvent) {
-                $result['toolResults'][] = $event->toolResult;
+                $step['toolResults'][] = $event->toolResult;
             }
             $streamEvent = $adapter->adapt($event);
             if ($streamEvent === null) {
@@ -728,12 +719,14 @@ final class LlmExecutor
             }
             $sink->emit($streamEvent);
             if ($event instanceof ToolCallEvent) {
-                $result['toolCalls'][] = $event->toolCall;
+                $step['toolCalls'][] = $event->toolCall;
             }
             if ($streamEvent->type() === 'text_delta' && is_string($delta = $streamEvent->payload()['delta'] ?? null)) {
-                $result['text'] .= $delta;
+                $step['text'] .= $delta;
             }
         }
+        unset($step);
+        $result['text'] = $result['steps'] === [] ? '' : $result['steps'][array_key_last($result['steps'])]['text'];
 
         // Prism 0.102 ends an in-stream error as a normal stream with finish reason Error; a non-streamed call throws.
         if ($result['finishReason'] === FinishReason::Error) {

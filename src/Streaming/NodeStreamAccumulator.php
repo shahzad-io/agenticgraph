@@ -9,7 +9,8 @@ use Shahzad\AgenticGraph\Streaming\Contracts\StreamEvent;
 
 final class NodeStreamAccumulator
 {
-    private mixed $textsByMessageId = [];
+    /** The current step's text; null until the stream has text. */
+    private ?string $text = null;
 
     private mixed $toolCallDeltasById = [];
 
@@ -43,14 +44,16 @@ final class NodeStreamAccumulator
         $reasoningId = $payload['id'] ?? ($payload['reasoning_id'] ?? null);
 
         switch ($event->type()) {
+            case 'step_start':
+                // The text is the final step's, as LlmResponse::text.
+                $this->text = $this->text === null ? null : '';
+                break;
             case 'text_start':
-                if ($messageId !== null && ! isset($this->textsByMessageId[$messageId])) {
-                    $this->textsByMessageId[$messageId] = '';
-                }
+                $this->text ??= '';
                 break;
             case 'text_delta':
-                if ($messageId !== null && is_string($payload['delta'] ?? null)) {
-                    $this->textsByMessageId[$messageId] = ($this->textsByMessageId[$messageId] ?? '').$payload['delta'];
+                if (is_string($payload['delta'] ?? null)) {
+                    $this->text = ($this->text ?? '').$payload['delta'];
                 }
                 break;
             case 'tool_call_delta':
@@ -112,8 +115,8 @@ final class NodeStreamAccumulator
     {
         $state = $this->state;
 
-        if ($this->textsByMessageId !== []) {
-            $state = $state->set($this->textKey, $this->normalizeSingle($this->textsByMessageId));
+        if ($this->text !== null) {
+            $state = $state->set($this->textKey, $this->text);
         }
 
         if ($this->toolCallsById !== []) {

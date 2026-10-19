@@ -9,6 +9,7 @@ use Prism\Prism\Schema\ObjectSchema;
 use Prism\Prism\Schema\StringSchema;
 use Prism\Prism\Testing\StructuredResponseFake;
 use Prism\Prism\Testing\TextResponseFake;
+use Prism\Prism\Testing\TextStepFake;
 use Prism\Prism\Tool;
 use Prism\Prism\ValueObjects\Media\Image;
 use Prism\Prism\ValueObjects\Media\Text;
@@ -16,6 +17,7 @@ use Prism\Prism\ValueObjects\Messages\AssistantMessage;
 use Prism\Prism\ValueObjects\Messages\SystemMessage;
 use Prism\Prism\ValueObjects\Messages\UserMessage;
 use Prism\Prism\ValueObjects\ToolCall;
+use Prism\Prism\ValueObjects\ToolResult;
 use Prism\Prism\ValueObjects\Usage;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\TokensUsed;
@@ -69,6 +71,15 @@ function llmText(string $text = 'ok'): TextResponseFake
 function llmStructured(array $data = ['label' => 'ok']): StructuredResponseFake
 {
     return StructuredResponseFake::make()->withStructured($data)->withText(json_encode($data))->withUsage(new Usage(5, 1));
+}
+
+function llmTwoSteps(): TextResponseFake
+{
+    return llmText('Final.')->withUsage(new Usage(30, 7))->withSteps(collect([
+        TextStepFake::make()->withText('Checking.')->withFinishReason(FinishReason::ToolCalls)->withUsage(new Usage(10, 2))
+            ->withToolCalls([new ToolCall('c1', 'lookup', ['q' => 'a'])])->withToolResults([new ToolResult('c1', 'lookup', ['q' => 'a'], 'found a')]),
+        TextStepFake::make()->withText('Final.')->withUsage(new Usage(20, 5)),
+    ]));
 }
 
 function llmSchema(string $field = 'label'): ObjectSchema
@@ -423,16 +434,54 @@ describe('streaming matrix', function () {
         'single-step tools' => [fn (LlmRequest $llm) => $llm->prompt('a')->tools([llmTool()])->run(), fn () => [llmText()]],
     ]);
 
-    it('does not stream multi-step tool runs or MCP', function (Closure $build) {
+    it('streams multi-step tool runs and MCP', function (Closure $build) {
         $sink = llmBindSink();
 
         llmRecorded([$build], [llmText()]);
 
-        expect(iterator_count($sink->events()))->toBe(0);
+        expect(iterator_count($sink->events()))->toBeGreaterThan(0);
     })->with([
         'maxSteps > 1' => fn (LlmRequest $llm) => $llm->prompt('a')->tools([llmTool()])->maxSteps(3)->run(),
         'mcp' => fn (LlmRequest $llm) => $llm->prompt('a')->mcp('docs', ['tools' => [llmTool()]])->run(),
     ]);
+
+    it('streams a tool run as one stream_start and stream_end around one step_start and step_finish per step; text is the final step', function () {
+        $sink = llmBindSink();
+        // The fake replays every step whatever maxSteps says, so the single-step path (streamed before B13b) shows it too.
+        Prism::fake([llmTwoSteps()]);
+
+        $response = (new LlmProbeNode)->call(fn (LlmRequest $llm) => $llm->prompt('a')->tools([llmTool()])->run());
+
+        $events = array_values(array_filter(iterator_to_array($sink->events(), false), fn ($e) => ! str_starts_with($e->type(), 'text_')));
+        $byType = fn (string $type): array => array_values(array_map(fn ($e) => $e->payload(), array_filter($events, fn ($e) => $e->type() === $type)));
+        $usage = fn (int $in, int $out): array => ['prompt_tokens' => $in, 'completion_tokens' => $out, 'cache_write_input_tokens' => null, 'cache_read_input_tokens' => null, 'thought_tokens' => null];
+
+        expect(array_map(fn ($e) => $e->type(), $events))->toBe(['stream_start', 'step_start', 'tool_call', 'tool_result', 'step_finish', 'step_start', 'step_finish', 'stream_end'])
+            ->and(array_map(fn (array $p): array => [$p['finish_reason'], $p['usage']], $byType('step_finish')))->toBe([['ToolCalls', $usage(10, 2)], ['Stop', $usage(20, 5)]])
+            ->and([$byType('stream_end')[0]['finish_reason'], $byType('stream_end')[0]['usage']])->toBe(['Stop', $usage(30, 7)])
+            ->and($response->text)->toBe('Final.')
+            ->and($response->usage?->promptTokens)->toBe(30)
+            ->and(array_map(fn ($step) => [$step->text, count($step->toolCalls), count($step->toolResults), $step->usage?->promptTokens, $step->finishReason], $response->steps))
+            ->toBe([['Checking.', 1, 1, 10, FinishReason::ToolCalls], ['Final.', 0, 0, 20, FinishReason::Stop]]);
+    });
+
+    it('returns the final step text of a streamed tool run, as non-streamed', function () {
+        llmBindSink();
+        Prism::fake([llmTwoSteps()]);
+
+        expect((new LlmProbeNode)->call(fn (LlmRequest $llm) => $llm->prompt('a')->tools([llmTool()])->run())->text)->toBe('Final.');
+    });
+
+    it('keeps the steps of a non-streamed tool run with the final step as text', function () {
+        Prism::fake([llmTwoSteps()]);
+
+        $response = (new LlmProbeNode)->call(fn (LlmRequest $llm) => $llm->prompt('a')->tools([llmTool()])->maxSteps(2)->run());
+
+        expect($response->text)->toBe('Final.')
+            ->and(array_map(fn ($step) => $step->toArray()['text'], $response->steps))->toBe(['Checking.', 'Final.'])
+            ->and($response->toArray()['steps'][0]['tool_results'][0]['tool_name'])->toBe('lookup')
+            ->and($response->toArray()['steps'][1]['usage']['prompt_tokens'])->toBe(20);
+    });
 });
 
 describe('terminals', function () {
