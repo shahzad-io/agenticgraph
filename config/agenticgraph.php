@@ -85,6 +85,10 @@ return [
         'cache_enabled' => env('AGENTICGRAPH_PRISM_CACHE', false),
         'cache_ttl' => env('AGENTICGRAPH_PRISM_CACHE_TTL', 60),
         'max_tokens' => env('AGENTICGRAPH_PRISM_MAX_TOKENS', null), // max output tokens per PrismNode call; null = no limit sent
+        // Extra model calls when a structured reply does not decode or fit as(); the error is fed back. 0 = fail at once.
+        'structured' => [
+            'retries' => env('AGENTICGRAPH_PRISM_STRUCTURED_RETRIES', 1),
+        ],
         'reasoning' => [
             // Token budgets for a reasoning level on providers that take a budget (Anthropic); no package defaults.
             'budgets' => [

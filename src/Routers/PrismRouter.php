@@ -158,6 +158,7 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
             cache: false,
             stream: false,
             structuredTraceAsJson: true,
+            structuredRetries: 0,
         ))->structured;
 
         if (! is_array($structured) || ! isset($structured['route']) || ! is_string($structured['route'])) {

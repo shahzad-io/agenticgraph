@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Shahzad\AgenticGraph\Llm;
 
 use Prism\Prism\Contracts\Message;
+use Prism\Prism\Enums\StructuredMode;
 use Prism\Prism\Enums\ToolChoice;
 use Prism\Prism\Exceptions\PrismStructuredDecodingException;
 use Prism\Prism\ValueObjects\Media\Media;
@@ -70,6 +71,11 @@ final class LlmRequest
     private ?string $reasoning = null;
 
     private ?int $reasoningBudget = null;
+
+    private ?string $structuredMode = null;
+
+    /** @var class-string|null */
+    private ?string $dto = null;
 
     public function __construct(private readonly LlmExecutor $executor) {}
 
@@ -232,6 +238,45 @@ final class LlmRequest
         return $request;
     }
 
+    /**
+     * How the provider is asked for structured output: auto, json (json_object) or structured (json_schema). Only
+     * the OpenAI provider reads it (Prism); any other provider throws before the call. Not applied to a streamed attempt.
+     */
+    public function structuredMode(string|StructuredMode $mode): self
+    {
+        $value = $mode instanceof StructuredMode ? strtolower($mode->name) : strtolower($mode);
+        if (! in_array($value, ['auto', 'json', 'structured'], true)) {
+            throw new \InvalidArgumentException("structuredMode() takes auto, json or structured, got [{$value}].");
+        }
+
+        return $this->with('structuredMode', $value);
+    }
+
+    /**
+     * Hydrates the structured reply into this class (constructor parameters or public properties; nested DTOs, enums,
+     * date-times, lists through #[ListOf]). A reply that does not fit is retried like a decode failure; read the
+     * object with data() or run()->data.
+     *
+     * @param  class-string  $class
+     */
+    public function as(string $class): self
+    {
+        if (! class_exists($class)) {
+            throw new \InvalidArgumentException("as() needs an existing class, got [{$class}].");
+        }
+
+        return $this->with('dto', $class);
+    }
+
+    public function data(): object
+    {
+        if ($this->dto === null) {
+            throw new \LogicException('data() needs as().');
+        }
+
+        return $this->run()->data ?? throw new \LogicException('The reply has no hydrated object.');
+    }
+
     public function text(): string
     {
         return $this->run()->text;
@@ -269,6 +314,9 @@ final class LlmRequest
 
     private function toCall(): LlmCall
     {
+        if (($this->dto !== null || $this->structuredMode !== null) && $this->schema === null) {
+            throw new \LogicException('as() and structuredMode() need schema().');
+        }
         if ($this->schema !== null && $this->toolRequest) {
             throw new \LogicException('schema() cannot be combined with tools() or mcp().');
         }
@@ -307,6 +355,8 @@ final class LlmRequest
             providerOptions: $this->providerOptions,
             reasoning: $this->reasoning,
             reasoningBudget: $this->reasoningBudget,
+            structuredMode: $this->structuredMode,
+            dto: $this->dto,
             cache: $this->cache,
             cacheTtl: $this->cacheTtl,
         );

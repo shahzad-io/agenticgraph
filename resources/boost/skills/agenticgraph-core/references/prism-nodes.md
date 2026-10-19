@@ -78,20 +78,28 @@ final class LeadProfileNode extends PrismNode
 }
 ```
 
-### Gateway and custom OpenAI model names
+### Retry and `as(Dto::class)`
 
-Since Prism 0.102, an OpenAI-provider model name Prism does not recognise (a custom name on an OpenAI-compatible gateway such as LiteLLM) gets strict `json_schema` structured output; only `gpt-3.5-turbo*`, `gpt-4`, `gpt-4-*` and `gpt-4o-2024-05-13` stay on `json_object`. A gateway or local server that rejects `json_schema` answers with a 400. Prism has a per-request switch for this, `StructuredMode::Json` (`->usingStructuredMode(StructuredMode::Json)` on the structured request, which sends `json_object` and asks for JSON in the prompt). `llm()` has no setter for it, so a node that needs it builds that one request on the raw client:
+Prism checks only that a structured reply is JSON. A reply that does not decode, or does not fit `->as(Ticket::class)`, is sent again with the failed reply and the error appended; `agenticgraph.prism.structured.retries` (`AGENTICGRAPH_PRISM_STRUCTURED_RETRIES`) extra calls, default `1`, `0` throws at once. It replaces the old silent streamed-to-non-streamed fallback. `as()` hydrates by reflection (constructor or public properties; scalars, nullable and union types, backed enums, date-times, nested classes, lists via `#[ListOf(Item::class)]` or `@param list<Item> $items`), strict, extra keys ignored; errors name the path (`lines.1.price`). It needs `schema()` and does not derive it. Read it with `->data()` or `run()->data`.
 
 ```php
-$out = $this->prismClient()->structured()
-    ->using('openai', 'my-gateway-model')
-    ->usingStructuredMode(StructuredMode::Json)
-    ->withSchema($schema)
-    ->withPrompt('...')
-    ->asStructured()->structured;
+$ticket = $this->llm()->prompt('{mail}')->vars(['mail' => $mail])->schema($schema)->as(Ticket::class)->data();
 ```
 
-That request is not traced, cached, streamed or token-tracked (`llm()` does those); `GatewayStructuredModeTest` pins both wire shapes. Prefer a gateway model that accepts `json_schema`.
+Constrain values in the schema first (enums, required fields); the retry is a safety net. Measured on one model and prompt, 20 calls each: enum left as a plain string, 3 of 20 needed the retry; enum in the schema, 0 of 20.
+
+`run()->attempts` counts calls and `run()->usage` sums them; when Prism discarded a failed attempt's usage, `usage` is `null` (unknown, never zero) with a warning.
+
+### Gateway and custom OpenAI model names
+
+Since Prism 0.102, an OpenAI-provider model name Prism does not recognise (a custom name on an OpenAI-compatible gateway such as LiteLLM) gets strict `json_schema` structured output; only `gpt-3.5-turbo*`, `gpt-4`, `gpt-4-*` and `gpt-4o-2024-05-13` stay on `json_object`. A gateway or local server that rejects `json_schema` answers with a 400. Prism has a per-request switch for this, `StructuredMode::Json` (`->usingStructuredMode(StructuredMode::Json)` on the structured request, which sends `json_object` and asks for JSON in the prompt). `->structuredMode('json')` on the request sets it (`auto`, `json`, `structured`):
+
+```php
+$out = $this->llm()->prompt('...')->schema($schema)->structuredMode('json')->structured();
+```
+
+Only the OpenAI provider reads a mode; any other provider throws before the call. A streamed attempt ignores it.
+`GatewayStructuredModeTest` pins both wire shapes. Prefer a gateway model that accepts `json_schema`.
 
 ## A tool loop
 

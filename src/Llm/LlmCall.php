@@ -28,6 +28,9 @@ final readonly class LlmCall
      * @param  array<string, mixed>  $providerOptions  merged over the node's, call wins per key
      * @param  bool|null  $stream  false never streams (PrismRouter); null follows the streaming matrix
      * @param  string|null  $reasoning  off, low, medium or high; this call's, wins over the node's
+     * @param  string|null  $structuredMode  auto, json or structured (OpenAI only); this call's
+     * @param  class-string|null  $dto  hydrate the structured reply into this class
+     * @param  int|null  $structuredRetries  overrides config agenticgraph.prism.structured.retries (PrismRouter pins 0)
      * @param  bool  $structuredTraceAsJson  TokensUsed response is the JSON of the structured data (PrismRouter parity)
      */
     public function __construct(
@@ -50,6 +53,9 @@ final readonly class LlmCall
         public bool $structuredTraceAsJson = false,
         public ?string $reasoning = null,
         public ?int $reasoningBudget = null,
+        public ?string $structuredMode = null,
+        public ?string $dto = null,
+        public ?int $structuredRetries = null,
     ) {}
 
     /**

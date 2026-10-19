@@ -2,6 +2,12 @@
 
 ## 0.2.0 (unreleased)
 
+### Structured output: retry, `as()`, `structuredMode()` (B13b A)
+- New: `structuredMode(string|StructuredMode)` on `LlmRequest` (`auto`, `json`, `structured`). Only the OpenAI provider reads it; any other provider throws a `LogicException` before the call. Shown in `explain()['settings']['structured_mode']`; in the cache key only when set.
+- New: structured retry. A reply that does not decode, or does not fit `as()`, is sent again with the failed reply and the error appended. Config `agenticgraph.prism.structured.retries` (`AGENTICGRAPH_PRISM_STRUCTURED_RETRIES`, default `1`, read with that default in code; `0` throws at once). `PrismRouter` pins 0 (it has its own retry). **Behavior change:** the silent streamed-to-non-streamed fallback is gone; the streamed reply is attempt 1 and a failure retries or throws.
+- New: `as(Dto::class)`, `data()`, `LlmResponse::$data`, `#[ListOf]`, `StructuredHydrationException`. Reflection-only hydration (constructor or public properties; scalars, nullable and union types, backed enums, date-times, nested classes, typed lists), strict, errors name the path and expected type.
+- Fixed: `LlmResponse::$usage` of a structured call now sums every attempt (the streamed attempt's usage was lost after a fallback). New `LlmResponse::$attempts` and `attempts` in `toArray()`. When Prism discards the usage of a failed non-streamed attempt, `usage` is `null` with a warning (never zero) and `TokensUsed` is dispatched only for attempts whose usage is known.
+
 The trace wire (`agenticgraph.trace.v1.1`, the v1 contract plus the v1.1 amendment) is frozen; later changes are additive. The contract is `spec/tracing-wire-v1.md`, locked by `TraceWireContractFreezeTest`.
 
 ### Trace JSON Schema and wire fixes (B13s)

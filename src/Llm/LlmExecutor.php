@@ -10,6 +10,7 @@ use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Support\Facades\Log;
 use Prism\Prism\Contracts\Schema;
 use Prism\Prism\Enums\FinishReason;
+use Prism\Prism\Enums\StructuredMode;
 use Prism\Prism\Exceptions\PrismException;
 use Prism\Prism\Exceptions\PrismStructuredDecodingException;
 use Prism\Prism\Streaming\Events\ErrorEvent;
@@ -20,6 +21,7 @@ use Prism\Prism\Structured\PendingRequest as PendingStructuredRequest;
 use Prism\Prism\Text\PendingRequest as PendingTextRequest;
 use Prism\Prism\Text\Response as TextResponse;
 use Prism\Prism\Tool;
+use Prism\Prism\ValueObjects\Messages\AssistantMessage;
 use Prism\Prism\ValueObjects\Messages\SystemMessage;
 use Prism\Prism\ValueObjects\Messages\UserMessage;
 use Prism\Prism\ValueObjects\ToolCall;
@@ -34,6 +36,7 @@ use Shahzad\AgenticGraph\Events\TokensUsed;
 use Shahzad\AgenticGraph\Events\ToolCallCaptured;
 use Shahzad\AgenticGraph\Exceptions\MissingModelException;
 use Shahzad\AgenticGraph\Exceptions\ReasoningException;
+use Shahzad\AgenticGraph\Exceptions\StructuredHydrationException;
 use Shahzad\AgenticGraph\Facades\Trace;
 use Shahzad\AgenticGraph\Prompts\MessageSerializer;
 use Shahzad\AgenticGraph\Streaming\PrismStreamAdapter;
@@ -47,13 +50,15 @@ use Shahzad\AgenticGraph\Tracing\TraceContext;
  * (timeouts on every path), streams, caches, wraps tools for tracing and dispatches TokensUsed.
  *
  * Streaming matrix: text streams when a sink is bound; a schema streams only when it is a Prism Schema and the
- * request uses prompt() (schema prompt plus a decode fallback); single-step tool calls stream; multi-step tool runs
+ * request uses prompt() (schema prompt; a reply that fails is retried non-streamed, see structured.retries); single-step tool calls stream; multi-step tool runs
  * and MCP do not. Caching: off by default; never for tools, MCP, streamed calls or media.
  *
  * @internal Used by {@see LlmRequest} and PrismRouter.
  */
 final class LlmExecutor
 {
+    private const DEFAULT_STRUCTURED_RETRIES = 1;
+
     /**
      * Errors the tool wrapper saw in the current request, keyed by tool name and arguments, in call order.
      *
@@ -91,6 +96,8 @@ final class LlmExecutor
      *     max_tokens: array{value: int|null, source: string},
      *     provider_options: array{value: array<string, mixed>, source: string},
      *     reasoning: array{value: array{level: string|null, budget: int|null, options: array<string, mixed>, note: string|null}, source: string},
+     *     structured_mode: array{value: string|null, source: string},
+     *     structured_retries: array{value: int, source: string},
      *     track_tokens: array{value: bool, source: string},
      *     timeout: array{value: int, source: string},
      *     connect_timeout: array{value: int, source: string},
@@ -124,10 +131,33 @@ final class LlmExecutor
                 },
             ],
             'reasoning' => $reasoning,
+            'structured_mode' => $this->structuredModeSetting($call, $model['value']),
+            'structured_retries' => $call->structuredRetries !== null
+                ? ['value' => max(0, $call->structuredRetries), 'source' => 'call']
+                : ['value' => max(0, (int) config('agenticgraph.prism.structured.retries', self::DEFAULT_STRUCTURED_RETRIES)), 'source' => 'config'],
             'track_tokens' => ['value' => $this->trackTokens, 'source' => 'node'],
             'timeout' => ['value' => (int) config('agenticgraph.api.timeout', 30), 'source' => 'config'],
             'connect_timeout' => ['value' => (int) config('agenticgraph.api.connect_timeout', 10), 'source' => 'config'],
         ];
+    }
+
+    /**
+     * Prism's OpenAI handler is the only one that reads a structured mode; any other provider would ignore it silently.
+     *
+     * @return array{value: string|null, source: string}
+     */
+    private function structuredModeSetting(LlmCall $call, string $model): array
+    {
+        if ($call->structuredMode === null) {
+            return ['value' => null, 'source' => 'default'];
+        }
+
+        $provider = self::parseModel($model)[0];
+        if ($provider !== 'openai') {
+            throw new \LogicException("structuredMode() is read only by the [openai] provider (and OpenAI-compatible gateways through it); the [{$provider}] provider would ignore it. Remove it for this call.");
+        }
+
+        return ['value' => $call->structuredMode, 'source' => 'call'];
     }
 
     /**
@@ -303,7 +333,7 @@ final class LlmExecutor
 
         if ($this->streams($call)) {
             return $call->schema !== null
-                ? $this->streamStructured($call, $settings, $model, $startTime)
+                ? $this->structuredWithRetry($call, $settings, $model, $startTime, streamFirst: true)
                 : $this->streamText($call, $settings, $model, $startTime);
         }
 
@@ -314,7 +344,7 @@ final class LlmExecutor
         }
 
         $response = $call->schema !== null
-            ? $this->structured($call, $settings, $model, $startTime)
+            ? $this->structuredWithRetry($call, $settings, $model, $startTime)
             : $this->text($call, $settings, $model, $startTime);
 
         if ($cacheKey !== null) {
@@ -443,21 +473,89 @@ final class LlmExecutor
     }
 
     /**
+     * Attempt 1 (streamed when asked), then up to structured.retries more non-streamed attempts, each with the failed
+     * reply and the error appended. A failure is a reply that does not decode or does not fit as(). Every attempt that
+     * reports usage is dispatched; the response sums them, or has no usage at all when an attempt's is unknown.
+     *
      * @param  array<string, mixed>  $settings
      */
-    private function structured(LlmCall $call, array $settings, string $model, float $startTime): LlmResponse
+    private function structuredWithRetry(LlmCall $call, array $settings, string $model, float $startTime, bool $streamFirst = false): LlmResponse
+    {
+        $retries = $settings['structured_retries']['value'];
+        $usages = [];
+        $feedback = null;
+
+        for ($attempt = 1; ; $attempt++) {
+            $response = $streamFirst && $attempt === 1
+                ? $this->streamedAttempt($call, $settings, $model, $startTime)
+                : $this->structuredAttempt($call, $settings, $model, $startTime, $feedback);
+            $usages[] = $response->usage;
+
+            $data = null;
+            try {
+                if ($response->structured === null) {
+                    throw PrismStructuredDecodingException::make($response->text);
+                }
+                $data = $call->dto !== null ? DtoHydrator::hydrate($call->dto, $response->structured) : null;
+            } catch (PrismStructuredDecodingException|StructuredHydrationException $e) {
+                if ($attempt > $retries) {
+                    throw $e;
+                }
+                $feedback = [$response->text, $e instanceof StructuredHydrationException ? $e->getMessage() : 'The reply was not a valid JSON object.'];
+
+                continue;
+            }
+
+            $known = ! in_array(null, $usages, true);
+
+            return new LlmResponse(
+                text: $response->text,
+                structured: $response->structured,
+                usage: $known ? $this->sumUsage($usages) : null,
+                finishReason: $response->finishReason,
+                warnings: $known ? [] : ['Token usage is unknown: Prism discards the usage of a structured attempt that fails to decode, so only the attempts it reported are in the trace.'],
+                data: $data,
+                attempts: $attempt,
+            );
+        }
+    }
+
+    /**
+     * One non-streamed structured call. A reply Prism cannot decode comes back as structured null with the reply text
+     * and no usage (Prism throws and drops the usage), so the caller can retry.
+     *
+     * @param  array<string, mixed>  $settings
+     * @param  array{0: string, 1: string}|null  $feedback  the failed reply and the error to show the model
+     */
+    private function structuredAttempt(LlmCall $call, array $settings, string $model, float $startTime, ?array $feedback = null): LlmResponse
     {
         $request = $this->configure($this->client->structured(), $settings)->withSchema($call->schema);
-        if ($call->prompt !== null) {
+        if ($settings['structured_mode']['value'] !== null) {
+            $request->usingStructuredMode(constant(StructuredMode::class.'::'.ucfirst($settings['structured_mode']['value'])));
+        }
+        $messages = $call->prompt !== null ? [new UserMessage($call->prompt, $call->media)] : $call->messages;
+        if ($feedback !== null) {
+            $messages = [
+                ...$messages,
+                new AssistantMessage(mb_strimwidth($feedback[0], 0, 4000, '...') ?: '(empty reply)'),
+                new UserMessage("Your previous reply was rejected: {$feedback[1]}\nReply again with only JSON that matches the schema."),
+            ];
+        }
+        if ($feedback === null && $call->prompt !== null) {
             $request->withPrompt($call->prompt, $call->media);
-            if ($call->system !== null) {
-                $request->withSystemPrompt($call->system);
-            }
         } else {
-            $request->withMessages($call->messages);
+            $request->withMessages($messages);
+        }
+        if ($call->prompt !== null && $call->system !== null) {
+            $request->withSystemPrompt($call->system);
         }
 
-        $response = $request->asStructured();
+        try {
+            $response = $request->asStructured();
+        } catch (PrismStructuredDecodingException $e) {
+            return new LlmResponse(text: str_replace('Structured object could not be decoded. Received: ', '', $e->getMessage()));
+        }
+
         $traceResponse = $call->structuredTraceAsJson && is_array($response->structured)
             ? json_encode($response->structured, JSON_THROW_ON_ERROR)
             : $response->text;
@@ -467,12 +565,11 @@ final class LlmExecutor
     }
 
     /**
-     * Streams the prompt with the schema appended as instructions, then decodes; a reply that is not a JSON object
-     * falls back to one non-streamed structured call.
+     * Streams the prompt with the schema appended as instructions, then decodes (structured null when it does not).
      *
      * @param  array<string, mixed>  $settings
      */
-    private function streamStructured(LlmCall $call, array $settings, string $model, float $startTime): LlmResponse
+    private function streamedAttempt(LlmCall $call, array $settings, string $model, float $startTime): LlmResponse
     {
         assert($call->schema instanceof Schema && $call->prompt !== null);
         $schemaPrompt = $this->buildStructuredPrompt($call->prompt, $call->schema);
@@ -483,10 +580,20 @@ final class LlmExecutor
         try {
             $structured = $this->decodeStructuredResponseText($stream['text']);
         } catch (PrismStructuredDecodingException) {
-            return $this->structured($call, $settings, $model, $startTime);
+            $structured = null;
         }
 
         return new LlmResponse(text: $stream['text'], structured: $structured, usage: $stream['usage'], finishReason: $stream['finishReason']);
+    }
+
+    /**
+     * @param  list<Usage|null>  $usages  all known
+     */
+    private function sumUsage(array $usages): Usage
+    {
+        $sum = fn (string $field): ?int => array_reduce($usages, fn (?int $carry, ?Usage $u): ?int => $u?->{$field} === null ? $carry : ($carry ?? 0) + $u->{$field}, null);
+
+        return new Usage((int) $sum('promptTokens'), (int) $sum('completionTokens'), $sum('cacheWriteInputTokens'), $sum('cacheReadInputTokens'), $sum('thoughtTokens'));
     }
 
     /**
@@ -576,7 +683,10 @@ final class LlmExecutor
             ));
         }
 
-        return new LlmResponse(text: $structured !== null ? '' : $text, structured: $structured, cached: true);
+        // A cached reply that no longer fits as() throws; the entry is left alone.
+        $data = $call->dto !== null && $structured !== null ? DtoHydrator::hydrate($call->dto, $structured) : null;
+
+        return new LlmResponse(text: $structured !== null ? '' : $text, structured: $structured, cached: true, data: $data);
     }
 
     /**
@@ -653,6 +763,7 @@ final class LlmExecutor
     private function cacheKey(LlmCall $call, array $settings): string
     {
         $payload = json_encode([
+            ...($settings['structured_mode']['value'] !== null ? ['structured_mode' => $settings['structured_mode']['value']] : []),
             'model' => $settings['model']['value'],
             'max_tokens' => $settings['max_tokens']['value'],
             'provider_options' => $settings['provider_options']['value'],
