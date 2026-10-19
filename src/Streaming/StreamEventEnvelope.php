@@ -23,7 +23,7 @@ use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
  * - Wire body: {@see self::FROZEN_WIRE_BODY_KEYS} (snake_case JSON; `type` is NOT in the body)
  * - Event `type` carried externally (SSE `event:` line / broadcast event name)
  * - Closed framework/lifecycle type strings ({@see StreamLifecycleEventTypes}, envelope constants)
- * - Prism content type set (version-pinned to Prism ^0.100.1, i.e. >=0.100.1 <0.101.0)
+ * - Prism content type set (version-pinned to Prism ^0.102.0, i.e. >=0.102.0 <0.103.0)
  * - Open author types via streamEvent() (any string + author payload)
  * - Broadcast channel convention and terminal contracts (stream_close / execution_terminal)
  * - SSE connection lifecycle and control events (`control` key, no id, no seq; see StreamController)

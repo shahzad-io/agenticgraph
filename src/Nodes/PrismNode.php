@@ -245,7 +245,8 @@ abstract class PrismNode extends AbstractNode
 
         $response = $request->asText();
 
-        if ($this->trackTokens) {
+        // Duration-billed transcriptions (whisper-1, Groq) report no token usage: nothing to track.
+        if ($this->trackTokens && $response->usage !== null) {
             $durationMs = (microtime(true) - $startTime) * 1000;
             $this->events()->dispatch(TokensUsed::fromLlmCall(
                 node: $this->getName(),

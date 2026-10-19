@@ -64,7 +64,7 @@ describe('the option Prism receives per provider', function () {
         'openai high' => ['openai:o3', 'high', ['reasoning' => ['effort' => 'high']]],
         'gemini off' => ['gemini:gemini-2.5-flash', 'off', ['thinkingBudget' => 0]],
         'gemini medium' => ['gemini:gemini-2.5-flash', 'medium', ['thinkingLevel' => 'medium']],
-        'anthropic off' => ['anthropic:claude-x', 'off', ['thinking' => ['enabled' => false]]],
+        'anthropic off' => ['anthropic:claude-x', 'off', ['thinking' => ['type' => 'disabled']]],
         'anthropic medium' => ['anthropic:claude-x', 'medium', ['thinking' => ['enabled' => true, 'budgetTokens' => 4096]]],
         'openrouter off' => ['openrouter:vendor/model', 'off', ['reasoning' => ['enabled' => false]]],
         'openrouter high' => ['openrouter:vendor/model', 'high', ['reasoning' => ['effort' => 'high']]],
@@ -180,6 +180,36 @@ describe('precedence, merge, explain and cache key', function () {
 
         expect($key('low'))->not->toBe($key('high'))->and($key('low'))->not->toBe($key(null));
     });
+});
+
+describe('the request body Prism 0.102 sends per provider', function () {
+    // Real handlers, faked HTTP: what the mapped option becomes on the wire (text, streamed and structured paths read the same keys).
+    it('puts each mapped option where the vendor reads it', function (string $model, string $host, ?string $level, ?int $budget, Closure $body) {
+        config()->set('prism.providers.anthropic.api_key', 'k');
+        config()->set('prism.providers.gemini.api_key', 'k');
+        config()->set('prism.providers.openrouter.api_key', 'k');
+        config()->set('prism.providers.openai.api_key', 'k');
+        Http::fake(["{$host}/*" => Http::response(['error' => ['message' => 'stop here']], 400)]);
+
+        try {
+            (new ReasoningProbeNode($model, $level, $budget))->call(fn (LlmRequest $llm) => $llm->prompt('hi')->run());
+        } catch (Throwable) {
+            // The body is what is asserted.
+        }
+
+        Http::assertSent(fn ($request) => $body($request->data()));
+    })->with([
+        'openai low' => ['openai:o3', 'api.openai.com', 'low', null, fn (array $d) => $d['reasoning'] === ['effort' => 'low']],
+        'gemini budget' => ['gemini:gemini-2.5-flash', 'generativelanguage.googleapis.com', null, 128, fn (array $d) => $d['generationConfig']['thinkingConfig'] === ['thinkingBudget' => 128]],
+        'gemini off' => ['gemini:gemini-2.5-flash', 'generativelanguage.googleapis.com', 'off', null, fn (array $d) => $d['generationConfig']['thinkingConfig'] === ['thinkingBudget' => 0]],
+        'gemini level' => ['gemini:gemini-3-pro', 'generativelanguage.googleapis.com', 'high', null, fn (array $d) => $d['generationConfig']['thinkingConfig'] === ['thinkingLevel' => 'high']],
+        'anthropic budget' => ['anthropic:claude-sonnet-4-5', 'api.anthropic.com', null, 2048, fn (array $d) => $d['thinking'] === ['type' => 'enabled', 'budget_tokens' => 2048]],
+        'anthropic off' => ['anthropic:claude-sonnet-5-5', 'api.anthropic.com', 'off', null, fn (array $d) => ($d['thinking'] ?? null) === ['type' => 'disabled']],
+        'openrouter budget' => ['openrouter:vendor/model', 'openrouter.ai', null, 512, fn (array $d) => $d['reasoning'] === ['max_tokens' => 512]],
+        'openrouter off' => ['openrouter:vendor/model', 'openrouter.ai', 'off', null, fn (array $d) => $d['reasoning'] === ['enabled' => false]],
+        'ollama off' => ['ollama:qwen3', 'localhost:11434', 'off', null, fn (array $d) => $d['think'] === false],
+        'ollama high' => ['ollama:qwen3', 'localhost:11434', 'high', null, fn (array $d) => $d['think'] === true],
+    ]);
 });
 
 describe('after the call', function () {

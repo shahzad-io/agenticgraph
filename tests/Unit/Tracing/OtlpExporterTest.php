@@ -468,3 +468,22 @@ it('exports exactly one root span for an interrupted then resumed trace, in the 
         ->and($roots[0]['export'])->toBe(1)
         ->and($roots[0]['status']['code'] ?? null)->toBe(1);
 });
+
+it('maps cache tokens to the pinned gen_ai attributes and sends input_tokens including them', function (): void {
+    $attrs = otlpAttrs(['node_name' => 'n llm', 'span_type' => 'llm', 'model' => 'openai:gpt-4o', 'prompt_tokens' => 10, 'completion_tokens' => 4, 'cache_read_tokens' => 80, 'cache_write_tokens' => 5]);
+
+    expect($attrs['gen_ai.usage.input_tokens'])->toBe(95)
+        ->and($attrs['gen_ai.usage.output_tokens'])->toBe(4)
+        ->and($attrs['gen_ai.usage.cache_read.input_tokens'])->toBe(80)
+        ->and($attrs['gen_ai.usage.cache_write.input_tokens'])->toBe(5)
+        ->and($attrs['agenticgraph.cache_read_tokens'])->toBe(80)
+        ->and($attrs['agenticgraph.cache_write_tokens'])->toBe(5)
+        ->and($attrs)->not->toHaveKeys(['cache_read_tokens', 'cache_write_tokens']);
+});
+
+it('sends no cache attributes and the plain prompt count when the provider reported none', function (): void {
+    $attrs = otlpAttrs(['node_name' => 'n llm', 'span_type' => 'llm', 'model' => 'openai:gpt-4o', 'prompt_tokens' => 10, 'completion_tokens' => 4]);
+
+    expect($attrs['gen_ai.usage.input_tokens'])->toBe(10)
+        ->and($attrs)->not->toHaveKeys(['gen_ai.usage.cache_read.input_tokens', 'gen_ai.usage.cache_write.input_tokens', 'agenticgraph.cache_read_tokens']);
+});

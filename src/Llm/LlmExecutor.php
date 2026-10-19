@@ -12,6 +12,7 @@ use Prism\Prism\Contracts\Schema;
 use Prism\Prism\Enums\FinishReason;
 use Prism\Prism\Exceptions\PrismException;
 use Prism\Prism\Exceptions\PrismStructuredDecodingException;
+use Prism\Prism\Streaming\Events\ErrorEvent;
 use Prism\Prism\Streaming\Events\StreamEndEvent;
 use Prism\Prism\Streaming\Events\ToolCallEvent;
 use Prism\Prism\Streaming\Events\ToolResultEvent;
@@ -596,8 +597,12 @@ final class LlmExecutor
             parentSpanId: $traceContext?->getParentSpanId()
         );
         $result = ['text' => '', 'usage' => null, 'finishReason' => null, 'toolCalls' => [], 'toolResults' => []];
+        $error = null;
 
         foreach ($request->asStream() as $event) {
+            if ($event instanceof ErrorEvent) {
+                $error = $event;
+            }
             if ($event instanceof StreamEndEvent) {
                 $result['finishReason'] = $event->finishReason;
                 if ($event->usage !== null) {
@@ -618,6 +623,11 @@ final class LlmExecutor
             if ($streamEvent->type() === 'text_delta' && is_string($delta = $streamEvent->payload()['delta'] ?? null)) {
                 $result['text'] .= $delta;
             }
+        }
+
+        // Prism 0.102 ends an in-stream error as a normal stream with finish reason Error; a non-streamed call throws.
+        if ($result['finishReason'] === FinishReason::Error) {
+            throw new PrismException('The stream ended with an error'.($error instanceof ErrorEvent ? " ({$error->errorType}): {$error->message}" : '.'));
         }
 
         return $result;
@@ -660,7 +670,7 @@ final class LlmExecutor
     }
 
     /**
-     * @param  array{promptTokens: int, completionTokens: int, thoughtTokens: int|null}|Usage|null  $usage
+     * @param  array{promptTokens: int, completionTokens: int, thoughtTokens: int|null, cacheReadTokens: int|null, cacheWriteTokens: int|null}|Usage|null  $usage
      */
     private function dispatchUsage(float $startTime, string $model, string $callType, array|Usage|null $usage, ?string $prompt, ?string $response, bool $streamed = false): void
     {
@@ -675,6 +685,8 @@ final class LlmExecutor
             promptTokens: $usage instanceof Usage ? (int) $usage->promptTokens : $usage['promptTokens'],
             completionTokens: $usage instanceof Usage ? (int) $usage->completionTokens : $usage['completionTokens'],
             thoughtTokens: $usage instanceof Usage ? $usage->thoughtTokens : $usage['thoughtTokens'],
+            cacheReadTokens: $usage instanceof Usage ? $usage->cacheReadInputTokens : $usage['cacheReadTokens'],
+            cacheWriteTokens: $usage instanceof Usage ? $usage->cacheWriteInputTokens : $usage['cacheWriteTokens'],
             callType: $callType,
             model: $model,
             prompt: $prompt,
@@ -686,7 +698,7 @@ final class LlmExecutor
     /**
      * The response's usage, else the sum of its steps' usage.
      *
-     * @return array{promptTokens: int, completionTokens: int, thoughtTokens: int|null}|null
+     * @return array{promptTokens: int, completionTokens: int, thoughtTokens: int|null, cacheReadTokens: int|null, cacheWriteTokens: int|null}|null
      */
     private function resolveUsage(object $response): ?array
     {
@@ -695,21 +707,31 @@ final class LlmExecutor
                 'promptTokens' => (int) ($response->usage->promptTokens ?? 0),
                 'completionTokens' => (int) ($response->usage->completionTokens ?? 0),
                 'thoughtTokens' => isset($response->usage->thoughtTokens) ? (int) $response->usage->thoughtTokens : null,
+                'cacheReadTokens' => isset($response->usage->cacheReadInputTokens) ? (int) $response->usage->cacheReadInputTokens : null,
+                'cacheWriteTokens' => isset($response->usage->cacheWriteInputTokens) ? (int) $response->usage->cacheWriteInputTokens : null,
             ];
         }
 
         $promptTokens = 0;
         $completionTokens = 0;
         $thoughtTokens = null;
+        $cacheReadTokens = null;
+        $cacheWriteTokens = null;
         foreach (property_exists($response, 'steps') && is_iterable($response->steps) ? $response->steps : [] as $step) {
             $promptTokens += (int) ($step->usage->promptTokens ?? 0);
             $completionTokens += (int) ($step->usage->completionTokens ?? 0);
             if (isset($step->usage->thoughtTokens)) {
                 $thoughtTokens = ($thoughtTokens ?? 0) + (int) $step->usage->thoughtTokens;
             }
+            if (isset($step->usage->cacheReadInputTokens)) {
+                $cacheReadTokens = ($cacheReadTokens ?? 0) + (int) $step->usage->cacheReadInputTokens;
+            }
+            if (isset($step->usage->cacheWriteInputTokens)) {
+                $cacheWriteTokens = ($cacheWriteTokens ?? 0) + (int) $step->usage->cacheWriteInputTokens;
+            }
         }
 
-        return $promptTokens === 0 && $completionTokens === 0 ? null : ['promptTokens' => $promptTokens, 'completionTokens' => $completionTokens, 'thoughtTokens' => $thoughtTokens];
+        return $promptTokens === 0 && $completionTokens === 0 ? null : ['promptTokens' => $promptTokens, 'completionTokens' => $completionTokens, 'thoughtTokens' => $thoughtTokens, 'cacheReadTokens' => $cacheReadTokens, 'cacheWriteTokens' => $cacheWriteTokens];
     }
 
     private function buildStructuredPrompt(string $prompt, Schema $schema): string

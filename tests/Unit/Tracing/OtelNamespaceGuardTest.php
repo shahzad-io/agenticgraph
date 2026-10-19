@@ -23,6 +23,8 @@ const VERIFIED_OTEL_ATTRIBUTES = [
     'gen_ai.request.stream',
     'gen_ai.usage.input_tokens',
     'gen_ai.usage.output_tokens',
+    'gen_ai.usage.cache_read.input_tokens',
+    'gen_ai.usage.cache_write.input_tokens',
     'gen_ai.tool.name',
     'gen_ai.tool.call.id',
 ];

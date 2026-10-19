@@ -9,7 +9,7 @@ namespace Shahzad\AgenticGraph\Tracing\Otlp;
  */
 final class OtlpPayloadBuilder
 {
-    private const LLM_FIELDS = ['model', 'prompt_tokens', 'completion_tokens', 'total_tokens', 'cost_usd', 'cached', 'streamed', 'thought_tokens'];
+    private const LLM_FIELDS = ['model', 'prompt_tokens', 'completion_tokens', 'total_tokens', 'cost_usd', 'cached', 'streamed', 'thought_tokens', 'cache_read_tokens', 'cache_write_tokens'];
 
     /** Prism provider names whose OTel gen_ai.provider.name well-known value differs. */
     private const OTEL_PROVIDERS = ['gemini' => 'gcp.gemini', 'mistral' => 'mistral_ai', 'xai' => 'x_ai'];
@@ -187,7 +187,7 @@ final class OtlpPayloadBuilder
     private function genAiAttributes(array $span, ?array $llmCall): array
     {
         $attributes = [];
-        foreach (['total_tokens', 'cost_usd', 'cached', 'thought_tokens'] as $key) {
+        foreach (['total_tokens', 'cost_usd', 'cached', 'thought_tokens', 'cache_read_tokens', 'cache_write_tokens'] as $key) {
             if (isset($span[$key])) {
                 $attributes['agenticgraph.'.$key] = $span[$key];
             }
@@ -213,8 +213,18 @@ final class OtlpPayloadBuilder
             $attributes['gen_ai.provider.name'] = self::OTEL_PROVIDERS[$provider] ?? $provider;
         }
 
+        // OTel: input_tokens SHOULD include cached tokens, and the cache attributes are subsets of it. Our
+        // prompt_tokens is uncached input (usage semantics v2), so the sum is sent.
         if (isset($span['prompt_tokens'])) {
-            $attributes['gen_ai.usage.input_tokens'] = (int) $span['prompt_tokens'];
+            $attributes['gen_ai.usage.input_tokens'] = (int) $span['prompt_tokens'] + (int) ($span['cache_read_tokens'] ?? 0) + (int) ($span['cache_write_tokens'] ?? 0);
+        }
+
+        if (isset($span['cache_read_tokens'])) {
+            $attributes['gen_ai.usage.cache_read.input_tokens'] = (int) $span['cache_read_tokens'];
+        }
+
+        if (isset($span['cache_write_tokens'])) {
+            $attributes['gen_ai.usage.cache_write.input_tokens'] = (int) $span['cache_write_tokens'];
         }
 
         if (isset($span['completion_tokens'])) {

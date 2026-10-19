@@ -47,7 +47,7 @@ final class ReasoningMapper
             'openai' => ['options' => ['reasoning' => ['effort' => $level === 'off' ? self::offValue($provider, $off) : $level]], 'note' => null],
             'gemini' => ['options' => $level === 'off' ? ['thinkingBudget' => 0] : ['thinkingLevel' => $level], 'note' => null],
             'anthropic' => ['options' => $level === 'off'
-                ? ['thinking' => ['enabled' => false]]
+                ? ['thinking' => ['type' => 'disabled']]
                 : self::anthropic(self::levelBudget($level, $budgets), $forcedToolChoice), 'note' => null],
             'openrouter' => ['options' => ['reasoning' => $level === 'off' ? ['enabled' => false] : ['effort' => $level]], 'note' => null],
             'ollama' => ['options' => ['thinking' => $level !== 'off'], 'note' => $level === 'off' ? null : "Ollama thinks or does not: level [{$level}] is reduced to on"],

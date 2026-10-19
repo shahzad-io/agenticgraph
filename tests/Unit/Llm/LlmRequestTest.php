@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Event;
 use Prism\Prism\Enums\FinishReason;
 use Prism\Prism\Enums\ToolChoice;
+use Prism\Prism\Exceptions\PrismException;
 use Prism\Prism\Facades\Prism;
 use Prism\Prism\Schema\ObjectSchema;
 use Prism\Prism\Schema\StringSchema;
@@ -389,6 +390,26 @@ describe('tools', function () {
 });
 
 describe('streaming matrix', function () {
+    it('throws when a stream ends in Error, after the events were emitted', function () {
+        $sink = llmBindSink();
+        Prism::fake([llmText('partial')->withFinishReason(FinishReason::Error)]);
+
+        expect(fn () => (new LlmProbeNode)->call(fn (LlmRequest $llm) => $llm->prompt('a')->text()))
+            ->toThrow(PrismException::class, 'stream ended with an error');
+        expect(iterator_count($sink->events()))->toBeGreaterThan(0);
+    });
+
+    it('returns Length with the real usage for a truncated stream (non-streamed truncation still throws on OpenAI)', function () {
+        llmBindSink();
+        Prism::fake([llmText('cut')->withFinishReason(FinishReason::Length)->withUsage(new Usage(70, 20))]);
+
+        $response = (new LlmProbeNode)->call(fn (LlmRequest $llm) => $llm->prompt('a')->run());
+
+        expect($response->finishReason)->toBe(FinishReason::Length)
+            ->and($response->usage?->completionTokens)->toBe(20)
+            ->and($response->toArray()['finish_reason'])->toBe('length');
+    });
+
     it('streams text, chat, a Prism Schema with prompt() and single-step tools when a sink is bound', function (Closure $build, array $fakes) {
         $sink = llmBindSink();
 
@@ -415,6 +436,16 @@ describe('streaming matrix', function () {
 });
 
 describe('terminals', function () {
+    it('carries the cache buckets from Prism usage to TokensUsed and LlmResponse::toArray()', function () {
+        Event::fake([TokensUsed::class]);
+        Prism::fake([llmText('done')->withUsage(new Usage(20, 5, cacheWriteInputTokens: 7, cacheReadInputTokens: 90, thoughtTokens: 2))]);
+
+        $response = (new LlmProbeNode)->call(fn (LlmRequest $llm) => $llm->prompt('a')->run());
+
+        expect($response->toArray()['usage'])->toBe(['prompt_tokens' => 20, 'completion_tokens' => 5, 'thought_tokens' => 2, 'cache_read_tokens' => 90, 'cache_write_tokens' => 7]);
+        Event::assertDispatched(TokensUsed::class, fn (TokensUsed $e) => $e->promptTokens === 20 && $e->cacheReadTokens === 90 && $e->cacheWriteTokens === 7 && $e->thoughtTokens === 2);
+    });
+
     it('returns text, structured data and an LlmResponse', function () {
         Prism::fake([llmText('hello'), llmStructured(['label' => 'pos']), llmText('done')->withFinishReason(FinishReason::Stop)]);
         $node = new LlmProbeNode;
@@ -438,7 +469,7 @@ describe('terminals', function () {
 
         expect($stored['run'])->toMatchArray(['text' => 'done', 'structured' => null, 'cached' => false])
             ->and($stored['run']['tool_calls'][0]['name'])->toBe('lookup')
-            ->and($stored['run']['usage'])->toBe(['prompt_tokens' => 5, 'completion_tokens' => 1, 'thought_tokens' => null]);
+            ->and($stored['run']['usage'])->toBe(['prompt_tokens' => 5, 'completion_tokens' => 1, 'thought_tokens' => null, 'cache_read_tokens' => null, 'cache_write_tokens' => null]);
     });
 
     it('dispatches the call types text, structured, tools, mcp and cached', function () {

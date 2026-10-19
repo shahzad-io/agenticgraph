@@ -214,6 +214,18 @@ it('emits TokensUsed event from audio transcription helper', function () {
     });
 });
 
+it('emits no TokensUsed for a duration-billed transcription (Prism 0.102 reports null usage)', function () {
+    Event::fake();
+    config()->set('agenticgraph.prism.cache_enabled', false);
+
+    Prism::fake([new TextResponse('hi', null)]);
+
+    $node = new AudioTokenNode;
+    $node->execute(new State);
+
+    Event::assertNotDispatched(TokensUsed::class);
+});
+
 it('TokensUsed event has backward compatible defaults', function () {
     $event = new TokensUsed(
         node: 'TestNode',

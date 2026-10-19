@@ -84,14 +84,17 @@ function openAiText(string $text): array
 function openAiToolCallStream(array $calls): string
 {
     $events = [['type' => 'response.created', 'response' => ['id' => 'resp_s', 'model' => 'gpt-4o-mini']]];
+    $output = [];
     foreach ($calls as $index => [$id, $name, $arguments]) {
         $item = ['type' => 'function_call', 'id' => $id, 'call_id' => 'c'.$id, 'name' => $name, 'arguments' => ''];
         $events[] = ['type' => 'response.output_item.added', 'output_index' => $index, 'item' => $item];
         $events[] = ['type' => 'response.function_call_arguments.delta', 'item_id' => $id, 'delta' => json_encode($arguments)];
         $events[] = ['type' => 'response.function_call_arguments.done', 'item_id' => $id, 'arguments' => json_encode($arguments)];
         $events[] = ['type' => 'response.output_item.done', 'output_index' => $index, 'item' => ['arguments' => json_encode($arguments), 'status' => 'completed'] + $item];
+        $output[] = ['arguments' => json_encode($arguments), 'status' => 'completed'] + $item;
     }
-    $events[] = ['type' => 'response.completed', 'response' => ['id' => 'resp_s', 'status' => 'completed', 'usage' => ['input_tokens' => 10, 'output_tokens' => 5]]];
+    // The real API repeats the output items on response.completed; Prism reads the step's finish reason from them.
+    $events[] = ['type' => 'response.completed', 'response' => ['id' => 'resp_s', 'status' => 'completed', 'output' => $output, 'usage' => ['input_tokens' => 10, 'output_tokens' => 5]]];
 
     return implode('', array_map(fn (array $event): string => 'data: '.json_encode($event)."\n\n", $events))."data: [DONE]\n\n";
 }

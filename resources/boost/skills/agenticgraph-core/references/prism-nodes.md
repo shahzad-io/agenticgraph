@@ -78,6 +78,21 @@ final class LeadProfileNode extends PrismNode
 }
 ```
 
+### Gateway and custom OpenAI model names
+
+Since Prism 0.102, an OpenAI-provider model name Prism does not recognise (a custom name on an OpenAI-compatible gateway such as LiteLLM) gets strict `json_schema` structured output; only `gpt-3.5-turbo*`, `gpt-4`, `gpt-4-*` and `gpt-4o-2024-05-13` stay on `json_object`. A gateway or local server that rejects `json_schema` answers with a 400. Prism has a per-request switch for this, `StructuredMode::Json` (`->usingStructuredMode(StructuredMode::Json)` on the structured request, which sends `json_object` and asks for JSON in the prompt). `llm()` has no setter for it, so a node that needs it builds that one request on the raw client:
+
+```php
+$out = $this->prismClient()->structured()
+    ->using('openai', 'my-gateway-model')
+    ->usingStructuredMode(StructuredMode::Json)
+    ->withSchema($schema)
+    ->withPrompt('...')
+    ->asStructured()->structured;
+```
+
+That request is not traced, cached, streamed or token-tracked (`llm()` does those); `GatewayStructuredModeTest` pins both wire shapes. Prefer a gateway model that accepts `json_schema`.
+
 ## A tool loop
 
 `tools()` defaults to one step and Prism's tool choice. Raise `maxSteps()` so the model can call a tool and then answer. Tools passed to `llm()` are traced; tools added to raw `prism()` are not. Tool requests never cache.
@@ -127,6 +142,10 @@ final class CurrencyNode extends PrismNode
 ```
 
 `run()` returns an `LlmResponse`: `text`, `structured`, `toolCalls` and `toolResults` of every step, `usage`, `finishReason` and `cached`. It is `JsonSerializable`, so it can be stored in state. With one step it holds the requested calls and what each handler returned.
+
+**Usage semantics (Prism 0.102).** One meaning on every provider, in `LlmResponse::$usage`, `toArray()['usage']`, `TokensUsed` and the llm span: `prompt_tokens` is the **uncached** input; `cache_read_tokens` and `cache_write_tokens` are cached input, never inside `prompt_tokens` (so the full input is the sum of the three); `completion_tokens` includes reasoning; `thought_tokens` is the reasoning part of it. The two cache fields and `thought_tokens` are `null` when the provider does not report them and `0` when it reports zero. Cost uses the model's `cache_read` / `cache_write` rate from `config/model_pricing.php` when the entry has one, else its `input` rate. Streamed usage is the sum of every step.
+
+**Finish reasons.** `LlmResponse::$finishReason` (`toArray()['finish_reason']`) is Prism's: `stop`, `length`, `tool-calls`, `content-filter`, `refusal`, `pause`, `error`, `other`, `unknown`. A streamed call that is cut by `$maxTokens` returns `length` with the real usage and the text so far. A non-streamed OpenAI call cut by `$maxTokens` still throws `max tokens exceeded`. A streamed call that ends in an error (a provider error event, `response.failed`) throws a `PrismException` after its events were sent to the stream; a refusal is a normal `refusal` response.
 
 ## MCP tools
 
@@ -190,6 +209,6 @@ class AnswerNode extends PrismNode
 }
 ```
 
-- The package maps the level to the provider's option (OpenAI `reasoning.effort`, Gemini `thinkingLevel` / `thinkingBudget`, Anthropic `thinking` with your budget from `agenticgraph.prism.reasoning.budgets.{low,medium,high}`, OpenRouter `reasoning`, Ollama `thinking`). OpenAI `off` sends the value you set in `agenticgraph.prism.reasoning.off.openai` (it differs per model; no default, missing throws). It knows the provider, never the model: a vendor 4xx comes back as a `ReasoningException` with the level and the option sent.
+- The package maps the level to the provider's option (OpenAI `reasoning.effort`, Gemini `thinkingLevel` / `thinkingBudget`, Anthropic `thinking` (`off` sends `thinking.type = disabled`, which Claude 5 models need because they think by default; a level or budget sends your budget from `agenticgraph.prism.reasoning.budgets.{low,medium,high}`), OpenRouter `reasoning`, Ollama `thinking`). OpenAI `off` sends the value you set in `agenticgraph.prism.reasoning.off.openai` (it differs per model; no default, missing throws). It knows the provider, never the model: a vendor 4xx comes back as a `ReasoningException` with the level and the option sent.
 - `off` that still reports thought tokens: a warning, a `ReasoningNotDisabled` event and `LlmResponse::$warnings`; not an exception.
 - `explain()['settings']['reasoning']` and `['provider_options']` show the level, its source and the exact options passed to Prism.

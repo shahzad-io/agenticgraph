@@ -196,3 +196,30 @@ it('puts interrupt and resume fields in attributes, keeping state_snapshot neste
         ->and($interrupt)->not->toHaveKeys(['interrupt_reason', 'checkpoint_id'])
         ->and($resume)->not->toHaveKey('checkpoint_id');
 });
+
+it('adds cache_read_tokens and cache_write_tokens to the llm span only when reported, and prices them', function (?int $read, ?int $write) {
+    config()->set('model_pricing.models', ['cachey/model' => ['input' => 2.00, 'output' => 8.00, 'cache_read' => 0.50]]);
+    $exporter = new MockPulseExporter;
+    (new TracingListener($exporter))->onTokensUsed(new TokensUsed(
+        node: 'node-a',
+        promptTokens: 1_000_000,
+        completionTokens: 0,
+        totalTokens: 1_000_000,
+        executionId: 'exec_cache',
+        spanId: 'span_c',
+        model: 'cachey:model',
+        durationMs: 1.0,
+        startedAt: new \DateTimeImmutable('2024-01-01 10:00:00'),
+        endedAt: new \DateTimeImmutable('2024-01-01 10:00:00.001'),
+        cacheReadTokens: $read,
+        cacheWriteTokens: $write,
+    ));
+
+    $span = $exporter->spans[0];
+    expect(array_key_exists('cache_read_tokens', $span))->toBe($read !== null)
+        ->and($span['cache_read_tokens'] ?? null)->toBe($read)
+        ->and(array_key_exists('cache_write_tokens', $span))->toBe($write !== null)
+        ->and($span['cache_write_tokens'] ?? null)->toBe($write)
+        ->and($span['total_tokens'])->toBe(1_000_000)
+        ->and($span['cost_usd'])->toBe(round(2.0 + ($read ?? 0) / 1e6 * 0.5 + ($write ?? 0) / 1e6 * 2.0, 6));
+})->with([[1_000_000, 500_000], [0, null], [null, null]]);

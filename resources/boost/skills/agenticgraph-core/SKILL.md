@@ -19,7 +19,7 @@ Other skills, use them when installed: `agenticgraph-streaming` for `stream()`, 
 4. Chat replies: call `->withoutCache()`. Caching is off by default, and tool and MCP requests never cache.
 5. A string passed to `prompt()` is a template. Never join or interpolate runtime values (visitor text, model output, retrieved content) into prompt text; pass them through `vars()` or `history()`. Write literal braces as `{{` and `}}`.
 6. Two templates in one request throw. So do a schema with tools, and a request with only `system()`.
-7. On reasoning models `$maxTokens` includes the reasoning tokens: a limit that suits a normal model can give an empty reply (streamed) or a `max tokens exceeded` error (OpenAI, not streamed and structured). Set the reasoning level on the node (`protected ?string $reasoning`, one of `off`, `low`, `medium`, `high`) or with `->reasoning()` on one request; never in config, and never through raw `$providerOptions` when a level covers it.
+7. On reasoning models `$maxTokens` includes the reasoning tokens: a limit that suits a normal model can give an empty reply (streamed) or a `max tokens exceeded` error (OpenAI, not streamed and structured). A streamed call cut by the limit returns `length` with the real usage. Set the reasoning level on the node (`protected ?string $reasoning`, one of `off`, `low`, `medium`, `high`) or with `->reasoning()` on one request; never in config, and never through raw `$providerOptions` when a level covers it.
 
 ## Task: install and configure
 

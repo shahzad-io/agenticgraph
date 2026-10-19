@@ -77,3 +77,16 @@ it('feeds cost_usd on llm spans and llm_calls from the config calculator', funct
     expect($exporter->spans[0]['cost_usd'])->toBe(2.5)
         ->and($exporter->llmCalls[0]['cost_usd'])->toBe(2.5);
 });
+
+it('prices cached input at the entry cache rates, else at the input rate (usage semantics v2)', function (): void {
+    config()->set('model_pricing.models', [
+        'vendor/priced' => ['input' => 2.00, 'output' => 8.00, 'cache_read' => 0.50, 'cache_write' => 2.50],
+        'vendor/plain' => ['input' => 2.00, 'output' => 8.00],
+    ]);
+    $calculator = new ModelPricingCalculator;
+
+    // 1M uncached + 1M read + 1M written + 1M out
+    expect($calculator->calculate('vendor/priced', 1_000_000, 1_000_000, 1_000_000, 1_000_000)['cost_usd'])->toBe(2.0 + 0.5 + 2.5 + 8.0)
+        ->and($calculator->calculate('vendor/plain', 1_000_000, 1_000_000, 1_000_000, 1_000_000)['cost_usd'])->toBe(2.0 + 2.0 + 2.0 + 8.0)
+        ->and($calculator->calculate('vendor/plain', 1_000_000, 0, null, null)['cost_usd'])->toBe(2.0);
+});

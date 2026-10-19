@@ -42,7 +42,7 @@ final class LlmResponse implements JsonSerializable
     }
 
     /**
-     * @return array{text: string, structured: array<mixed>|null, tool_calls: list<array<string, mixed>>, tool_results: list<array<string, mixed>>, usage: array{prompt_tokens: int, completion_tokens: int, thought_tokens: int|null}|null, finish_reason: string|null, cached: bool, warnings: list<string>}
+     * @return array{text: string, structured: array<mixed>|null, tool_calls: list<array<string, mixed>>, tool_results: list<array<string, mixed>>, usage: array{prompt_tokens: int, completion_tokens: int, thought_tokens: int|null, cache_read_tokens: int|null, cache_write_tokens: int|null}|null, finish_reason: string|null, cached: bool, warnings: list<string>}
      */
     public function toArray(): array
     {
@@ -52,7 +52,7 @@ final class LlmResponse implements JsonSerializable
             'tool_calls' => array_map(fn (ToolCall $call): array => $call->toArray(), $this->toolCalls),
             'tool_results' => array_map(fn (ToolRunResult $result): array => $result->toArray(), $this->toolResults),
             'usage' => $this->usage !== null
-                ? ['prompt_tokens' => $this->usage->promptTokens, 'completion_tokens' => $this->usage->completionTokens, 'thought_tokens' => $this->usage->thoughtTokens]
+                ? ['prompt_tokens' => $this->usage->promptTokens, 'completion_tokens' => $this->usage->completionTokens, 'thought_tokens' => $this->usage->thoughtTokens, 'cache_read_tokens' => $this->usage->cacheReadInputTokens, 'cache_write_tokens' => $this->usage->cacheWriteInputTokens]
                 : null,
             'finish_reason' => $this->finishReason?->value,
             'cached' => $this->cached,

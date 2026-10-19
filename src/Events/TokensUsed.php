@@ -43,6 +43,10 @@ class TokensUsed implements ShouldQueue
         public readonly bool $streamed = false,
         /** Reasoning tokens. Null: the provider does not report them (unknown, not zero). */
         public readonly ?int $thoughtTokens = null,
+        /** Input tokens served from the provider's cache, not part of promptTokens. Null: not reported. */
+        public readonly ?int $cacheReadTokens = null,
+        /** Input tokens written to the provider's cache, not part of promptTokens. Null: not reported. */
+        public readonly ?int $cacheWriteTokens = null,
     ) {}
 
     public static function fromLlmCall(
@@ -57,6 +61,8 @@ class TokensUsed implements ShouldQueue
         ?string $response = null,
         bool $streamed = false,
         ?int $thoughtTokens = null,
+        ?int $cacheReadTokens = null,
+        ?int $cacheWriteTokens = null,
     ): self {
         $clock = ExecutionClock::tryGet();
         $traceContext = TraceContext::tryGet();
@@ -104,6 +110,8 @@ class TokensUsed implements ShouldQueue
             cacheKey: null,
             streamed: $streamed,
             thoughtTokens: $thoughtTokens,
+            cacheReadTokens: $cacheReadTokens,
+            cacheWriteTokens: $cacheWriteTokens,
         );
     }
 

@@ -17,7 +17,7 @@ final class ModelPricingCalculator
     /**
      * @return array{cost_usd: float, pricing_key: ?string, known: bool}
      */
-    public function calculate(?string $model, int $promptTokens, int $completionTokens): array
+    public function calculate(?string $model, int $promptTokens, int $completionTokens, ?int $cacheReadTokens = null, ?int $cacheWriteTokens = null): array
     {
         if ($model === null || trim($model) === '') {
             return [
@@ -38,10 +38,14 @@ final class ModelPricingCalculator
             ];
         }
 
-        /** @var array{input: float|int, output: float|int} $rates */
+        /** @var array{input: float|int, output: float|int, cache_read?: float|int, cache_write?: float|int} $rates */
         $rates = config("model_pricing.models.{$pricingKey}");
 
-        $inputCost = ($promptTokens / 1_000_000) * (float) $rates['input'];
+        // Usage semantics v2: promptTokens is uncached input. Cached input costs the entry's cache_read / cache_write
+        // rate when it has one, else the input rate (what it cost when providers counted it inside the prompt).
+        $inputCost = ($promptTokens / 1_000_000) * (float) $rates['input']
+            + (($cacheReadTokens ?? 0) / 1_000_000) * (float) ($rates['cache_read'] ?? $rates['input'])
+            + (($cacheWriteTokens ?? 0) / 1_000_000) * (float) ($rates['cache_write'] ?? $rates['input']);
         $outputCost = ($completionTokens / 1_000_000) * (float) $rates['output'];
 
         return [
@@ -53,7 +57,7 @@ final class ModelPricingCalculator
 
     public function resolvePricingKey(string $model): ?string
     {
-        /** @var array<string, array{input: float|int, output: float|int}> $models */
+        /** @var array<string, array{input: float|int, output: float|int, cache_read?: float|int, cache_write?: float|int}> $models */
         $models = config('model_pricing.models', []);
 
         if ($models === []) {

@@ -312,7 +312,7 @@ class TracingListener
         $executionId = $event->executionId ?? $traceContext?->getExecutionId();
         $spanId = $event->spanId ?? $traceContext?->getSpanId();
 
-        $pricing = $this->pricingCalculator->calculate($event->model, $event->promptTokens, $event->completionTokens);
+        $pricing = $this->pricingCalculator->calculate($event->model, $event->promptTokens, $event->completionTokens, $event->cacheReadTokens, $event->cacheWriteTokens);
         $cost = $pricing['cost_usd'];
 
         $durationMs = $event->durationMs ?? 0.0;
@@ -347,6 +347,8 @@ class TracingListener
             'cached' => $event->cached,
             'streamed' => $event->streamed,
             ...($event->thoughtTokens !== null ? ['thought_tokens' => $event->thoughtTokens] : []),
+            ...($event->cacheReadTokens !== null ? ['cache_read_tokens' => $event->cacheReadTokens] : []),
+            ...($event->cacheWriteTokens !== null ? ['cache_write_tokens' => $event->cacheWriteTokens] : []),
         ]);
 
         // Build LLM call data with optional prompt/response capture
