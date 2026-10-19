@@ -22,6 +22,7 @@ use Shahzad\AgenticGraph\Console\ExecuteGraphCommand;
 use Shahzad\AgenticGraph\Console\ExecutionsListCommand;
 use Shahzad\AgenticGraph\Console\InterruptExpireCommand;
 use Shahzad\AgenticGraph\Console\ListGraphsCommand;
+use Shahzad\AgenticGraph\Console\ListPromptsCommand;
 use Shahzad\AgenticGraph\Console\SyncModelPricingCommand;
 use Shahzad\AgenticGraph\Console\VisualizeGraphCommand;
 use Shahzad\AgenticGraph\Contracts\InterruptHandlerInterface;
@@ -112,11 +113,14 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
             ->hasCommand(CheckpointCleanupCommand::class)
             ->hasCommand(ExecutionsListCommand::class)
             ->hasCommand(InterruptExpireCommand::class)
-            ->hasCommand(SyncModelPricingCommand::class);
+            ->hasCommand(SyncModelPricingCommand::class)
+            ->hasCommand(ListPromptsCommand::class);
     }
 
     public function packageBooted(): void
     {
+        $this->publishes([__DIR__.'/../resources/prompts' => resource_path('prompts')], 'agenticgraph-prompts');
+
         $this->app->bind(PrismClient::class, PrismFacadeClient::class);
 
         // Bind StorageInterface to the configured storage driver

@@ -274,6 +274,12 @@ it('passes span attributes through without an attributes prefix', function (): v
         ]);
 });
 
+it('sends the llm span prompt.name, prompt.version and prompt.hash as string attributes', function (): void {
+    $attrs = otlpAttrs(['node_name' => 'work llm', 'span_type' => 'llm', 'model' => 'openai:gpt-6-luna', 'attributes' => ['prompt.name' => 'support.reply', 'prompt.version' => '2', 'prompt.hash' => 'a1b2c3d4e5f6']]);
+
+    expect($attrs)->toMatchArray(['prompt.name' => 'support.reply', 'prompt.version' => '2', 'prompt.hash' => 'a1b2c3d4e5f6']);
+});
+
 it('maps http attributes and a connection error to OTel names with an integer status', function (): void {
     $attrs = otlpAttrs([
         'node_name' => 'http_request',

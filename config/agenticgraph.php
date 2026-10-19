@@ -108,6 +108,12 @@ return [
         ],
     ],
 
+    // Prompt files (Markdown with front matter) read by Prompts::get(); publish the stub with
+    // php artisan vendor:publish --tag=agenticgraph-prompts
+    'prompts' => [
+        'path' => env('AGENTICGRAPH_PROMPTS_PATH', resource_path('prompts')),
+    ],
+
     'middleware' => [
         'global' => [
             LoggingMiddleware::class,

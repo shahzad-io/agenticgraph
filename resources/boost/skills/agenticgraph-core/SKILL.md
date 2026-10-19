@@ -169,8 +169,9 @@ Docs: `/docs/nodes`, `/docs/api/nodes`
 - A missing variable throws `TemplateException`.
 - `PromptTemplate::create($template)->withDefaults([...])->withRequired([...])`, then `format($vars)`.
 - `ChatPromptTemplate` keeps role messages. `formatAsString()` is for cache keys and logs, not the request.
+- A long prompt goes in `resources/prompts/{dir}/{name}.md` and is loaded with `chat(Prompts::get('dir.name'))`. Front matter: `name` (the dotted path), `version`, optional `description`; never a model or settings (they stay on the node; it throws). Headings `## system`, `## user`, `## assistant`, `## messages: history`; `###` inside a message. The llm span records `prompt.name`, `prompt.version`, `prompt.hash`. Run `php artisan agenticgraph:prompts` in CI. Example: [references/prism-nodes.md](references/prism-nodes.md).
 
-Docs: `/docs/prompts`, `/docs/api/prompts`
+Docs: `/docs/prompts`, `/docs/guide-prompt-files`, `/docs/api/prompts`
 
 ## Task: manage state
 

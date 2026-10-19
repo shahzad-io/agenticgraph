@@ -33,6 +33,7 @@ final readonly class LlmCall
      * @param  int|null  $structuredRetries  overrides config agenticgraph.prism.structured.retries (PrismRouter pins 0)
      * @param  bool  $structuredTraceAsJson  TokensUsed response is the JSON of the structured data (PrismRouter parity)
      * @param  array{as: string, text: string, items: list<array{id: string|int, content: string, metadata: array<string, mixed>, score: float|null}>}|null  $context  set by context(): the variable, its text and the items
+     * @param  array{name: string, version: string, hash: string}|null  $promptFile  set when chat() got a prompt file
      */
     public function __construct(
         public ?string $prompt = null,
@@ -58,6 +59,7 @@ final readonly class LlmCall
         public ?string $dto = null,
         public ?int $structuredRetries = null,
         public ?array $context = null,
+        public ?array $promptFile = null,
     ) {}
 
     /**

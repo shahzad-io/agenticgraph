@@ -325,6 +325,10 @@ class TracingListener
         $this->calculateSpanTimestamps($eventStartedAt, $eventEndedAt, $durationMs, $traceStartDt, $startedAt, $endedAt);
 
         $parentId = $event->parentSpanId;
+        $attributes = [
+            ...($event->contextCount !== null ? ['context.count' => $event->contextCount, 'context.ids' => $event->contextIds ?? []] : []),
+            ...($event->promptFile !== null ? ['prompt.name' => $event->promptFile['name'], 'prompt.version' => $event->promptFile['version'], 'prompt.hash' => $event->promptFile['hash']] : []),
+        ];
 
         $this->exporter()->addSpan([
             'id' => $spanId ?? uniqid('span_', true),
@@ -349,7 +353,7 @@ class TracingListener
             ...($event->thoughtTokens !== null ? ['thought_tokens' => $event->thoughtTokens] : []),
             ...($event->cacheReadTokens !== null ? ['cache_read_tokens' => $event->cacheReadTokens] : []),
             ...($event->cacheWriteTokens !== null ? ['cache_write_tokens' => $event->cacheWriteTokens] : []),
-            ...($event->contextCount !== null ? ['attributes' => ['context.count' => $event->contextCount, 'context.ids' => $event->contextIds ?? []]] : []),
+            ...($attributes !== [] ? ['attributes' => $attributes] : []),
         ]);
 
         // Build LLM call data with optional prompt/response capture

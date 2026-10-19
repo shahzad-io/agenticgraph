@@ -68,7 +68,7 @@ class FzWorkNode extends PrismNode
         $this->wrapToolsForTracing([$tool], 'prism')[0]->handle('Lisbon');
 
         $start = microtime(true);
-        event(TokensUsed::fromLlmCall('work', $start, 1.0, 3, 5, 'text', 'test:model', 'prompt', 'response', streamed: true, thoughtTokens: 4, cacheReadTokens: 6, cacheWriteTokens: 2, contextCount: 2, contextIds: ['doc-1', '7']));
+        event(TokensUsed::fromLlmCall('work', $start, 1.0, 3, 5, 'text', 'test:model', 'prompt', 'response', streamed: true, thoughtTokens: 4, cacheReadTokens: 6, cacheWriteTokens: 2, contextCount: 2, contextIds: ['doc-1', '7'], promptFile: ['name' => 'support.reply', 'version' => '2', 'hash' => 'a1b2c3d4e5f6']));
         event(TokensUsed::fromCacheHit('work', $start, 0.5, 'test:model', 'prompt', 'response', 'cache:key'));
         event(new ToolCallCaptured(
             executionId: TraceContext::tryGet()?->getExecutionId() ?? '',
@@ -639,6 +639,16 @@ test('schema fail-first: an unknown key, a missing required key or a wrong type 
         },
         'unknown llm attribute' => function (array $d) use ($spanAt) {
             $d['spans'][$spanAt($d, 'llm')]['attributes'] = ['context.count' => 1, 'context.ids' => ['a'], 'context.extra' => 1];
+
+            return $d;
+        },
+        'prompt.name without its version and hash' => function (array $d) use ($spanAt) {
+            $d['spans'][$spanAt($d, 'llm')]['attributes'] = ['prompt.name' => 'support.reply'];
+
+            return $d;
+        },
+        'prompt.hash not 12 hex' => function (array $d) use ($spanAt) {
+            $d['spans'][$spanAt($d, 'llm')]['attributes'] = ['prompt.name' => 'a', 'prompt.version' => '1', 'prompt.hash' => 'XYZ'];
 
             return $d;
         },

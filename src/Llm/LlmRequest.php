@@ -12,6 +12,7 @@ use Prism\Prism\ValueObjects\Media\Media;
 use Prism\Prism\ValueObjects\Media\Text;
 use Shahzad\AgenticGraph\Prompts\ChatPromptMessages;
 use Shahzad\AgenticGraph\Prompts\ChatPromptTemplate;
+use Shahzad\AgenticGraph\Prompts\PromptFile;
 use Shahzad\AgenticGraph\Prompts\PromptTemplate;
 
 /**
@@ -407,6 +408,7 @@ final class LlmRequest
             cache: $this->cache,
             cacheTtl: $this->cacheTtl,
             context: $context,
+            promptFile: $this->template instanceof PromptFile ? $this->template->meta() : null,
         );
     }
 

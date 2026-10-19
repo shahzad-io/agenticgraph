@@ -199,6 +199,31 @@ it('adds context.count and context.ids to the llm span attributes only when cont
     expect($exporter->spans[0]['attributes'] ?? null)->toBe($count === null ? null : ['context.count' => $count, 'context.ids' => array_slice(['a', 'b'], 0, $count)]);
 })->with([0, 2, null]);
 
+it('adds prompt.name, prompt.version and prompt.hash to the llm span attributes only for a prompt file, next to context', function (bool $file) {
+    $exporter = new MockPulseExporter;
+    (new TracingListener($exporter))->onTokensUsed(new TokensUsed(
+        node: 'node-a',
+        promptTokens: 1,
+        completionTokens: 1,
+        totalTokens: 2,
+        executionId: 'exec_prompt',
+        spanId: 'span_p',
+        model: 'openai:o3',
+        durationMs: 1.0,
+        startedAt: new \DateTimeImmutable('2024-01-01 10:00:00'),
+        endedAt: new \DateTimeImmutable('2024-01-01 10:00:00.001'),
+        contextCount: 1,
+        contextIds: ['a'],
+        promptFile: $file ? ['name' => 'support.reply', 'version' => '3', 'hash' => 'abc123def456'] : null,
+    ));
+
+    expect($exporter->spans[0]['attributes'])->toBe([
+        'context.count' => 1,
+        'context.ids' => ['a'],
+        ...($file ? ['prompt.name' => 'support.reply', 'prompt.version' => '3', 'prompt.hash' => 'abc123def456'] : []),
+    ]);
+})->with([true, false]);
+
 it('puts interrupt and resume fields in attributes, keeping state_snapshot nested', function (): void {
     $exporter = new MockPulseExporter;
     $listener = new TracingListener($exporter);

@@ -51,10 +51,13 @@ class TokensUsed implements ShouldQueue
         public readonly ?int $contextCount = null,
         /** @var list<string>|null The first 20 of those items' ids. */
         public readonly ?array $contextIds = null,
+        /** @var array{name: string, version: string, hash: string}|null The prompt file chat() got. Null: none. */
+        public readonly ?array $promptFile = null,
     ) {}
 
     /**
      * @param  list<string>|null  $contextIds
+     * @param  array{name: string, version: string, hash: string}|null  $promptFile
      */
     public static function fromLlmCall(
         string $node,
@@ -72,6 +75,7 @@ class TokensUsed implements ShouldQueue
         ?int $cacheWriteTokens = null,
         ?int $contextCount = null,
         ?array $contextIds = null,
+        ?array $promptFile = null,
     ): self {
         $clock = ExecutionClock::tryGet();
         $traceContext = TraceContext::tryGet();
@@ -123,11 +127,13 @@ class TokensUsed implements ShouldQueue
             cacheWriteTokens: $cacheWriteTokens,
             contextCount: $contextCount,
             contextIds: $contextIds,
+            promptFile: $promptFile,
         );
     }
 
     /**
      * @param  list<string>|null  $contextIds
+     * @param  array{name: string, version: string, hash: string}|null  $promptFile
      */
     public static function fromCacheHit(
         string $node,
@@ -139,6 +145,7 @@ class TokensUsed implements ShouldQueue
         ?string $cacheKey = null,
         ?int $contextCount = null,
         ?array $contextIds = null,
+        ?array $promptFile = null,
     ): self {
         $clock = ExecutionClock::tryGet();
         $traceContext = TraceContext::tryGet();
@@ -184,6 +191,7 @@ class TokensUsed implements ShouldQueue
             cacheKey: $cacheKey,
             contextCount: $contextCount,
             contextIds: $contextIds,
+            promptFile: $promptFile,
         );
     }
 

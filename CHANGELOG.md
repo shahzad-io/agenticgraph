@@ -2,6 +2,13 @@
 
 ## 0.2.0 (unreleased)
 
+### Prompt files (B13b D)
+- New: prompt files. Markdown with front matter under `config('agenticgraph.prompts.path')` (new key, default `resource_path('prompts')`, env `AGENTICGRAPH_PROMPTS_PATH`, read with that default in code). Front matter: `name` (required, the dotted path: `support/reply.md` is `support.reply`), `version` (required), `description` (optional); no model or settings, those stay on the node. Body: `## system`, `## user`, `## assistant` sections and `## messages: <var>` placeholders; `{var}` variables and `{{` `}}` literal braces (the interpolator's rules).
+- New: `Prompts::get($name)` returns a `PromptFile` (a `ChatPromptTemplate` with `name`, `version`, `hash`, `description`, `meta()`), a fresh copy each call, parsed once per process per content hash. `hash` is the first 12 hex of the sha256 of the raw file. Errors throw `TemplateException` naming the file: missing or mismatched `name`, missing `version`, a `model` or settings key, an unknown key, nested YAML, an unknown heading, text before the first heading, an empty section.
+- New: `php artisan agenticgraph:prompts` lists name, version and hash of every file and exits 1 when any is invalid (for CI). Publishable example: `vendor:publish --tag=agenticgraph-prompts`.
+- New: `explain()['prompt']` (`name`, `version`, `hash`; `null` without a prompt file).
+- Trace wire, additive (v1.1): an llm span of a call made with `chat(Prompts::get(...))` carries `prompt.name`, `prompt.version` and `prompt.hash` in `attributes` (also on a cache hit). The schema's llm `attributes` now require each group whole (`dependentRequired`) instead of always requiring the context pair. Registry, wire doc, JSON Schema, OTLP note (strings, passed through), and the freeze-corpus case. `llm_calls` rows are unchanged. `TokensUsed` gains `promptFile`.
+
 ### `context()` (B13b C)
 - New: `context($items, as: 'context', format: ?PromptTemplate, separator: "\n\n")` on `LlmRequest`. `$items` is a list of plain items (`id` string or int, `content`, optional `metadata` and `score`) or any object with `toContextItems(): array` returning that list (structural, no shared interface; core does not import the vector package). Each item renders as its content, or through the `PromptTemplate` with its metadata plus `id`, `content` and `score` (a missing key throws `TemplateException`). The joined text reaches the prompt as the variable `as`, never interpolated again; the same name in `vars()` throws `LogicException`.
 - New: `LlmResponse::sources()` (the items used: `id`, `metadata`, `score`, in prompt order; also on a cache hit) and `sources` in `toArray()` (`[]` without `context()`).

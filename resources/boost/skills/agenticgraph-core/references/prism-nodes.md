@@ -31,6 +31,40 @@ final class DraftNode extends PrismNode
 
 A prompt string is a template: `{word}` is a placeholder and `{{ }}` are literal braces. Put dynamic text (model output, JSON, user input) in `vars()`, never into the template string. `system()`, `user()`, `assistant()` and `history()` are literal.
 
+## A prompt file
+
+```markdown
+---
+name: refund.assess
+version: 2
+---
+
+## system
+
+You assess refunds against the policies. Reply as JSON like {{"decision": "full"}}.
+
+## user
+
+Request: {request}
+
+Policies:
+{policy_context}
+```
+
+```php
+use Shahzad\AgenticGraph\Prompts\Prompts;
+
+// resources/prompts/refund/assess.md; the model and settings stay on the node.
+$assessment = $this->llm()
+    ->chat(Prompts::get('refund.assess'))
+    ->vars(['request' => (string) $state->get('request')])
+    ->context($state->get('policy_docs', []), as: 'policy_context')
+    ->schema($schema)
+    ->structured();
+```
+
+Bump `version` when the prompt changes; the span's `prompt.hash` changes on any edit. `php artisan agenticgraph:prompts` validates every file.
+
 ## Retrieved context
 
 ```php
