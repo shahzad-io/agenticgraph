@@ -90,3 +90,8 @@ it('prices cached input at the entry cache rates, else at the input rate (usage 
         ->and($calculator->calculate('vendor/plain', 1_000_000, 1_000_000, 1_000_000, 1_000_000)['cost_usd'])->toBe(2.0 + 2.0 + 2.0 + 8.0)
         ->and($calculator->calculate('vendor/plain', 1_000_000, 0, null, null)['cost_usd'])->toBe(2.0);
 });
+
+it('ships the OpenAI Standard short-context rates for gpt-6-luna, with cache rates', function (): void {
+    // 1M uncached input + 1M cache read + 1M cache write + 1M output, per developers.openai.com/api/docs/pricing
+    expect((new ModelPricingCalculator)->calculate('openai:gpt-6-luna', 1_000_000, 1_000_000, 1_000_000, 1_000_000)['cost_usd'])->toBe(0.50 + 0.10 + 0.01 + 0.125);
+});

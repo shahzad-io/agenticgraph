@@ -223,3 +223,21 @@ it('adds cache_read_tokens and cache_write_tokens to the llm span only when repo
         ->and($span['total_tokens'])->toBe(1_000_000)
         ->and($span['cost_usd'])->toBe(round(2.0 + ($read ?? 0) / 1e6 * 0.5 + ($write ?? 0) / 1e6 * 2.0, 6));
 })->with([[1_000_000, 500_000], [0, null], [null, null]]);
+
+it('sends a number as llm_calls duration_ms when the event has no measured duration', function () {
+    $exporter = new MockPulseExporter;
+
+    (new TracingListener($exporter))->onTokensUsed(new TokensUsed(
+        node: 'node-a',
+        promptTokens: 1,
+        completionTokens: 1,
+        totalTokens: 2,
+        executionId: 'exec_d',
+        parentSpanId: 'parent_1',
+        spanId: 'span_d',
+        callType: 'text',
+        model: 'openai:gpt-4',
+    ));
+
+    expect($exporter->llmCalls[0]['duration_ms'])->toBe(0.0);
+});

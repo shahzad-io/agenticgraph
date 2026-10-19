@@ -4,6 +4,14 @@
 
 The trace wire (`agenticgraph.trace.v1.1`, the v1 contract plus the v1.1 amendment) is frozen; later changes are additive. The contract is `spec/tracing-wire-v1.md`, locked by `TraceWireContractFreezeTest`.
 
+### Trace JSON Schema and wire fixes (B13s)
+
+- New: `spec/tracing-wire-v1.1.schema.json`, a JSON Schema 2020-12 for the trace wire (segment envelope and merged trace: every span type with its keys, usage semantics v2, vector keys up to v4, `links`, `_meta`, and the merge rules a schema can express). `TraceWireContractFreezeTest` validates the freeze corpus against it; a key change without a schema change fails. `opis/json-schema` is a dev dependency.
+- Pricing: hand-set prices live in `config/model_pricing_overrides.php` (published with the other config). `ModelPricingCalculator` merges it over `config/model_pricing.php` (an override replaces the whole entry) and `agenticgraph:pricing:sync` never writes it; the sync reports the ids an override covers. `openai/gpt-6-luna` moved there from the sync table (OpenAI Standard tier, short context up to 272K input: input 0.10, cached input 0.01, cache write 0.125, output 0.50 per 1M tokens; the cache write rate is marked TODO for a check against the official page).
+- Fixed: a wrapped tool's span now carries `tool.output_size` (the size of the result) at every `tool_results` depth; the key was documented but only a provider-executed tool call could carry it, with a null size. `tool.result_size` (summary depth) is unchanged.
+- Fixed: `llm_calls[].duration_ms` is always a number (0.0 when the event has no measured duration); it could be null.
+- Trace wire, additive: in the merged trace, a `segments` entry of a segment that ended interrupted gains `interrupt` (`{reason, at}`). Before, the merge removed `trace.interrupt_reason` and `trace.interrupted_at` once the run was resumed and nothing recorded that, why or when a segment was interrupted except the interrupt span. Wire doc clarified: `state_diff` and `loop_context` are on successful node attempts, `model` may be null, `active_cycles` is a list of `{cycle, count}`, `tool.request_id` and `gen_ai.tool.call.id` exist only for provider-executed tool calls, and node spans never carry `links`.
+
 ### Prism 0.102 and usage semantics v2 (B13a)
 
 - **BREAKING:** requires `prism-php/prism` `^0.102.0` (was `^0.100.1`), and therefore `laravel/framework` `^12.61.1 || ^13.12.0`. **Laravel 11 is no longer supported** (Prism 0.101 dropped it; the CI matrix, `composer.json`, README and compatibility table follow). `orchestra/testbench` `^10.0|^11.0`.

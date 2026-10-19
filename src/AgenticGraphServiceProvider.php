@@ -91,7 +91,7 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
          */
         $package
             ->name('agenticgraph')
-            ->hasConfigFile(['agenticgraph', 'model_pricing'])
+            ->hasConfigFile(['agenticgraph', 'model_pricing', 'model_pricing_overrides'])
             ->hasViews()
             ->hasMigration('create_agenticgraph_executions_table')
             ->hasMigration('create_agenticgraph_checkpoints_table')

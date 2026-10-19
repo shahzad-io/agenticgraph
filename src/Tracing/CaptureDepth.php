@@ -60,15 +60,20 @@ final class CaptureDepth
     }
 
     /**
+     * `tool.output_size` is always there for a result; `tool.result_size` (same number) and `tool.result` follow the depth.
+     *
      * @return array<string, int|string>
      */
     public static function toolResultForSpan(mixed $result): array
     {
         $text = is_string($result) ? $result : self::encodePayload($result);
+        if ($text === null) {
+            return [];
+        }
 
-        return match (self::mode('tool_results', 'none')) {
-            'full' => $text !== null ? ['tool.result' => self::truncate($text)] : [],
-            'summary' => $text !== null ? ['tool.result_size' => strlen($text)] : [],
+        return ['tool.output_size' => strlen($text)] + match (self::mode('tool_results', 'none')) {
+            'full' => ['tool.result' => self::truncate($text)],
+            'summary' => ['tool.result_size' => strlen($text)],
             default => [],
         };
     }

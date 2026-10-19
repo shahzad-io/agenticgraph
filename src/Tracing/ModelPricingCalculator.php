@@ -7,7 +7,7 @@ namespace Shahzad\AgenticGraph\Tracing;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Calculates LLM call cost from the published model_pricing config.
+ * Calculates LLM call cost from the published model_pricing config, with config/model_pricing_overrides.php merged over it.
  */
 final class ModelPricingCalculator
 {
@@ -38,8 +38,7 @@ final class ModelPricingCalculator
             ];
         }
 
-        /** @var array{input: float|int, output: float|int, cache_read?: float|int, cache_write?: float|int} $rates */
-        $rates = config("model_pricing.models.{$pricingKey}");
+        $rates = $this->models()[$pricingKey];
 
         // Usage semantics v2: promptTokens is uncached input. Cached input costs the entry's cache_read / cache_write
         // rate when it has one, else the input rate (what it cost when providers counted it inside the prompt).
@@ -57,8 +56,7 @@ final class ModelPricingCalculator
 
     public function resolvePricingKey(string $model): ?string
     {
-        /** @var array<string, array{input: float|int, output: float|int, cache_read?: float|int, cache_write?: float|int}> $models */
-        $models = config('model_pricing.models', []);
+        $models = $this->models();
 
         if ($models === []) {
             return null;
@@ -95,6 +93,16 @@ final class ModelPricingCalculator
         usort($matches, fn (string $a, string $b): int => strlen($b) <=> strlen($a));
 
         return $matches[0];
+    }
+
+    /**
+     * The sync table with the hand-set overrides over it (an override replaces the whole entry).
+     *
+     * @return array<string, array{input: float|int, output: float|int, cache_read?: float|int, cache_write?: float|int}>
+     */
+    private function models(): array
+    {
+        return array_replace(config('model_pricing.models', []), config('model_pricing_overrides.models', []));
     }
 
     private function fallbackCost(): float

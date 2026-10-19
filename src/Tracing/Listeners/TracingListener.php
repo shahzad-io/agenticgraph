@@ -362,7 +362,7 @@ class TracingListener
             'prompt_tokens' => $event->promptTokens,
             'completion_tokens' => $event->completionTokens,
             'total_tokens' => $event->totalTokens,
-            'duration_ms' => $event->durationMs,
+            'duration_ms' => $durationMs,
             'created_at' => TraceTime::format(TraceTime::now()),
             'cost_usd' => $cost,
             'streamed' => $event->streamed,

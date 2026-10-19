@@ -98,9 +98,9 @@ final class TraceSegmentMerger
         $merged = [
             'schema_version' => TracePayloadBuilder::SCHEMA_VERSION,
             'trace' => $trace,
-            'segments' => array_map(fn (array $envelope): array => is_array($envelope['_meta'] ?? null)
-                ? $envelope['segment'] + ['_meta' => $envelope['_meta']]
-                : $envelope['segment'], $segments),
+            'segments' => array_map(fn (array $envelope): array => $envelope['segment']
+                + $this->interruptMarker($envelope)
+                + (is_array($envelope['_meta'] ?? null) ? ['_meta' => $envelope['_meta']] : []), $segments),
             'spans' => $spans,
             'llm_calls' => array_values($llmCalls),
         ];
@@ -136,6 +136,23 @@ final class TraceSegmentMerger
         }
 
         return $result;
+    }
+
+    /**
+     * A segment that ended as interrupted keeps that in the merged trace, where the trace-level interrupt keys are
+     * removed once the run goes on: the reason and the time it was interrupted.
+     *
+     * @param  array<string, mixed>  $envelope
+     * @return array{interrupt?: array{reason: mixed, at: mixed}}
+     */
+    private function interruptMarker(array $envelope): array
+    {
+        $trace = is_array($envelope['trace'] ?? null) ? $envelope['trace'] : [];
+        if (($trace['status'] ?? null) !== 'interrupted') {
+            return [];
+        }
+
+        return ['interrupt' => ['reason' => $trace['interrupt_reason'] ?? null, 'at' => $trace['interrupted_at'] ?? $envelope['segment']['ended_at'] ?? null]];
     }
 
     /**

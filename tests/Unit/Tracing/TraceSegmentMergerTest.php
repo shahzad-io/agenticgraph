@@ -143,3 +143,19 @@ it('keeps each segment _meta in its segments entry, error_reason, and dropped su
         ->and($merged['segments'][1])->not->toHaveKey('_meta')
         ->and($merged['segments'][2]['_meta'])->toBe($soft);
 });
+
+it('keeps the interrupt on the segment that ended interrupted, with its reason and time', function () {
+    $merged = (new TraceSegmentMerger)->merge(tsmInterruptThenResume());
+
+    expect($merged['trace'])->not->toHaveKey('interrupt_reason')
+        ->and($merged['segments'][0]['interrupt'])->toBe(['reason' => 'approval', 'at' => '2026-09-27T10:00:02.000000+00:00'])
+        ->and($merged['segments'][1])->not->toHaveKey('interrupt')
+        ->and(array_keys($merged['segments'][0]))->toContain('interrupt');
+});
+
+it('keeps the interrupt marker on a still-interrupted trace too', function () {
+    $merged = (new TraceSegmentMerger)->merge([tsmInterruptThenResume()[0]]);
+
+    expect($merged['trace']['status'])->toBe('interrupted')
+        ->and($merged['segments'][0]['interrupt']['reason'])->toBe('approval');
+});

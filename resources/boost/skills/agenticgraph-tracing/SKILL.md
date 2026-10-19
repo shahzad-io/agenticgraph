@@ -195,7 +195,7 @@ Docs: `/docs/tracing#capture-and-pii`
 - `AGENTICGRAPH_SAMPLE_RATE` (`tracing.sampling.rate`, 0.0 to 1.0, default 1.0).
 - The decision is deterministic per trace id (`crc32(trace_id) / 0xFFFFFFFF < rate`), so every process sending a segment of a trace agrees.
 - `tracing.sampling.always_on_error` (default `true`) still sends a failed trace the rate dropped. In v1 it arrives with `trace.sampled: false`, its header and error, and no spans.
-- LLM spans get `cost_usd` from `config/model_pricing.php` (USD per 1M tokens). `php artisan agenticgraph:pricing:sync` refreshes it from OpenRouter; use `--fixture=` in CI. Unknown models cost `model_pricing.fallback_cost_usd` (0.0). Cached calls cost nothing.
+- LLM spans get `cost_usd` from `config/model_pricing.php` (USD per 1M tokens). `php artisan agenticgraph:pricing:sync` refreshes it from OpenRouter; use `--fixture=` in CI. Hand-set prices go in `config/model_pricing_overrides.php`: they win over the table and the sync never writes that file. Unknown models cost `model_pricing.fallback_cost_usd` (0.0). Cached calls cost nothing.
 
 Docs: `/docs/tracing#sampling`, `/docs/tracing#cost`. Spec: Sampling.
 

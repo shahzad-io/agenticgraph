@@ -312,6 +312,7 @@ it('puts wrapped tool fields in attributes under tool.* names', function (): voi
         'tool.provider' => null,
         'tool.input_size' => 2,
         'tool.arg_keys' => [],
+        'tool.output_size' => strlen('{"rate":1.5}'),
         'tool.result_size' => strlen('{"rate":1.5}'),
     ])
         ->and(array_intersect(OLD_TOOL_SPAN_KEYS, array_keys($toolSpan)))->toBe([]);
@@ -343,3 +344,21 @@ it('puts ToolCallCaptured fields in attributes with the verified gen_ai.tool.cal
     ])
         ->and(array_intersect(OLD_TOOL_SPAN_KEYS, array_keys($exporter->spans[0])))->toBe([]);
 });
+
+it('puts tool.output_size on a wrapped tool span at every result depth', function (string $depth, array $extra): void {
+    Http::fake(['api.exchangerate.test/*' => Http::response(['rate' => 1.5], 200)]);
+    config(['agenticgraph.tracing.capture.tool_results' => $depth]);
+
+    $exporter = new CapturingToolTracerExporter;
+    app()->instance(TracerExporter::class, $exporter);
+    $context = new TraceContext('exec_tool_out', 'span_root');
+    $context->startSpan('conversion-node', 'node');
+    app()->instance(TraceContext::class, $context);
+    app()->instance(ExecutionClock::class, new ExecutionClock('exec_tool_out'));
+
+    (new ToolWrapProbeNode)->execute(new State);
+
+    $attributes = collect($exporter->spans)->firstWhere('span_type', 'tool')['attributes'];
+    expect($attributes['tool.output_size'])->toBe(strlen('{"rate":1.5}'))
+        ->and(array_keys($attributes))->toContain(...$extra);
+})->with(['none' => ['none', []], 'summary' => ['summary', ['tool.result_size']], 'full' => ['full', ['tool.result']]]);

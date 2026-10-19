@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Shahzad\AgenticGraph\Tracing\ModelPricingCalculator;
 use Shahzad\AgenticGraph\Tracing\ModelPricingConfigWriter;
 use Shahzad\AgenticGraph\Tracing\OpenRouterPricingMapper;
 
@@ -67,4 +68,33 @@ it('sync command regenerates config from fixture without live openrouter fetch',
 it('loads default model_pricing config from the package', function (): void {
     expect(config('model_pricing.unit'))->toBe('per_million_tokens')
         ->and(config('model_pricing.models.openai/gpt-4o.input'))->toBe(2.5);
+});
+
+it('keeps a hand-set override when the sync runs, and says it covers the synced entry', function (): void {
+    $overrides = (string) file_get_contents(dirname(__DIR__, 3).'/config/model_pricing_overrides.php');
+    $output = sys_get_temp_dir().'/agenticgraph-model-pricing-'.uniqid('', true).'.php';
+    $fixture = sys_get_temp_dir().'/agenticgraph-openrouter-'.uniqid('', true).'.json';
+    // OpenRouter lists the same model at another price.
+    file_put_contents($fixture, json_encode(['data' => [['id' => 'openai/gpt-6-luna', 'pricing' => ['prompt' => '0.000005', 'completion' => '0.00002']]]]));
+
+    $this->artisan('agenticgraph:pricing:sync', ['--fixture' => $fixture, '--output' => $output])
+        ->expectsOutputToContain('Overrides in config/model_pricing_overrides.php win over the synced entries: openai/gpt-6-luna')
+        ->assertSuccessful();
+
+    /** @var array<string, mixed> $synced */
+    $synced = require $output;
+    expect($synced['models']['openai/gpt-6-luna']['input'])->toEqual(5.0)
+        ->and((string) file_get_contents(dirname(__DIR__, 3).'/config/model_pricing_overrides.php'))->toBe($overrides)
+        // The synced table has the other price; the calculator still takes the override.
+        ->and((new ModelPricingCalculator)->calculate('openai:gpt-6-luna', 1_000_000, 0)['cost_usd'])->toBe(0.10);
+
+    @unlink($output);
+    @unlink($fixture);
+});
+
+it('lets an override replace a synced entry whole', function (): void {
+    config()->set('model_pricing.models', ['vendor/m' => ['input' => 1.0, 'output' => 2.0, 'cache_read' => 0.5]]);
+    config()->set('model_pricing_overrides.models', ['vendor/m' => ['input' => 3.0, 'output' => 4.0]]);
+
+    expect((new ModelPricingCalculator)->calculate('vendor:m', 1_000_000, 1_000_000, 1_000_000)['cost_usd'])->toBe(3.0 + 4.0 + 3.0);
 });

@@ -12,6 +12,9 @@ use Shahzad\AgenticGraph\Tracing\OpenRouterPricingMapper;
 /**
  * Maintainer tooling: fetch OpenRouter pricing and regenerate config/model_pricing.php.
  *
+ * Hand-set entries live in config/model_pricing_overrides.php, which this command never writes and which wins at
+ * runtime; the command only reports the ids where an override covers a synced entry.
+ *
  * Requires egress to https://openrouter.ai; run on a dev machine or CI job, not in
  * locked-down sandboxes. Use --fixture for offline mapping tests.
  */
@@ -81,6 +84,10 @@ final class SyncModelPricingCommand extends Command
         $writer->write($output, $models);
 
         $this->info('Wrote '.count($models)." models to {$output}");
+        $overridden = array_keys(array_intersect_key(config('model_pricing_overrides.models', []), $models));
+        if ($overridden !== []) {
+            $this->line('Overrides in config/model_pricing_overrides.php win over the synced entries: '.implode(', ', $overridden));
+        }
         $this->line('Publish for apps: php artisan vendor:publish --tag=agenticgraph-config');
 
         return self::SUCCESS;

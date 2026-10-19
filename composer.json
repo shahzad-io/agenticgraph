@@ -36,9 +36,10 @@
         "prism-php/relay": "^1.8.0"
     },
     "require-dev": {
+        "larastan/larastan": "^3.9.3",
         "laravel/pint": "^1.14",
         "nunomaduro/collision": "^8.9.2",
-        "larastan/larastan": "^3.9.3",
+        "opis/json-schema": "^2.6",
         "orchestra/testbench": "^10.0|^11.0",
         "pestphp/pest": "^4.0",
         "pestphp/pest-plugin-arch": "^4.0",

@@ -16,6 +16,8 @@ use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
+use Opis\JsonSchema\Errors\ErrorFormatter;
+use Opis\JsonSchema\Validator;
 use Prism\Prism\Tool;
 use Shahzad\AgenticGraph\AgenticGraphServiceProvider;
 use Shahzad\AgenticGraph\Contracts\StateContract;
@@ -506,4 +508,192 @@ test('contract freeze guard: the merger output matches the merged block, both di
     expect(count($byTrace))->toBeGreaterThanOrEqual(3)
         ->and(max(array_map('count', $byTrace)))->toBeGreaterThanOrEqual(2)
         ->and($problems)->toBe([]);
+});
+
+const FZ_SCHEMA_ID = 'https://agenticgraph.dev/spec/tracing-wire-v1.1.schema.json';
+
+/**
+ * Validate a document (or a $defs name of the schema) and return the error messages.
+ *
+ * @param  array<string, mixed>  $document
+ * @return list<string>
+ */
+function fzSchemaErrors(array $document, string $def = ''): array
+{
+    $validator = new Validator;
+    $validator->resolver()->registerFile(FZ_SCHEMA_ID, dirname(__DIR__, 3).'/spec/tracing-wire-v1.1.schema.json');
+    $result = $validator->validate(json_decode(json_encode($document, JSON_THROW_ON_ERROR)), FZ_SCHEMA_ID.($def === '' ? '' : "#/\$defs/{$def}"));
+
+    return $result->isValid() ? [] : array_map(fn (array $messages): string => implode('; ', $messages), array_values((new ErrorFormatter)->formatKeyed($result->error())));
+}
+
+/**
+ * Semantic checks the schema cannot express (see its description).
+ *
+ * @param  array<string, mixed>  $document
+ * @return list<string>
+ */
+function fzSemanticErrors(array $document): array
+{
+    $problems = [];
+    $llm = [];
+    foreach ($document['spans'] as $span) {
+        if ($span['span_type'] !== 'llm') {
+            continue;
+        }
+        $llm[$span['id']] = $span;
+        if ($span['total_tokens'] !== $span['prompt_tokens'] + $span['completion_tokens']) {
+            $problems[] = "{$span['id']}: total_tokens is not prompt + completion";
+        }
+        if (($span['thought_tokens'] ?? 0) > $span['completion_tokens']) {
+            $problems[] = "{$span['id']}: thought_tokens exceeds completion_tokens";
+        }
+    }
+    foreach ($document['llm_calls'] as $call) {
+        $span = $llm[$call['span_id']] ?? null;
+        if ($span !== null && [$span['prompt_tokens'], $span['completion_tokens'], $span['cost_usd']] !== [$call['prompt_tokens'], $call['completion_tokens'], $call['cost_usd']]) {
+            $problems[] = "{$call['id']}: tokens or cost differ from span {$call['span_id']}";
+        }
+    }
+
+    return $problems;
+}
+
+test('schema: every freeze-corpus envelope and merged trace validates, with the semantic checks', function () {
+    $envelopes = array_values(array_filter(fzEnvelopes(), fn (array $e): bool => isset($e['segment'])));
+    $byTrace = [];
+    $problems = [];
+    foreach ($envelopes as $i => $envelope) {
+        $byTrace[$envelope['trace']['id']][] = $envelope;
+        foreach ([...fzSchemaErrors($envelope), ...fzSemanticErrors($envelope)] as $error) {
+            $problems[] = "envelope {$i}: {$error}";
+        }
+    }
+    foreach ($byTrace as $id => $segments) {
+        $merged = (new TraceSegmentMerger)->merge($segments);
+        foreach ([...fzSchemaErrors($merged), ...fzSemanticErrors($merged)] as $error) {
+            $problems[] = "merged {$id}: {$error}";
+        }
+    }
+
+    expect($envelopes)->not->toBeEmpty()->and($problems)->toBe([]);
+});
+
+test('schema: the size-limit _meta blocks validate', function () {
+    $metas = array_values(array_map(fn (array $e): array => $e['_meta'], array_filter(fzEnvelopes(), fn (array $e): bool => isset($e['_meta']))));
+
+    expect(count($metas))->toBe(2);
+    foreach ($metas as $meta) {
+        expect(fzSchemaErrors($meta, 'meta'))->toBe([]);
+    }
+});
+
+test('schema fail-first: an unknown key, a missing required key or a wrong type fails', function () {
+    $envelopes = array_values(array_filter(fzEnvelopes(), fn (array $e): bool => isset($e['segment'])));
+    $valid = $envelopes[0];
+    expect(fzSchemaErrors($valid))->toBe([]);
+
+    $spanAt = fn (array $doc, string $type): int => array_keys(array_filter($doc['spans'], fn (array $s): bool => $s['span_type'] === $type))[0];
+    $mutations = [
+        'unknown envelope key' => fn (array $d) => $d + ['extra' => 1],
+        'unknown trace key' => fn (array $d) => array_replace_recursive($d, ['trace' => ['extra' => 1]]),
+        'unknown span key' => function (array $d) use ($spanAt) {
+            $d['spans'][$spanAt($d, 'node')]['extra'] = 1;
+
+            return $d;
+        },
+        'unknown route attribute' => function (array $d) use ($spanAt) {
+            $d['spans'][$spanAt($d, 'route')]['attributes']['route.extra'] = 1;
+
+            return $d;
+        },
+        'non-vector attribute on a vector span' => function (array $d) use ($spanAt) {
+            $d['spans'][$spanAt($d, 'vector')]['attributes']['store'] = 'x';
+
+            return $d;
+        },
+        'missing span key' => function (array $d) use ($spanAt) {
+            unset($d['spans'][$spanAt($d, 'node')]['status_code']);
+
+            return $d;
+        },
+        'missing llm key' => function (array $d) use ($spanAt) {
+            unset($d['spans'][$spanAt($d, 'llm')]['cost_usd']);
+
+            return $d;
+        },
+        'missing trace key' => function (array $d) {
+            unset($d['trace']['resource']);
+
+            return $d;
+        },
+        'string token count' => function (array $d) use ($spanAt) {
+            $d['spans'][$spanAt($d, 'llm')]['prompt_tokens'] = '3';
+
+            return $d;
+        },
+        'negative cache_read_tokens' => function (array $d) use ($spanAt) {
+            $d['spans'][$spanAt($d, 'llm')]['cache_read_tokens'] = -1;
+
+            return $d;
+        },
+        'bad enum value' => function (array $d) use ($spanAt) {
+            $d['spans'][$spanAt($d, 'route')]['attributes']['route.kind'] = 'random';
+
+            return $d;
+        },
+        'bad timestamp' => function (array $d) {
+            $d['spans'][0]['started_at'] = '2026-09-27T11:56:06Z';
+
+            return $d;
+        },
+        'wrong schema version' => fn (array $d) => ['schema_version' => 'agenticgraph.trace.v2'] + $d,
+        'links on a node span' => function (array $d) use ($spanAt) {
+            $d['spans'][$spanAt($d, 'node')]['links'] = [['trace_id' => 't', 'span_id' => 's']];
+
+            return $d;
+        },
+        'link without span_id' => function (array $d) use ($spanAt) {
+            $d['spans'][$spanAt($d, 'node')]['links'] = [['trace_id' => 't']];
+
+            return $d;
+        },
+    ];
+
+    foreach ($mutations as $name => $mutate) {
+        expect(fzSchemaErrors($mutate($valid)))->not->toBe([], $name);
+    }
+});
+
+test('schema: a span with a type outside the 10 named is a custom span, and a linked queued span validates', function () {
+    $envelopes = array_values(array_filter(fzEnvelopes(), fn (array $e): bool => isset($e['segment'])));
+    $late = array_values(array_filter($envelopes, fn (array $e): bool => isset($e['spans'][0]['links'])))[0];
+    $span = $late['spans'][0];
+
+    expect($span['links'])->not->toBeEmpty()
+        ->and(fzSchemaErrors($late))->toBe([])
+        ->and(fzSchemaErrors(array_replace($late, ['spans' => [array_replace($span, ['span_type' => 'addon.thing', 'node_type' => 'addon', 'attributes' => ['x.y' => 1]])]])))->toBe([])
+        ->and(fzSchemaErrors(array_replace($late, ['spans' => [array_replace($span, ['status' => 'bogus'])]])))->not->toBe([]);
+});
+
+test('schema: the merged segment of an interrupted run carries the interrupt marker, and a bad marker fails', function () {
+    $envelopes = array_values(array_filter(fzEnvelopes(), fn (array $e): bool => isset($e['segment']) && $e['trace']['id'] === 'x' || isset($e['segment'])));
+    $byTrace = [];
+    foreach ($envelopes as $envelope) {
+        $byTrace[$envelope['trace']['id']][] = $envelope;
+    }
+    $merged = null;
+    foreach ($byTrace as $segments) {
+        $candidate = (new TraceSegmentMerger)->merge($segments);
+        if (isset($candidate['segments'][0]['interrupt'])) {
+            $merged = $candidate;
+        }
+    }
+
+    expect($merged)->not->toBeNull()
+        ->and($merged['segments'][0]['interrupt']['reason'])->toBe('Needs approval')
+        ->and($merged['segments'][0]['interrupt']['at'])->toBe($merged['segments'][0]['ended_at'])
+        ->and(fzSchemaErrors($merged))->toBe([])
+        ->and(fzSchemaErrors(array_replace_recursive($merged, ['segments' => [0 => ['interrupt' => ['extra' => 1]]]])))->not->toBe([])
+        ->and(fzSchemaErrors(array_replace_recursive($merged, ['segments' => [0 => ['final' => true]]])))->not->toBe([]);
 });

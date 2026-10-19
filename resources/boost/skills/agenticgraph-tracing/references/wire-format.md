@@ -29,7 +29,7 @@ Keys in order: `schema_version`, `trace`, `segment`, `spans`, `llm_calls`, and `
   - segments are ordered by `segment.started_at`, then `segment.id`; the final segment applies last;
   - trace fields merge shallowly, key by key; spans and LLM calls are upserted by `id`;
   - `duration_ms` and `active_ms` are recomputed. `active_ms` is the union of segment windows, so human waits and queue gaps are excluded.
-- The merged shape replaces `segment` with `segments`, the list of every segment block.
+- The merged shape replaces `segment` with `segments`, the list of every segment block. A segment that ended interrupted keeps `interrupt` (`{reason, at}`) there, because the trace-level interrupt keys are removed once the run goes on; the wait is the next segment's `started_at` minus `interrupt.at`.
 
 ## Spans
 
@@ -41,7 +41,7 @@ Common keys: `id`, `trace_id`, `parent_id`, `node_name`, `node_type`, `span_type
 | `node` | `attempt`, `attempt_of`, `state_diff`, `loop_context`, `error` | none |
 | `llm` | `model`, `prompt_tokens`, `completion_tokens`, `total_tokens`, `cost_usd`, `cached`, `streamed` | none |
 | `route` | none | `route.from`, `route.targets`, `route.router`, `route.kind`, `route.from_cache`, `route.fallback`, `route.reason` |
-| `tool` | `error` | `tool.type`, `tool.provider`, `tool.input_size`, `tool.output_size`, `tool.request_id`, `gen_ai.tool.call.id`, `tool.arg_keys`, `tool.args`, `tool.result_size`, `tool.result` |
+| `tool` | `error` | `tool.type`, `tool.provider`, `tool.input_size`, `tool.output_size` (every capture depth), `tool.request_id` and `gen_ai.tool.call.id` (provider-executed calls only), `tool.arg_keys`, `tool.args`, `tool.result_size`, `tool.result` |
 | `db` | none | `laravel.db.connection`, `laravel.db.statement_type`, `db.operation.name`, `laravel.db.bindings_count`, `laravel.db.query_summary`, `db.query.text` |
 | `http` | `error` | `http.request.method`, `http.response.status_code`, `laravel.http.response_size`, `laravel.http.url_summary`, `url.full` |
 | `vector` | `error` | any `vector.*` key |

@@ -10,6 +10,9 @@ declare(strict_types=1);
  * SOURCE: Baked from OpenRouter model catalog (https://openrouter.ai/api/v1/models).
  * OpenRouter returns USD per token; the sync command converts to per-1M-tokens.
  *
+ * Hand-set entries do not belong here: the sync rewrites this file. Put them in config/model_pricing_overrides.php,
+ * which wins over this table and which the sync never writes.
+ *
  * REGENERATE (maintainer/dev machine with egress, not at consumer runtime):
  *   php artisan agenticgraph:pricing:sync
  *   php artisan agenticgraph:pricing:sync --fixture=tests/fixtures/openrouter-models-sample.json
