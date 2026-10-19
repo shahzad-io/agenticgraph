@@ -52,6 +52,7 @@ function reasoningSent(ReasoningProbeNode $node, ?Closure $build = null): array
 beforeEach(function () {
     config()->set('agenticgraph.prism.cache_enabled', false);
     config()->set('agenticgraph.prism.reasoning.budgets', ['low' => 1024, 'medium' => 4096, 'high' => 16384]);
+    config()->set('agenticgraph.prism.reasoning.off', ['openai' => 'minimal']);
 });
 
 describe('the option Prism receives per provider', function () {
@@ -107,6 +108,16 @@ describe('errors before the call', function () {
         Prism::fake([]);
         expect(fn () => (new ReasoningProbeNode('anthropic:claude-x', 'low'))->call(fn (LlmRequest $llm) => $llm->prompt('hi')->text()))
             ->toThrow(ReasoningException::class, 'agenticgraph.prism.reasoning.budgets.low');
+    });
+
+    it('sends the app value for off on openai and throws naming the key without it', function () {
+        config()->set('agenticgraph.prism.reasoning.off', ['openai' => 'none']);
+        expect(reasoningSent(new ReasoningProbeNode('openai:gpt-6-luna', 'off')))->toBe(['reasoning' => ['effort' => 'none']]);
+
+        config()->set('agenticgraph.prism.reasoning.off', []);
+        Prism::fake([]);
+        expect(fn () => (new ReasoningProbeNode('openai:gpt-6-luna', 'off'))->call(fn (LlmRequest $llm) => $llm->prompt('hi')->text()))
+            ->toThrow(ReasoningException::class, 'agenticgraph.prism.reasoning.off.openai');
     });
 
     it('throws for Anthropic thinking with a forced tool choice but not with auto', function () {

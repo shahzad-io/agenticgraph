@@ -18,14 +18,12 @@ final class ReasoningMapper
 {
     public const LEVELS = ['off', 'low', 'medium', 'high'];
 
-    /** The lowest effort OpenAI accepts for 'off'; the live check (B12 step 3) confirms or changes it. */
-    private const OPENAI_OFF = 'minimal';
-
     /**
      * @param  array{low?: mixed, medium?: mixed, high?: mixed}  $budgets  config agenticgraph.prism.reasoning.budgets
+     * @param  array<string, mixed>  $off  config agenticgraph.prism.reasoning.off, the value that means "no reasoning" per provider
      * @return array{options: array<string, mixed>, note: string|null}
      */
-    public static function options(string $provider, ?string $level, ?int $budget, bool $forcedToolChoice, array $budgets): array
+    public static function options(string $provider, ?string $level, ?int $budget, bool $forcedToolChoice, array $budgets, array $off = []): array
     {
         $setting = $budget !== null ? "budget {$budget}" : "level [{$level}]";
 
@@ -46,7 +44,7 @@ final class ReasoningMapper
         assert($level !== null);
 
         return match ($provider) {
-            'openai' => ['options' => ['reasoning' => ['effort' => $level === 'off' ? self::OPENAI_OFF : $level]], 'note' => null],
+            'openai' => ['options' => ['reasoning' => ['effort' => $level === 'off' ? self::offValue($provider, $off) : $level]], 'note' => null],
             'gemini' => ['options' => $level === 'off' ? ['thinkingBudget' => 0] : ['thinkingLevel' => $level], 'note' => null],
             'anthropic' => ['options' => $level === 'off'
                 ? ['thinking' => ['enabled' => false]]
@@ -73,6 +71,18 @@ final class ReasoningMapper
     public static function forcesToolChoice(string|ToolChoice|null $choice): bool
     {
         return $choice !== null && $choice !== ToolChoice::Auto;
+    }
+
+    /**
+     * The OpenAI-style value for 'off' depends on the model ('minimal', 'none', 'off'), which the package never knows.
+     *
+     * @param  array<string, mixed>  $off
+     */
+    private static function offValue(string $provider, array $off): string
+    {
+        $value = $off[$provider] ?? null;
+
+        return is_string($value) && $value !== '' ? $value : throw ReasoningException::missingOff($provider);
     }
 
     /**

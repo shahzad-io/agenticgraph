@@ -148,12 +148,14 @@ final class LlmExecutor
 
         ReasoningMapper::assertValid($level, $budget);
         $budgets = config('agenticgraph.prism.reasoning.budgets', []);
+        $off = config('agenticgraph.prism.reasoning.off', []);
         $mapped = ReasoningMapper::options(
             self::parseModel($model)[0],
             $level,
             $budget,
             ReasoningMapper::forcesToolChoice($call->toolChoice),
             is_array($budgets) ? $budgets : [],
+            is_array($off) ? $off : [],
         );
 
         return ['value' => ['level' => $level, 'budget' => $budget, ...$mapped], 'source' => $source];

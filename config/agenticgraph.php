@@ -92,6 +92,10 @@ return [
                 'medium' => env('AGENTICGRAPH_PRISM_REASONING_BUDGET_MEDIUM'),
                 'high' => env('AGENTICGRAPH_PRISM_REASONING_BUDGET_HIGH'),
             ],
+            // What level 'off' sends, per provider, for providers where it is a model-specific value (openai: none, minimal or off); no package default.
+            'off' => [
+                'openai' => env('AGENTICGRAPH_PRISM_REASONING_OFF_OPENAI'),
+            ],
         ],
         'embeddings' => [
             'provider' => env('AGENTICGRAPH_PRISM_EMBEDDINGS_PROVIDER'),

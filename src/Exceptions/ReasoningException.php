@@ -18,6 +18,11 @@ final class ReasoningException extends RuntimeException
         return new self("Reasoning level [{$level}] on this provider needs a token budget. Set config agenticgraph.prism.reasoning.budgets.{$level} (env AGENTICGRAPH_PRISM_REASONING_BUDGET_".strtoupper($level).') or pass reasoning(budget: N).');
     }
 
+    public static function missingOff(string $provider): self
+    {
+        return new self("Reasoning level [off] on the [{$provider}] provider needs the value your models take for no reasoning (it differs per model: for example none, minimal or off). Set config agenticgraph.prism.reasoning.off.{$provider}, or send it for one node with providerOptions(['reasoning' => ['effort' => '<value>']]).");
+    }
+
     /**
      * @param  array<string, mixed>  $options  the provider options sent to Prism
      */

@@ -190,6 +190,6 @@ class AnswerNode extends PrismNode
 }
 ```
 
-- The package maps the level to the provider's option (OpenAI `reasoning.effort`, Gemini `thinkingLevel` / `thinkingBudget`, Anthropic `thinking` with your budget from `agenticgraph.prism.reasoning.budgets.{low,medium,high}`, OpenRouter `reasoning`, Ollama `thinking`). It knows the provider, never the model: a vendor 4xx comes back as a `ReasoningException` with the level and the option sent.
+- The package maps the level to the provider's option (OpenAI `reasoning.effort`, Gemini `thinkingLevel` / `thinkingBudget`, Anthropic `thinking` with your budget from `agenticgraph.prism.reasoning.budgets.{low,medium,high}`, OpenRouter `reasoning`, Ollama `thinking`). OpenAI `off` sends the value you set in `agenticgraph.prism.reasoning.off.openai` (it differs per model; no default, missing throws). It knows the provider, never the model: a vendor 4xx comes back as a `ReasoningException` with the level and the option sent.
 - `off` that still reports thought tokens: a warning, a `ReasoningNotDisabled` event and `LlmResponse::$warnings`; not an exception.
 - `explain()['settings']['reasoning']` and `['provider_options']` show the level, its source and the exact options passed to Prism.
