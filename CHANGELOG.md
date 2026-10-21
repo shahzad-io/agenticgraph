@@ -2,6 +2,13 @@
 
 ## 0.2.0 (unreleased)
 
+### Octane (B13b F)
+
+- Fixed: under Octane the first traced run on each worker was split in two segments (the graph's spans in one, `Trace::span` and vector spans in another). The event dispatcher builds `TracingListener` from the booted app, which autowired that app's exporter into it; it is now bound without arguments and resolves the request's exporter per event.
+- Fixed: `CachingMiddleware` returned `__PHP_Incomplete_Class` (a `TypeError`) on a cache hit with Laravel 13's default `cache.serializable_classes = false`. It now caches the state as a plain array (`State::toStoragePayload()`), so entries written by the old code read as a miss once; flush the cache after upgrading.
+- Changed: the unknown-model pricing warning is logged once per request or queued job (was once per process). `ModelPricingCalculator` is bound `scoped`; the `@internal` `resetLoggedUnknownModels()` is removed.
+- Verified on Octane (RoadRunner, 2 workers, 1,000 requests): no trace context, execution context, tracing toggle, pricing memo or exporter segment crosses requests.
+
 ### Llm::fake() and router prompt files (B13b E)
 
 - New: `Shahzad\AgenticGraph\Testing\Llm::fake($responses)` returns an `LlmFake` bound to the app for the test. Built over Prism's fake (the real executor runs, so tracing, `TokensUsed`, retries and streaming behave as in production). Queue, one entry per provider request: a string (reply text; decoded as JSON for a structured request), an array (structured data), a `Throwable` (thrown: a failed attempt) or a Prism response fake (tool calls, steps, usage). An empty queue answers every request with an empty reply; a queue that runs out throws.

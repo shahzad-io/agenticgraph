@@ -11,8 +11,8 @@ use Illuminate\Support\Facades\Log;
  */
 final class ModelPricingCalculator
 {
-    /** @var array<string, true> */
-    private static array $loggedUnknownModels = [];
+    /** @var array<string, true> Warned once per instance: bound scoped, so once per request or queued job. */
+    private array $loggedUnknownModels = [];
 
     /**
      * @return array{cost_usd: float, pricing_key: ?string, known: bool}
@@ -116,23 +116,15 @@ final class ModelPricingCalculator
             return;
         }
 
-        if (isset(self::$loggedUnknownModels[$model])) {
+        if (isset($this->loggedUnknownModels[$model])) {
             return;
         }
 
-        self::$loggedUnknownModels[$model] = true;
+        $this->loggedUnknownModels[$model] = true;
 
         Log::warning('agenticgraph.model_pricing.unknown_model', [
             'model' => $model,
             'message' => 'No pricing entry for model; cost_usd set to fallback. Regenerate or publish config/model_pricing.php.',
         ]);
-    }
-
-    /**
-     * @internal Test helper to reset deduplicated unknown-model logs.
-     */
-    public static function resetLoggedUnknownModels(): void
-    {
-        self::$loggedUnknownModels = [];
     }
 }

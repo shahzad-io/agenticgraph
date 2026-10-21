@@ -145,7 +145,7 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
         $this->app->singleton(NullExporter::class, fn () => new NullExporter);
         $this->app->singleton(TracerExporter::class, fn ($app) => TracerExporterFactory::make($app));
         $this->app->singleton(Tracer::class, fn () => new Tracer);
-        $this->app->singleton(ModelPricingCalculator::class);
+        $this->app->scoped(ModelPricingCalculator::class);
 
         // Register StateManager as singleton with dependencies
         $this->app->singleton(StateManager::class, function ($app) {
@@ -368,7 +368,9 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
      */
     private function registerTracing(): void
     {
-        // Register event subscribers
+        // The dispatcher builds the listener per event from its own container (under Octane the booted app, not
+        // the request's). Bound without arguments, so the container never pins that app's exporter into it.
+        $this->app->bind(TracingListener::class, fn (): TracingListener => new TracingListener);
         Event::subscribe(new TracingListener);
         // Singleton so RequestSending and ResponseReceived share the stored request starts.
         $this->app->singleton(HttpClientInstrumentation::class, fn () => new HttpClientInstrumentation);

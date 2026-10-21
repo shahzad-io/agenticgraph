@@ -8,10 +8,6 @@ use Shahzad\AgenticGraph\Tests\Unit\Tracing\MockPulseExporter;
 use Shahzad\AgenticGraph\Tracing\Listeners\TracingListener;
 use Shahzad\AgenticGraph\Tracing\ModelPricingCalculator;
 
-beforeEach(function (): void {
-    ModelPricingCalculator::resetLoggedUnknownModels();
-});
-
 it('calculates cost for a known model from config using per-million token rates', function (): void {
     $calculator = new ModelPricingCalculator;
 
@@ -94,4 +90,15 @@ it('prices cached input at the entry cache rates, else at the input rate (usage 
 it('ships the OpenAI Standard short-context rates for gpt-6-luna, with cache rates', function (): void {
     // 1M uncached input + 1M cache read + 1M cache write + 1M output, per developers.openai.com/api/docs/pricing
     expect((new ModelPricingCalculator)->calculate('openai:gpt-6-luna', 1_000_000, 1_000_000, 1_000_000, 1_000_000)['cost_usd'])->toBe(0.50 + 0.10 + 0.01 + 0.125);
+});
+
+it('warns about an unknown model again after the scoped instances are forgotten (next Octane request or queued job)', function (): void {
+    Log::spy();
+
+    app(ModelPricingCalculator::class)->calculate('totally/unknown-model-scoped', 1, 1);
+    app(ModelPricingCalculator::class)->calculate('totally/unknown-model-scoped', 1, 1);
+    app()->forgetScopedInstances();
+    app(ModelPricingCalculator::class)->calculate('totally/unknown-model-scoped', 1, 1);
+
+    Log::shouldHaveReceived('warning')->twice();
 });

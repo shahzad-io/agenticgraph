@@ -7,6 +7,7 @@ namespace Shahzad\AgenticGraph\Middleware;
 use Illuminate\Support\Facades\Cache;
 use Shahzad\AgenticGraph\Contracts\NodeInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\State\State;
 
 class CachingMiddleware
 {
@@ -43,9 +44,8 @@ class CachingMiddleware
             return $next($state);
         }
 
-        return Cache::remember($key, $ttl, function () use ($state, $next) {
-            return $next($state);
-        });
+        // Cached as a plain array: Laravel 13 stores refuse to unserialize objects (cache.serializable_classes).
+        return State::fromArray(Cache::remember($key, $ttl, fn (): mixed => State::toStoragePayload($next($state))));
     }
 
     /**

@@ -44,7 +44,7 @@ class TracingListener
     public function __construct(?TracerExporter $exporter = null, ?ModelPricingCalculator $pricingCalculator = null)
     {
         $this->exporter = $exporter;
-        $this->pricingCalculator = $pricingCalculator ?? new ModelPricingCalculator;
+        $this->pricingCalculator = $pricingCalculator ?? app(ModelPricingCalculator::class);
 
         // Load capture configuration
         $this->captureState = config('agenticgraph.tracing.capture.state', 'diff');

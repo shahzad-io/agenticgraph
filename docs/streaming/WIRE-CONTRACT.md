@@ -4,7 +4,7 @@
 
 **Source of truth:** `Shahzad\AgenticGraph\Streaming\StreamEventEnvelope` (`src/Streaming/StreamEventEnvelope.php`).
 
-This document is the canonical type spec for NPM streaming clients and AgenticPulse. Field names are **verbatim** — mirror them exactly in TypeScript.
+This document is the canonical type spec for NPM streaming clients and AgenticPulse. Field names are **verbatim** - mirror them exactly in TypeScript.
 
 ---
 
@@ -83,7 +83,7 @@ Enumeratable constants in `StreamLifecycleEventTypes` and `StreamEventEnvelope`.
 | `node_interrupt` | node | `null` | `{ node_name: string, reason: string, checkpoint_id: string }` + optional review payload |
 | `stream_resume` | resume node | `null` | `{ from_seq, resumed_at_seq, gap_events, checkpoint_id }` |
 | `execution_terminal` | `null` | `null` | `{ status: 'completed'\|'interrupted'\|'failed', final_state: object \| null, meta?: object }`. See [final_state](#final_state-exposure) |
-| `stream_close` | — | — | **Not a 9-field body** — see [Terminals](#terminals-two-vocabularies) |
+| `stream_close` | - | - | **Not a 9-field body** - see [Terminals](#terminals-two-vocabularies) |
 | `stream_error` | varies | varies | See [stream_error](#stream_error) |
 
 #### Lifecycle `payload.stream` (NOT part of frozen promise)
@@ -119,7 +119,7 @@ Model these as **presence-conditional** in client types.
 
 #### `node_interrupt` optional review payload
 
-Present when the interrupting node implements `getInterruptPayload()` and returns non-null content (default on `PrismNode` is `null` — no key emitted). Author-defined review content for the UI (forms, drafts, structured decisions).
+Present when the interrupting node implements `getInterruptPayload()` and returns non-null content (default on `PrismNode` is `null` - no key emitted). Author-defined review content for the UI (forms, drafts, structured decisions).
 
 | Condition | Extra payload key |
 |-----------|-------------------|
@@ -127,7 +127,7 @@ Present when the interrupting node implements `getInterruptPayload()` and return
 
 The baseline trio (`node_name`, `reason`, `checkpoint_id`) is **always** present. Model `interrupt_payload` as **presence-conditional** in client types.
 
-**Client visibility and author responsibility:** `interrupt_payload` is emitted on broadcast and SSE — it is **client-visible by design** (the human must review it). The package does not filter or redact this content. Authors control what `getInterruptPayload()` returns and must not place secrets or sensitive data in it unless they accept that exposure on the wire. Same responsibility model as tracing payloads: capability + sane default (`null` / off); the author owns the content.
+**Client visibility and author responsibility:** `interrupt_payload` is emitted on broadcast and SSE - it is **client-visible by design** (the human must review it). The package does not filter or redact this content. Authors control what `getInterruptPayload()` returns and must not place secrets or sensitive data in it unless they accept that exposure on the wire. Same responsibility model as tracing payloads: capability + sane default (`null` / off); the author owns the content.
 
 #### `stream_resume.gap_events`
 
@@ -171,18 +171,18 @@ Field types below reflect **what the adapter actually emits** (JSON types after 
 | `text_start` | `{ message_id: string, timestamp: integer }` |
 | `text_delta` | `{ delta: string, message_id: string, timestamp: integer }` |
 | `text_complete` | `{ message_id: string, timestamp: integer }` |
-| `tool_call` | `{ tool_id: string, tool_name: string, arguments: object, message_id: string, reasoning_id: string \| null, timestamp: integer }` — `arguments` is `Record<string, mixed>` from `ToolCall::arguments()` |
-| `tool_result` | `{ tool_id: string, tool_name: string, result: number \| string \| array \| null, message_id: string, success: boolean, error: string \| null, timestamp: integer }` — `result` matches `ToolResult::$result` (`int\|float\|string\|array\|null`) |
+| `tool_call` | `{ tool_id: string, tool_name: string, arguments: object, message_id: string, reasoning_id: string \| null, timestamp: integer }` - `arguments` is `Record<string, mixed>` from `ToolCall::arguments()` |
+| `tool_result` | `{ tool_id: string, tool_name: string, result: number \| string \| array \| null, message_id: string, success: boolean, error: string \| null, timestamp: integer }` - `result` matches `ToolResult::$result` (`int\|float\|string\|array\|null`) |
 | `thinking_start` | `{ id: string, timestamp: integer }` |
-| `thinking_delta` | `{ id: string, delta: string, summary: object \| null, timestamp: integer }` — `summary` is `array<string, mixed> \| null` (`ThinkingEvent::$summary`) |
-| `thinking_complete` | `{ id: string, summary: object \| null, timestamp: integer }` — `summary` is `array<string, mixed> \| null` |
+| `thinking_delta` | `{ id: string, delta: string, summary: object \| null, timestamp: integer }` - `summary` is `array<string, mixed> \| null` (`ThinkingEvent::$summary`) |
+| `thinking_complete` | `{ id: string, summary: object \| null, timestamp: integer }` - `summary` is `array<string, mixed> \| null` |
 | `stream_start` | `{ id: string, timestamp: integer, model: string, provider: string, metadata: object \| null }`. From `StreamStartEvent`: once per model request, before the first step |
 | `step_start` | `{ id: string, timestamp: integer }`. From `StepStartEvent`: once per step (one model call of a tool run) |
 | `step_finish` | `{ id: string, timestamp: integer, finish_reason: string \| null, usage: object \| null }`. From `StepFinishEvent`: once per step, with **that step's** finish reason and usage (see below) |
 | `stream_end` | `{ id: string, timestamp: integer, finish_reason: string, usage: object \| null, citations: array \| null, additional_content: object }`. From `StreamEndEvent`: once per model request, after the last step, with the request's finish reason and **cumulative** usage (see below) |
-| `provider_tool_event` | `{ event_key: string, tool_type: string, status: string, item_id: string, data: object, timestamp: integer }` — `data` is `array<string, mixed>` |
-| `artifact` | `{ tool_call_id: null, tool_name: null, message_id: string, artifact: object, block_index: integer \| null, metadata: object \| null, timestamp: integer }` — mapped from `CitationEvent` only; adapter hardcodes `tool_call_id`/`tool_name` as `null` (lines 189–190); `artifact` is the `Citation` value object JSON-encoded (camelCase keys, see below) |
-| `error` | `{ error_type: string, message: string, recoverable: boolean, metadata: object \| null, timestamp: integer }` — `metadata` is `array<string, mixed> \| null` |
+| `provider_tool_event` | `{ event_key: string, tool_type: string, status: string, item_id: string, data: object, timestamp: integer }` - `data` is `array<string, mixed>` |
+| `artifact` | `{ tool_call_id: null, tool_name: null, message_id: string, artifact: object, block_index: integer \| null, metadata: object \| null, timestamp: integer }` - mapped from `CitationEvent` only; adapter hardcodes `tool_call_id`/`tool_name` as `null` (lines 189–190); `artifact` is the `Citation` value object JSON-encoded (camelCase keys, see below) |
+| `error` | `{ error_type: string, message: string, recoverable: boolean, metadata: object \| null, timestamp: integer }` - `metadata` is `array<string, mixed> \| null` |
 
 #### `artifact.artifact` (Citation object on the wire)
 
@@ -260,7 +260,7 @@ Package tests assert raw event name `'text_delta'` on the broadcaster; confirm d
 
 | Item | Value |
 |------|-------|
-| Route | `GET {prefix}/{streamId}` — default `agentic-graph/streams/{streamId}` |
+| Route | `GET {prefix}/{streamId}` - default `agentic-graph/streams/{streamId}` |
 | Cursor | `?cursor=` query or `Last-Event-ID` header. The query wins when both are sent. The response starts at `cursor + 1`; no cursor starts at seq 1 |
 | Retry | Every response starts with `retry: {streaming.sse.retry_ms}` (default 2000) |
 | Frame | Stored events: `id: {seq}\nevent: {type}\ndata: {json wire body}\n\n`. Control events: no `id:` line (see below) |
@@ -308,7 +308,7 @@ The value is the plain state data (`{ "response": "..." }`), not the internal st
 
 ### Iterator (in-process only)
 
-Sync `StreamingMode::ITERATOR` yields `StreamEventImpl` objects with `type()` method. **Not an NPM wire path** — PHP in-process only.
+Sync `StreamingMode::ITERATOR` yields `StreamEventImpl` objects with `type()` method. **Not an NPM wire path** - PHP in-process only.
 
 ---
 
@@ -351,13 +351,13 @@ Delivery mode determines the terminal event. This is **by design**, not a bug.
 
 ### Public observability (frozen, optional for basic clients)
 
-- `span_id`, `parent_span_id` — trace correlation (AgenticPulse)
-- `node_seq` — per-node ordering within a node execution
+- `span_id`, `parent_span_id` - trace correlation (AgenticPulse)
+- `node_seq` - per-node ordering within a node execution
 
 ### Serialized but NOT promised
 
 - `payload.stream` on lifecycle events
-- Raw Redis XADD / database store rows (include top-level `type` field — different from broadcast/SSE wire body)
+- Raw Redis XADD / database store rows (include top-level `type` field - different from broadcast/SSE wire body)
 
 ---
 

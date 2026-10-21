@@ -197,9 +197,9 @@ Configure global node middleware in `config/agenticgraph.php` under `middleware.
 
 ## CLI Commands
 
-- `agenticgraph:list` — list registered graphs
-- `agenticgraph:visualize {name} [--output=]` — show/write Mermaid diagram
-- `agenticgraph:execute {name} [--state='{}']` — execute synchronously
+- `agenticgraph:list` - list registered graphs
+- `agenticgraph:visualize {name} [--output=]` - show/write Mermaid diagram
+- `agenticgraph:execute {name} [--state='{}']` - execute synchronously
 - `agenticgraph:checkpoint:list [--graph=] [--limit=50]`
 - `agenticgraph:checkpoint:resume {id}`
 - `agenticgraph:checkpoint:delete {id}`
