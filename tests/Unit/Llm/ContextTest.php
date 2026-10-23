@@ -156,10 +156,10 @@ it('shows the formatted context and its item count in explain()', function () {
 });
 
 /*
- * FAQ app fit. A FAQ app stores each section as content "{title}\n\n{question}\n\n{answer}" with
- * title and question in metadata, and RetrieveNode builds the block below by hand (copied verbatim, with
- * Retriever::answer(), which strips the title and question prefix). A template has no string functions, so it cannot
- * strip that prefix from {content}: the fit needs the answer as the item's content (or as metadata).
+ * FAQ app fit. The app stores each section as content "{title}\n\n{question}\n\n{answer}" with title and question
+ * in metadata, and its retrieval node builds the block below by hand (copied verbatim, with an answer() helper that
+ * strips the title and question prefix). A template has no string functions, so it cannot strip that prefix from
+ * {content}: the fit needs the answer as the item's content (or as metadata).
  */
 function faqAppHits(): array
 {
@@ -184,7 +184,7 @@ function faqAppAnswer(array $hit): string
     return str_starts_with($hit['content'], $prefix) ? substr($hit['content'], strlen($prefix)) : $hit['content'];
 }
 
-it('reproduces a FAQ app\'s context block from a format template once the items carry the answer as content', function () {
+it('reproduces a FAQ app\'s hand-built context block from a format template once the items carry the answer as content', function () {
     $hits = faqAppHits();
     $current = implode("\n\n---\n\n", array_map(
         fn (array $hit): string => 'Title: '.($hit['metadata']['title'] ?? '')."\nQuestion: ".($hit['metadata']['question'] ?? '')."\nAnswer:\n".faqAppAnswer($hit),

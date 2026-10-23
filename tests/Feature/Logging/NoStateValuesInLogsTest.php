@@ -132,7 +132,10 @@ it('logs colliding key and branch names but no branch values on parallel merge c
 
 it('logs exception class, message, file and line but no stack trace arguments on batch failure', function () {
     $handler = logSentinelChannel();
+    // php.ini-production sets ignore_args On and string_param_max_len 0 (args print as '...').
+    // The length applies when the trace is formatted, so it stays at 15 until the end of the test.
     $previous = ini_set('zend.exception_ignore_args', '0');
+    $previousMaxLen = ini_set('zend.exception_string_param_max_len', '15');
     $makeError = fn (string $prompt) => new RuntimeException('batch boom');
     $error = $makeError(LOG_SENTINEL);
     ini_set('zend.exception_ignore_args', (string) $previous);
@@ -173,6 +176,8 @@ it('logs exception class, message, file and line but no stack trace arguments on
         ->and($record->context)->toHaveKeys(['file', 'line'])
         ->and($record->context)->not->toHaveKey('trace')
         ->and(logSentinelDump($handler))->not->toContain(substr(LOG_SENTINEL, 0, 10));
+
+    ini_set('zend.exception_string_param_max_len', (string) $previousMaxLen);
 });
 
 it('cuts the missing variable name in template exceptions to 64 characters', function () {

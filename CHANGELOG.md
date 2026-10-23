@@ -11,14 +11,14 @@
 - Trace wire, additive (v1.1): a failed trace may carry `final_state`; `error.message` is optional (`required: ["type"]`). Wire doc, JSON Schema and freeze test updated.
 - Docs: the config comments name what is always sent and point to https://pulse.agenticgraph.dev for keys (`ap_live_` / `ap_test_`).
 
-### Octane (B13b F)
+### Octane
 
 - Fixed: under Octane the first traced run on each worker was split in two segments (the graph's spans in one, `Trace::span` and vector spans in another). The event dispatcher builds `TracingListener` from the booted app, which autowired that app's exporter into it; it is now bound without arguments and resolves the request's exporter per event.
 - Fixed: `CachingMiddleware` returned `__PHP_Incomplete_Class` (a `TypeError`) on a cache hit with Laravel 13's default `cache.serializable_classes = false`. It now caches the state as a plain array (`State::toStoragePayload()`), so entries written by the old code read as a miss once; flush the cache after upgrading.
 - Changed: the unknown-model pricing warning is logged once per request or queued job (was once per process). `ModelPricingCalculator` is bound `scoped`; the `@internal` `resetLoggedUnknownModels()` is removed.
 - Verified on Octane (RoadRunner, 2 workers, 1,000 requests): no trace context, execution context, tracing toggle, pricing memo or exporter segment crosses requests.
 
-### Llm::fake() and router prompt files (B13b E)
+### Llm::fake() and router prompt files
 
 - New: `Shahzad\AgenticGraph\Testing\Llm::fake($responses)` returns an `LlmFake` bound to the app for the test. Built over Prism's fake (the real executor runs, so tracing, `TokensUsed`, retries and streaming behave as in production). Queue, one entry per provider request: a string (reply text; decoded as JSON for a structured request), an array (structured data), a `Throwable` (thrown: a failed attempt) or a Prism response fake (tool calls, steps, usage). An empty queue answers every request with an empty reply; a queue that runs out throws.
 - New: each `run()` of a node's `llm()` and each `PrismRouter` routing call is recorded once: `node`, `vars` (resolved, the `context()` variable included), `template_vars`, `history` (the literal `user()`, `assistant()`, `history()` messages), plus `explain()`'s `messages`, `settings` (with sources), `stream`, `cache`, `tools`, `schema`, `prompt`, and `context` with its items. Assertions: `assertPrompted(fn)`, `assertNotInterpolated($var)`, `assertSettings([...])` (value, or value and source), `assertSentCount($n)`, `assertNothingSent()`; `recorded()` and `prism()` for the rest.
@@ -26,28 +26,28 @@
 - New: `PrismRouter` takes `prompt:` (a prompt file from `Prompts::get()` or any `ChatPromptTemplate`) for its routing prompt, formatted with the new `routingVars($state)` hook (`routes`, `state`; override to add). The loop context is appended to the last message. The llm span carries `prompt.name`, `prompt.version` and `prompt.hash`, as for nodes. Without `prompt:` the router sends `buildPrompt()` as before. A routing call made with a template sends messages, so its trace prompt text gains the `[user] ` prefix and its router cache key changes.
 - Internal: `LlmExecutor::run()` takes an optional second argument with the builder's detail for the fake (`@internal` class).
 
-### Prompt files (B13b D)
+### Prompt files
 - New: prompt files. Markdown with front matter under `config('agenticgraph.prompts.path')` (new key, default `resource_path('prompts')`, env `AGENTICGRAPH_PROMPTS_PATH`, read with that default in code). Front matter: `name` (required, the dotted path: `support/reply.md` is `support.reply`), `version` (required), `description` (optional); no model or settings, those stay on the node. Body: `## system`, `## user`, `## assistant` sections and `## messages: <var>` placeholders; `{var}` variables and `{{` `}}` literal braces (the interpolator's rules).
 - New: `Prompts::get($name)` returns a `PromptFile` (a `ChatPromptTemplate` with `name`, `version`, `hash`, `description`, `meta()`), a fresh copy each call, parsed once per process per content hash. `hash` is the first 12 hex of the sha256 of the raw file. Errors throw `TemplateException` naming the file: missing or mismatched `name`, missing `version`, a `model` or settings key, an unknown key, nested YAML, an unknown heading, text before the first heading, an empty section.
 - New: `php artisan agenticgraph:prompts` lists name, version and hash of every file and exits 1 when any is invalid (for CI). Publishable example: `vendor:publish --tag=agenticgraph-prompts`.
 - New: `explain()['prompt']` (`name`, `version`, `hash`; `null` without a prompt file).
 - Trace wire, additive (v1.1): an llm span of a call made with `chat(Prompts::get(...))` carries `prompt.name`, `prompt.version` and `prompt.hash` in `attributes` (also on a cache hit). The schema's llm `attributes` now require each group whole (`dependentRequired`) instead of always requiring the context pair. Registry, wire doc, JSON Schema, OTLP note (strings, passed through), and the freeze-corpus case. `llm_calls` rows are unchanged. `TokensUsed` gains `promptFile`.
 
-### `context()` (B13b C)
+### `context()`
 - New: `context($items, as: 'context', format: ?PromptTemplate, separator: "\n\n")` on `LlmRequest`. `$items` is a list of plain items (`id` string or int, `content`, optional `metadata` and `score`) or any object with `toContextItems(): array` returning that list (structural, no shared interface; core does not import the vector package). Each item renders as its content, or through the `PromptTemplate` with its metadata plus `id`, `content` and `score` (a missing key throws `TemplateException`). The joined text reaches the prompt as the variable `as`, never interpolated again; the same name in `vars()` throws `LogicException`.
 - New: `LlmResponse::sources()` (the items used: `id`, `metadata`, `score`, in prompt order; also on a cache hit) and `sources` in `toArray()` (`[]` without `context()`).
 - New: `explain()['context']` (`var`, `count`, the formatted `text`; `null` without `context()`).
 - Trace wire, additive (v1.1): an llm span whose request used `context()` carries `attributes` with `context.count` and `context.ids` (the first 20 ids, as strings). Registry, wire doc, JSON Schema, OTLP note (the `attributes` object passes through; the id list as its JSON string) and a freeze-corpus case. `TokensUsed` gains `contextCount` and `contextIds`.
 
-### Multi-step streaming (B13b B)
+### Multi-step streaming
 - Tool runs with `maxSteps > 1` and MCP now stream every step when a sink is bound (they ran non-streamed before). `explain()['stream']` follows.
 - **BREAKING (stream wire):** Prism's StreamStart and StreamEnd map to new `stream_start` and `stream_end` events (they were `step_start` and `step_finish`, so one step gave two of each). `stream_end` carries the request's `finish_reason` and cumulative `usage` (plus `citations`, `additional_content`); `stream_start` carries `model`, `provider`, `metadata`. `step_start` and `step_finish` are now one pair per step; `step_finish` gains that step's `finish_reason` and `usage`. Every streamed graph's sequence changes.
 - **Behavior change:** a streamed tool run's `LlmResponse::$text` is the final step's text, as non-streamed (it concatenated every step). New `LlmResponse::$steps` (`list<LlmStep>`: text, tool calls, results, usage, finish reason per step) for tool and MCP runs, and `steps` in `toArray()`.
 - **Behavior change:** `NodeStreamAccumulator` sets `text` to the final step's text as a string (it was an array when a node streamed several message ids).
 - A streamed node attempt that already emitted content is not retried at node level (unchanged rule), so a multi-step run that fails in a later step fails the node.
-- Documented: a structured retry after a streamed attempt runs without streaming (unchanged since B13b A); its reply is in the result, not on the wire.
+- Documented: a structured retry after a streamed attempt runs without streaming (unchanged since the structured retry below); its reply is in the result, not on the wire.
 
-### Structured output: retry, `as()`, `structuredMode()` (B13b A)
+### Structured output: retry, `as()`, `structuredMode()`
 - New: `structuredMode(string|StructuredMode)` on `LlmRequest` (`auto`, `json`, `structured`). Only the OpenAI provider reads it; any other provider throws a `LogicException` before the call. Shown in `explain()['settings']['structured_mode']`; in the cache key only when set.
 - New: structured retry. A reply that does not decode, or does not fit `as()`, is sent again with the failed reply and the error appended. Config `agenticgraph.prism.structured.retries` (`AGENTICGRAPH_PRISM_STRUCTURED_RETRIES`, default `1`, read with that default in code; `0` throws at once). `PrismRouter` pins 0 (it has its own retry). **Behavior change:** the silent streamed-to-non-streamed fallback is gone; the streamed reply is attempt 1 and a failure retries or throws.
 - New: `as(Dto::class)`, `data()`, `LlmResponse::$data`, `#[ListOf]`, `StructuredHydrationException`. Reflection-only hydration (constructor or public properties; scalars, nullable and union types, backed enums, date-times, nested classes, typed lists), strict, errors name the path and expected type.
@@ -55,7 +55,7 @@
 
 The trace wire (`agenticgraph.trace.v1.1`, the v1 contract plus the v1.1 amendment) is frozen; later changes are additive, locked by `TraceWireContractFreezeTest`. The Pulse exporter's payload is an internal, versioned format between AgenticGraph and AgenticPulse. To send traces to your own backend, use OTLP.
 
-### Trace JSON Schema and wire fixes (B13s)
+### Trace JSON Schema and wire fixes
 
 - New: a JSON Schema for the trace wire (segment envelope and merged trace), kept with AgenticPulse and checked against real captures there. `TraceWireContractFreezeTest` keeps its key registry inline.
 - Pricing: hand-set prices live in `config/model_pricing_overrides.php` (published with the other config). `ModelPricingCalculator` merges it over `config/model_pricing.php` (an override replaces the whole entry) and `agenticgraph:pricing:sync` never writes it; the sync reports the ids an override covers. `openai/gpt-6-luna` moved there from the sync table (OpenAI Standard tier, short context up to 272K input: input 0.10, cached input 0.01, cache write 0.125, output 0.50 per 1M tokens; the cache write rate is marked TODO for a check against the official page).
@@ -63,19 +63,20 @@ The trace wire (`agenticgraph.trace.v1.1`, the v1 contract plus the v1.1 amendme
 - Fixed: `llm_calls[].duration_ms` is always a number (0.0 when the event has no measured duration); it could be null.
 - Trace wire, additive: in the merged trace, a `segments` entry of a segment that ended interrupted gains `interrupt` (`{reason, at}`). Before, the merge removed `trace.interrupt_reason` and `trace.interrupted_at` once the run was resumed and nothing recorded that, why or when a segment was interrupted except the interrupt span. Wire doc clarified: `state_diff` and `loop_context` are on successful node attempts, `model` may be null, `active_cycles` is a list of `{cycle, count}`, `tool.request_id` and `gen_ai.tool.call.id` exist only for provider-executed tool calls, and node spans never carry `links`.
 
-### Prism 0.102 and usage semantics v2 (B13a)
+### Prism 0.102, PHP 8.3 and usage semantics v2
 
 - **BREAKING:** requires `prism-php/prism` `^0.102.0` (was `^0.100.1`), and therefore `laravel/framework` `^12.61.1 || ^13.12.0`. **Laravel 11 is no longer supported** (Prism 0.101 dropped it; the CI matrix, `composer.json`, README and compatibility table follow). `orchestra/testbench` `^10.0|^11.0`.
+- **BREAKING:** requires PHP 8.3+ (`php` `^8.3`, was `^8.2`). Laravel 13 needs 8.3, and CI tests 8.3 and 8.4 only.
 - **BREAKING (numbers): usage semantics v2.** Prism 0.102 gives `Usage` one meaning on every provider, and the package reports it as is: `prompt_tokens` is the uncached input; cached input is in `cache_read_tokens` / `cache_write_tokens` and never inside `prompt_tokens`; `completion_tokens` includes reasoning, `thought_tokens` is its reasoning part. The numbers change wherever a provider used to deviate: Gemini `completion_tokens` now includes thinking (higher) and `prompt_tokens` excludes implicit cache hits; OpenAI streams, OpenRouter, DeepSeek, Mistral, Groq, Z, xAI and Ollama 0.33.3+ `prompt_tokens` exclude cached input (lower); multi-step streams on Gemini, Groq and OpenRouter are now the sum of every step, not the last; `thought_tokens` is newly reported by DeepSeek and OpenRouter. Anyone storing usage for billing or analytics sees a step change.
 - New: nullable `cacheReadTokens` and `cacheWriteTokens` on `TokensUsed` (and `TokensUsed::fromLlmCall()`), `cache_read_tokens` / `cache_write_tokens` in `LlmResponse::toArray()['usage']`, and on the `llm` span. Null: the provider does not report it; 0: it reported zero. Trace wire, additive (v1.1, "usage semantics v2"): the two optional span keys; `total_tokens` stays prompt + completion and so excludes cached input. OTLP: `agenticgraph.cache_read_tokens`, `agenticgraph.cache_write_tokens`, `gen_ai.usage.cache_read.input_tokens` and `gen_ai.usage.cache_write.input_tokens` (names verified against the pinned semantic-conventions-genai commit); `gen_ai.usage.input_tokens` is now `prompt + cache read + cache write`, which is what OTel defines (it was the raw prompt count before).
 - Pricing: `ModelPricingCalculator::calculate()` takes the cache buckets. A `config/model_pricing.php` entry may set `cache_read` and `cache_write` (USD per 1M tokens); cached input costs that rate, else the entry's `input` rate (what it cost when providers counted it inside the prompt). `agenticgraph:pricing:sync` does not write the two keys yet; set them by hand.
-- Finish reasons: `LlmResponse::$finishReason` (and `finish_reason` in `toArray()`) can now be `length` for a **streamed** call cut by `$maxTokens`, with the real usage (a truncated OpenAI stream used to report `stop` and 0 tokens; this was the known upstream issue of B12). New values `refusal` and `pause` exist. A non-streamed OpenAI call cut by the limit still throws `max tokens exceeded`. A stream that ends in an in-stream error now throws a `PrismException` after its events were sent (Prism 0.102 ends it as a normal stream with finish reason `error`); the call's tokens are not tracked, as for a thrown non-streamed call.
+- Finish reasons: `LlmResponse::$finishReason` (and `finish_reason` in `toArray()`) can now be `length` for a **streamed** call cut by `$maxTokens`, with the real usage (a truncated OpenAI stream used to report `stop` and 0 tokens, a known upstream issue). New values `refusal` and `pause` exist. A non-streamed OpenAI call cut by the limit still throws `max tokens exceeded`. A stream that ends in an in-stream error now throws a `PrismException` after its events were sent (Prism 0.102 ends it as a normal stream with finish reason `error`); the call's tokens are not tracked, as for a thrown non-streamed call.
 - Fixed: `PrismNode::audioToText()` threw a `TypeError` with token tracking on for duration-billed transcriptions (OpenAI whisper-1, Groq), where Prism 0.102 returns `null` usage. No `TokensUsed` is dispatched for them.
-- Reasoning: Anthropic `off` now sends `thinking.type = disabled`. Prism 0.102 ignores the old `thinking.enabled = false` (it sends nothing), and Claude 5 models think by default, so `off` did not turn thinking off. Level and budget are unchanged. Every row of the B12 mapping was re-checked against the 0.102 handlers (OpenAI, Gemini, OpenRouter, Ollama, DeepSeek unchanged); `ReasoningTest` now asserts the request body per provider. Known gap, same in 0.100: Ollama structured requests do not send `think`.
+- Reasoning: Anthropic `off` now sends `thinking.type = disabled`. Prism 0.102 ignores the old `thinking.enabled = false` (it sends nothing), and Claude 5 models think by default, so `off` did not turn thinking off. Level and budget are unchanged. Every row of the reasoning mapping was re-checked against the 0.102 handlers (OpenAI, Gemini, OpenRouter, Ollama, DeepSeek unchanged); `ReasoningTest` now asserts the request body per provider. Known gap, same in 0.100: Ollama structured requests do not send `think`.
 - Docs: unknown OpenAI model names (custom names on a gateway) get `json_schema` since Prism 0.102; Prism's per-request `StructuredMode::Json` and how a node reaches it are in the nodes chapter (`GatewayStructuredModeTest`).
 - Removed from the known issues: "a truncated OpenAI stream reports zero usage".
 
-### Reasoning level and thought tokens (B12)
+### Reasoning level and thought tokens
 
 - New: `protected ?string $reasoning` (`off`, `low`, `medium`, `high`) and `protected ?int $reasoningBudget` on `PrismNode`, and `->reasoning(?string $level = null, ?int $budget = null)` on `LlmRequest`. Precedence call, then node; **no config layer** (a global level would break nodes on providers that cannot apply it). Null sends nothing.
 - The package maps the setting to the option Prism reads for the provider: OpenAI `reasoning.effort`; Gemini `thinkingLevel`, `thinkingBudget` (off is budget 0); Anthropic `thinking` (the app's budget from the new `agenticgraph.prism.reasoning.budgets.{low,medium,high}`, env `AGENTICGRAPH_PRISM_REASONING_BUDGET_*`, no package defaults); OpenRouter `reasoning`; Ollama `thinking` (the level is reduced to on). Never a silent no-op: the DeepSeek provider, a provider with no mapping, a budget where none exists, a level without its Anthropic budget and Anthropic thinking with a forced tool choice throw `ReasoningException` before the call; a vendor 4xx (not a rate limit) is rethrown as `ReasoningException` with the level and the option sent.
@@ -84,12 +85,12 @@ The trace wire (`agenticgraph.trace.v1.1`, the v1 contract plus the v1.1 amendme
 - The derived option is merged recursively into the node's and the call's provider options (other keys under the same option survive; the reasoning setting wins on the same key). `explain()` has `settings.reasoning` (level, budget, options, note, source) and the exact options in `settings.provider_options`. The cache key includes them.
 - `thoughtTokens` (nullable: Anthropic, DeepSeek and Ollama do not report it) on `TokensUsed`, `LlmResponse::toArray()['usage']['thought_tokens']` (new key) and the llm span. `LlmResponse::toArray()` also gains `warnings`.
 - Trace wire, additive (v1.1 note): the `llm` span has an optional `thought_tokens` (integer), absent when unknown. The OTLP exporter maps it to `agenticgraph.thought_tokens`.
-- Docs: on reasoning models `$maxTokens` includes the reasoning tokens (nodes chapter, core skill). (The B12 known issue that a truncated OpenAI stream reports zero usage is fixed by Prism 0.102, see B13a.)
+- Docs: on reasoning models `$maxTokens` includes the reasoning tokens (nodes chapter, core skill). (The known issue that a truncated OpenAI stream reports zero usage is fixed by Prism 0.102, see "Prism 0.102, PHP 8.3 and usage semantics v2".)
 - Not done: core `PrismNode::embeddings()` has no `url` either (later list).
 
-### Release metadata (B11 session C)
+### Release metadata
 
-- README: Laravel 11, 12 or 13 (as `composer.json` already allowed), the upgrade steps from 0.1.0 and a compatibility table (core 0.2.x, vector 0.1.x, stream client 0.1.x). `composer.json` gains keywords and `support` (issues, source, docs). `.claude/settings.local.json` is no longer tracked. Dev lock updated (`composer audit` clean; guzzle 8).
+- README: an "Upgrading from 0.1.0" section and a compatibility table (core 0.2.x, vector 0.1.x, stream client 0.1.x; PHP 8.3+, Laravel 12.61.1+ or 13.12+, Prism 0.102). `composer.json` gains keywords and `support` (issues, source, docs). `.claude/settings.local.json` is no longer tracked. Dev lock updated (`composer audit` clean; guzzle 8).
 
 ### Upgrade migrations (from 0.1.0)
 

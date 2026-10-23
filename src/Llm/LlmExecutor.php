@@ -684,7 +684,7 @@ final class LlmExecutor
     }
 
     /**
-     * Emits every adapted event to the sink, in order, through one adapter for the request (the B2 wire contract).
+     * Emits every adapted event to the sink, in order, through one adapter for the request (the stream wire contract).
      * Text is the final step's, as non-streamed; usage and finish reason are the request's (StreamEnd), each step keeps its own.
      *
      * @return array{text: string, usage: Usage|null, finishReason: FinishReason|null, steps: list<array{text: string, toolCalls: list<ToolCall>, toolResults: list<ToolResult>, usage: Usage|null, finishReason: FinishReason|null}>}

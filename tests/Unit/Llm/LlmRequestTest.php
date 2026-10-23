@@ -447,7 +447,7 @@ describe('streaming matrix', function () {
 
     it('streams a tool run as one stream_start and stream_end around one step_start and step_finish per step; text is the final step', function () {
         $sink = llmBindSink();
-        // The fake replays every step whatever maxSteps says, so the single-step path (streamed before B13b) shows it too.
+        // The fake replays every step whatever maxSteps says, so the single-step path (streamed before multi-step streaming) shows it too.
         Prism::fake([llmTwoSteps()]);
 
         $response = (new LlmProbeNode)->call(fn (LlmRequest $llm) => $llm->prompt('a')->tools([llmTool()])->run());
