@@ -506,3 +506,20 @@ it('maps a class-only error to exception.type and the span status message to the
     expect(array_column($span['attributes'], 'key'))->toContain('exception.type')->not->toContain('exception.message')
         ->and($span['status'])->toBe(['code' => 2, 'message' => 'RuntimeException']);
 });
+
+it('maps a failed llm span to an error status with the exception and no usage attributes', function (): void {
+    $payload = (new OtlpPayloadBuilder)->build(
+        trace: ['id' => 'exec_llm_err', 'graph_name' => 'g', 'status' => 'completed'],
+        spans: [['id' => 'span_f', 'trace_id' => 'exec_llm_err', 'parent_id' => null, 'node_name' => 'route llm', 'span_type' => 'llm', 'span_kind' => 'client',
+            'status' => 'failed', 'status_code' => 'ERROR', 'started_at' => '2026-06-27T10:00:00+00:00', 'ended_at' => '2026-06-27T10:00:01+00:00',
+            'model' => 'openai:gpt-6-luna', 'prompt_tokens' => null, 'completion_tokens' => null, 'total_tokens' => null, 'cost_usd' => null, 'cached' => false, 'streamed' => false,
+            'error' => ['type' => 'Prism\Prism\Exceptions\PrismException', 'message' => 'max tokens exceeded']]],
+        llmCalls: [],
+    );
+    $span = $payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0];
+    $keys = array_column($span['attributes'], 'key');
+
+    expect($span['status'])->toBe(['code' => 2, 'message' => 'max tokens exceeded'])
+        ->and($keys)->toContain('exception.type', 'exception.message', 'gen_ai.request.model')
+        ->not->toContain('gen_ai.usage.input_tokens', 'gen_ai.usage.output_tokens', 'agenticgraph.total_tokens', 'agenticgraph.cost_usd');
+});

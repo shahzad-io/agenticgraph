@@ -46,7 +46,7 @@ return [
         ],
         'llm' => [
             'node_type' => 'llm',
-            'top' => ['model', 'prompt_tokens', 'completion_tokens', 'total_tokens', 'cost_usd', 'cached', 'streamed', 'thought_tokens', 'cache_read_tokens', 'cache_write_tokens'],
+            'top' => ['model', 'prompt_tokens', 'completion_tokens', 'total_tokens', 'cost_usd', 'cached', 'streamed', 'thought_tokens', 'cache_read_tokens', 'cache_write_tokens', 'error'],
             'attributes' => ['context.count', 'context.ids', 'prompt.name', 'prompt.version', 'prompt.hash'],
         ],
         'route' => [
@@ -93,7 +93,7 @@ return [
     'route_kind' => ['llm', 'deterministic', 'fan_out', 'join'],
     'llm_calls' => [
         'always' => ['id', 'trace_id', 'span_id', 'node', 'call_type', 'model', 'prompt_tokens', 'completion_tokens', 'total_tokens', 'duration_ms', 'created_at', 'cost_usd', 'streamed'],
-        'optional' => ['prompt', 'response', 'cached', 'cache_key'],
+        'optional' => ['prompt', 'response', 'cached', 'cache_key', 'thought_tokens', 'cache_read_tokens', 'cache_write_tokens', 'prompt_name', 'prompt_version', 'prompt_hash'],
         'call_type' => ['text', 'structured', 'tools', 'embeddings', 'image', 'audio', 'mcp', 'cached'],
     ],
     '_meta' => [

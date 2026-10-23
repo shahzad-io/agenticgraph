@@ -140,7 +140,7 @@ it('records PrismRouter calls at the executor and lets a queued failure drive th
 
     expect($route)->toBe('billing');
     $llm->assertSentCount(2);
-    $llm->assertSettings(['model' => ['value' => 'openai:config-model', 'source' => 'config'], 'max_tokens' => ['value' => 100, 'source' => 'call']]);
+    $llm->assertSettings(['model' => ['value' => 'openai:config-model', 'source' => 'config'], 'max_tokens' => ['value' => 1024, 'source' => 'node']]);
     $llm->assertPrompted(fn (array $call) => $call['node'] === 'PrismRouter' && $call['prompt'] === null && str_contains($call['messages'][0]['content'], '- billing: bill'));
 });
 

@@ -2,14 +2,21 @@
 
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Http;
+use Prism\Prism\Exceptions\PrismException;
 use Prism\Prism\Facades\Prism;
 use Prism\Prism\Schema\EnumSchema;
 use Prism\Prism\Structured\Request;
 use Prism\Prism\Testing\StructuredResponseFake;
 use Prism\Prism\ValueObjects\Meta;
 use Prism\Prism\ValueObjects\Usage;
+use Psr\Log\LoggerInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Events\LlmCallFailed;
+use Shahzad\AgenticGraph\Events\RouteFellBack;
 use Shahzad\AgenticGraph\Exceptions\MissingModelException;
+use Shahzad\AgenticGraph\Exceptions\RoutingException;
 use Shahzad\AgenticGraph\Routers\PrismRouter;
 use Shahzad\AgenticGraph\State\State;
 
@@ -377,3 +384,113 @@ it('records from_cache and fallback flags for the last route', function (string 
     'invalid route' => ['invalid_route', ['from_cache' => false, 'fallback' => true]],
     'exception after retries' => ['exception', ['from_cache' => false, 'fallback' => true]],
 ]);
+
+it('sends agenticgraph.router.max_tokens and reasoning on the routing call, 1024 and none when unset', function (?int $maxTokens, ?string $reasoning, int $sentTokens, mixed $sentReasoning) {
+    config()->set('agenticgraph.router.max_tokens', $maxTokens);
+    config()->set('agenticgraph.router.reasoning', $reasoning);
+    $prismFake = Prism::fake([StructuredResponseFake::make()->withStructured(['route' => 'target_a'])->withUsage(new Usage(1, 1))]);
+
+    (new PrismRouter(['target_a' => 'a', 'target_b' => 'b'], defaultRoute: 'target_b'))->route(new State);
+
+    $prismFake->assertRequest(function (array $requests) use ($sentTokens, $sentReasoning) {
+        expect($requests[0]->maxTokens())->toBe($sentTokens)
+            ->and($requests[0]->providerOptions('reasoning'))->toBe($sentReasoning);
+    });
+})->with([
+    'config' => [321, 'low', 321, ['effort' => 'low']],
+    'unset' => [null, null, 1024, null],
+]);
+
+it('lets a router class set its own max tokens and reasoning over the config', function () {
+    config()->set('agenticgraph.router.max_tokens', 321);
+    config()->set('agenticgraph.router.reasoning', 'high');
+    $prismFake = Prism::fake([StructuredResponseFake::make()->withStructured(['route' => 'target_a'])->withUsage(new Usage(1, 1))]);
+    $router = new class(['target_a' => 'a', 'target_b' => 'b'], 'target_b') extends PrismRouter
+    {
+        protected ?int $maxTokens = 64;
+
+        protected ?string $reasoning = 'low';
+    };
+
+    $router->route(new State);
+
+    $prismFake->assertRequest(function (array $requests) {
+        expect($requests[0]->maxTokens())->toBe(64)
+            ->and($requests[0]->providerOptions('reasoning'))->toBe(['effort' => 'low']);
+    });
+});
+
+it('logs a warning and dispatches RouteFellBack when it falls back to the default route', function (string $case, string $reason) {
+    config()->set('agenticgraph.router.max_retries', 2);
+    config()->set('agenticgraph.router.retry_delay_ms', 0);
+    Event::fake([RouteFellBack::class]);
+    $fake = fn (array $structured): StructuredResponseFake => StructuredResponseFake::make()->withStructured($structured)->withUsage(new Usage(1, 1));
+    if ($case === 'exception') {
+        Http::fake(['api.openai.com/*' => Http::response(['error' => ['type' => 'server_error', 'message' => 'provider down']], 500)]);
+    } else {
+        Prism::fake([$fake($case === 'missing_key' ? ['reasoning' => 'none'] : ['route' => 'nowhere'])]);
+    }
+    $logger = Mockery::spy(LoggerInterface::class);
+
+    $route = (new PrismRouter(['target_a' => 'a', 'target_b' => 'b'], defaultRoute: 'target_b', logger: $logger))->route(new State);
+
+    expect($route)->toBe('target_b');
+    $logger->shouldHaveReceived('warning')->with('PrismRouter fell back to the default route', Mockery::on(fn (array $context): bool => $context['reason'] === $reason && $context['default_route'] === 'target_b'))->once();
+    Event::assertDispatchedTimes(RouteFellBack::class, 1);
+    Event::assertDispatched(RouteFellBack::class, fn (RouteFellBack $event): bool => $event->router === PrismRouter::class && $event->route === 'target_b' && $event->reason === $reason
+        && ($case === 'exception' ? str_contains((string) $event->error, 'provider down') : $event->error === null));
+})->with([
+    'missing route key' => ['missing_key', 'missing_route_key'],
+    'invalid route' => ['invalid_route', 'invalid_route'],
+    'retries used up' => ['exception', 'routing_failed'],
+]);
+
+it('dispatches LlmCallFailed once per failed routing attempt', function () {
+    config()->set('agenticgraph.router.max_retries', 3);
+    config()->set('agenticgraph.router.retry_delay_ms', 0);
+    Event::fake([LlmCallFailed::class]);
+    Http::fake(['api.openai.com/*' => Http::response(['error' => ['type' => 'server_error', 'message' => 'provider down']], 500)]);
+
+    expect((new PrismRouter(['target_a' => 'a', 'target_b' => 'b'], defaultRoute: 'target_b'))->route(new State))->toBe('target_b');
+
+    Event::assertDispatchedTimes(LlmCallFailed::class, 3);
+    Event::assertDispatched(LlmCallFailed::class, fn (LlmCallFailed $event): bool => $event->node === 'PrismRouter' && $event->callType === 'structured' && $event->exception instanceof PrismException);
+});
+
+it('throws a RoutingException naming the router, the reason and the reply when there is no default route', function (string $case, string $reason, string $reply) {
+    config()->set('agenticgraph.router.max_retries', 2);
+    config()->set('agenticgraph.router.retry_delay_ms', 0);
+    Event::fake([RouteFellBack::class]);
+    if ($case === 'exception') {
+        Http::fake(['api.openai.com/*' => Http::response(['error' => ['type' => 'server_error', 'message' => 'provider down']], 500)]);
+    } else {
+        Prism::fake([StructuredResponseFake::make()->withStructured($case === 'missing_key' ? ['reasoning' => 'none'] : ['route' => 'nowhere'])->withUsage(new Usage(1, 1))]);
+    }
+    $router = new PrismRouter(['target_a' => 'a', 'target_b' => 'b']);
+
+    $thrown = null;
+    try {
+        $router->route(new State);
+    } catch (RoutingException $e) {
+        $thrown = $e;
+    }
+
+    expect($thrown)->not->toBeNull()
+        ->and($thrown->router)->toBe(PrismRouter::class)
+        ->and($thrown->reason)->toBe($reason)
+        ->and($thrown->reply)->toContain($reply)
+        ->and($thrown->getMessage())->toContain(PrismRouter::class)->toContain($reason)->toContain($reply);
+    Event::assertNotDispatched(RouteFellBack::class);
+})->with([
+    'missing route key' => ['missing_key', 'missing_route_key', '{"reasoning":"none"}'],
+    'invalid route' => ['invalid_route', 'invalid_route', '{"route":"nowhere"}'],
+    'retries used up' => ['exception', 'routing_failed', 'provider down'],
+]);
+
+it('does not retry a reply that is unusable without a default route', function () {
+    config()->set('agenticgraph.router.max_retries', 3);
+    $prismFake = Prism::fake([StructuredResponseFake::make()->withStructured(['route' => 'nowhere'])->withUsage(new Usage(1, 1))]);
+
+    expect(fn () => (new PrismRouter(['target_a' => 'a']))->route(new State))->toThrow(RoutingException::class);
+    $prismFake->assertCallCount(1);
+});

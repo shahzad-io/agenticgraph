@@ -14,7 +14,9 @@ use Shahzad\AgenticGraph\Contracts\LoopAwareRouterInterface;
 use Shahzad\AgenticGraph\Contracts\PrismClient;
 use Shahzad\AgenticGraph\Contracts\RouterInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Events\RouteFellBack;
 use Shahzad\AgenticGraph\Exceptions\MissingModelException;
+use Shahzad\AgenticGraph\Exceptions\RoutingException;
 use Shahzad\AgenticGraph\Execution\ExecutionContext;
 use Shahzad\AgenticGraph\Execution\LoopContext;
 use Shahzad\AgenticGraph\Graph\Graph;
@@ -27,6 +29,12 @@ use Shahzad\AgenticGraph\Prompts\PromptFile;
 class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, RouterInterface
 {
     protected ?string $model = null;
+
+    /** Max output tokens for the routing call; null falls back to agenticgraph.router.max_tokens, then 1024. */
+    protected ?int $maxTokens = null;
+
+    /** Reasoning level for the routing call: off, low, medium or high; null falls back to agenticgraph.router.reasoning. */
+    protected ?string $reasoning = null;
 
     protected bool $trackTokens = true;
 
@@ -122,8 +130,8 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
                 $this->afterRoute($state, $route, $loop, false);
 
                 return $route;
-            } catch (MissingModelException $e) {
-                throw $e; // configuration error: no retry, no default route
+            } catch (MissingModelException|RoutingException $e) {
+                throw $e; // configuration error, or an unusable reply with no default route: no retry
             } catch (\Throwable $e) {
                 $lastException = $e;
 
@@ -146,8 +154,8 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
             }
         }
 
-        $route = $this->handleRoutingFailure($lastException, $state);
-        $this->lastRouteFlags['fallback'] = true;
+        $this->logRoutingFailure($lastException, $state);
+        $route = $this->fellBack('routing_failed', $lastException?->getMessage() ?? 'Unknown error', $lastException);
         $this->afterRoute($state, $route, $loop, false);
 
         return $route;
@@ -156,13 +164,13 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
     /**
      * The routing request: buildPromptWithLoop() as the prompt, or $prompt formatted with routingVars() and the loop
      * context appended to its last message. The router's own cache is checked in routeWithLoop(); routing never
-     * streams and is capped at 100 tokens.
+     * streams. Max tokens and reasoning come from executor(): the class properties, then agenticgraph.router.
      *
      * @return array{0: LlmCall, 1: array{vars?: array<string, mixed>, template_vars?: list<string>}}
      */
     private function routingCall(StateContract $state, ?LoopContext $loop): array
     {
-        $settings = ['schema' => $this->buildRoutingSchema(), 'maxTokens' => 100, 'cache' => false, 'stream' => false, 'structuredTraceAsJson' => true, 'structuredRetries' => 0];
+        $settings = ['schema' => $this->buildRoutingSchema(), 'cache' => false, 'stream' => false, 'structuredTraceAsJson' => true, 'structuredRetries' => 0];
         if ($this->prompt === null) {
             return [new LlmCall(...$settings, prompt: $this->buildPromptWithLoop($state, $loop)), []];
         }
@@ -204,9 +212,7 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
                 ]);
             }
 
-            $this->lastRouteFlags['fallback'] = true;
-
-            return $this->defaultRoute ?? '';
+            return $this->fellBack('missing_route_key', (string) json_encode($structured));
         }
 
         $route = $structured['route'];
@@ -220,14 +226,38 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
                 ]);
             }
 
-            $this->lastRouteFlags['fallback'] = true;
-
-            return $this->defaultRoute ?? '';
+            return $this->fellBack('invalid_route', (string) json_encode($structured));
         }
 
         if (config('agenticgraph.prism.cache_enabled', false)) {
             $this->cache->put($cacheKey, $route, config('agenticgraph.prism.cache_ttl', 60) * 60);
         }
+
+        return $route;
+    }
+
+    /**
+     * Takes the default route: marks it as a fallback (route.fallback on the span), logs a warning and dispatches
+     * RouteFellBack. Without a default route, throws RoutingException with the reason and the reply.
+     */
+    private function fellBack(string $reason, string $reply, ?\Throwable $previous = null): string
+    {
+        if (! $this->defaultRoute) {
+            throw new RoutingException(static::class, $reason, $reply, $previous);
+        }
+
+        $route = $this->defaultRoute;
+        $error = $reason === 'routing_failed' ? $reply : null;
+        $this->lastRouteFlags['fallback'] = true;
+        if ((bool) config('agenticgraph.logging.enabled', true)) {
+            $this->logger->warning('PrismRouter fell back to the default route', [
+                'router' => static::class,
+                'default_route' => $route,
+                'reason' => $reason,
+                'error' => $error,
+            ]);
+        }
+        $this->events->dispatch(new RouteFellBack(static::class, $route, $reason, $error));
 
         return $route;
     }
@@ -257,9 +287,9 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
     }
 
     /**
-     * Handle routing failure after all retries exhausted.
+     * Logs the routing failure after all retries are used up.
      */
-    private function handleRoutingFailure(?\Throwable $e, StateContract $state): string
+    private function logRoutingFailure(?\Throwable $e, StateContract $state): void
     {
         if ((bool) config('agenticgraph.logging.enabled', true)) {
             $this->logger->error('PrismRouter failed after retries', [
@@ -272,16 +302,6 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
                 'available_routes' => $this->getAvailableRoutes(),
             ]);
         }
-
-        if (! $this->defaultRoute) {
-            throw new \RuntimeException(
-                'PrismRouter failed and no default route configured: '.($e?->getMessage() ?? 'Unknown error'),
-                0,
-                $e
-            );
-        }
-
-        return $this->defaultRoute;
     }
 
     protected function buildPrompt(StateContract $state): string
@@ -406,6 +426,9 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
 
     private function executor(): LlmExecutor
     {
+        $maxTokens = config('agenticgraph.router.max_tokens');
+        $reasoning = config('agenticgraph.router.reasoning');
+
         return new LlmExecutor(
             client: $this->prismClient(),
             cache: $this->cache,
@@ -413,7 +436,9 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
             nodeName: 'PrismRouter',
             cacheScope: static::class,
             model: $this->model,
+            maxTokens: $this->maxTokens ?? (is_numeric($maxTokens) ? (int) $maxTokens : 1024),
             trackTokens: $this->trackTokens,
+            reasoning: $this->reasoning ?? (is_string($reasoning) && $reasoning !== '' ? $reasoning : null),
         );
     }
 

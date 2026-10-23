@@ -15,9 +15,11 @@ use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
+use Prism\Prism\Exceptions\PrismException;
 use Prism\Prism\Tool;
 use Shahzad\AgenticGraph\AgenticGraphServiceProvider;
 use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Events\LlmCallFailed;
 use Shahzad\AgenticGraph\Events\TokensUsed;
 use Shahzad\AgenticGraph\Events\ToolCallCaptured;
 use Shahzad\AgenticGraph\Execution\ExecutionContext;
@@ -67,6 +69,7 @@ class FzWorkNode extends PrismNode
         $start = microtime(true);
         event(TokensUsed::fromLlmCall('work', $start, 1.0, 3, 5, 'text', 'test:model', 'prompt', 'response', streamed: true, thoughtTokens: 4, cacheReadTokens: 6, cacheWriteTokens: 2, contextCount: 2, contextIds: ['doc-1', '7'], promptFile: ['name' => 'support.reply', 'version' => '2', 'hash' => 'a1b2c3d4e5f6']));
         event(TokensUsed::fromCacheHit('work', $start, 0.5, 'test:model', 'prompt', 'response', 'cache:key'));
+        event(LlmCallFailed::fromException('work', $start, 'structured', 'test:model', new PrismException('provider down'), promptFile: ['name' => 'support.reply', 'version' => '2', 'hash' => 'a1b2c3d4e5f6']));
         event(new ToolCallCaptured(
             executionId: TraceContext::tryGet()?->getExecutionId() ?? '',
             spanId: TraceContext::tryGet()?->getSpanId(),
@@ -489,6 +492,14 @@ function fzSemanticErrors(array $document): array
             continue;
         }
         $llm[$span['id']] = $span;
+        // A failed call: its usage and cost are unknown (null), and it has no llm_calls row.
+        if ($span['status_code'] === 'ERROR') {
+            if ([$span['prompt_tokens'], $span['completion_tokens'], $span['total_tokens'], $span['cost_usd']] !== [null, null, null, null] || ! isset($span['error'])) {
+                $problems[] = "{$span['id']}: a failed llm span has tokens or cost, or no error";
+            }
+
+            continue;
+        }
         if ($span['total_tokens'] !== $span['prompt_tokens'] + $span['completion_tokens']) {
             $problems[] = "{$span['id']}: total_tokens is not prompt + completion";
         }
@@ -498,7 +509,11 @@ function fzSemanticErrors(array $document): array
     }
     foreach ($document['llm_calls'] as $call) {
         $span = $llm[$call['span_id']] ?? null;
-        if ($span !== null && [$span['prompt_tokens'], $span['completion_tokens'], $span['cost_usd']] !== [$call['prompt_tokens'], $call['completion_tokens'], $call['cost_usd']]) {
+        if ($span !== null && $span['status_code'] === 'ERROR') {
+            $problems[] = "{$call['id']}: an llm_calls row for the failed span {$call['span_id']}";
+        }
+        $usage = fn (array $item): array => [$item['prompt_tokens'], $item['completion_tokens'], $item['cost_usd'], $item['thought_tokens'] ?? null, $item['cache_read_tokens'] ?? null, $item['cache_write_tokens'] ?? null];
+        if ($span !== null && $usage($span) !== $usage($call)) {
             $problems[] = "{$call['id']}: tokens or cost differ from span {$call['span_id']}";
         }
     }

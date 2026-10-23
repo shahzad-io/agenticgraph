@@ -2,7 +2,9 @@
 
 namespace Shahzad\AgenticGraph\Tests\Unit\Tracing;
 
+use Prism\Prism\Exceptions\PrismException;
 use Shahzad\AgenticGraph\Events\GraphExecutionStarted;
+use Shahzad\AgenticGraph\Events\LlmCallFailed;
 use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
 use Shahzad\AgenticGraph\Events\NodeInterrupted;
 use Shahzad\AgenticGraph\Events\NodeResumed;
@@ -312,3 +314,69 @@ it('sends a tool error message only when capture.errors is message', function (s
     'message' => ['message', ['type' => \RuntimeException::class, 'message' => 'card 4242 declined']],
     'class' => ['class', ['type' => \RuntimeException::class]],
 ]);
+
+it('writes a failed llm span for LlmCallFailed: ERROR, the error, null tokens and cost, no llm_calls row', function () {
+    $exporter = new MockPulseExporter;
+    (new TracingListener($exporter))->onLlmCallFailed(new LlmCallFailed(
+        node: 'node-a',
+        callType: 'structured',
+        model: 'openai:gpt-6-luna',
+        exception: new PrismException('max tokens exceeded'),
+        durationMs: 250.0,
+        startedAt: new \DateTimeImmutable('2024-01-01 10:00:00.100000', new \DateTimeZone('UTC')),
+        executionId: 'exec_fail',
+        parentSpanId: 'span_route',
+        promptFile: ['name' => 'router', 'version' => '1', 'hash' => 'abc123def456'],
+    ));
+
+    expect($exporter->llmCalls)->toBe([])
+        ->and($exporter->spans)->toHaveCount(1);
+    $span = $exporter->spans[0];
+    unset($span['id']);
+    expect($span)->toBe([
+        'trace_id' => 'exec_fail',
+        'parent_id' => 'span_route',
+        'node_name' => 'node-a llm',
+        'node_type' => 'llm',
+        'span_type' => 'llm',
+        'status' => 'failed',
+        'span_kind' => 'client',
+        'status_code' => 'ERROR',
+        'started_at' => '2024-01-01T10:00:00.100000+00:00',
+        'ended_at' => '2024-01-01T10:00:00.350000+00:00',
+        'duration_ms' => 250.0,
+        'model' => 'openai:gpt-6-luna',
+        'prompt_tokens' => null,
+        'completion_tokens' => null,
+        'total_tokens' => null,
+        'cost_usd' => null,
+        'cached' => false,
+        'streamed' => false,
+        'error' => ['type' => PrismException::class, 'message' => 'max tokens exceeded'],
+        'attributes' => ['prompt.name' => 'router', 'prompt.version' => '1', 'prompt.hash' => 'abc123def456'],
+    ]);
+});
+
+it('copies usage v2 and the prompt file onto the llm_calls row, null when unknown', function (bool $known) {
+    $exporter = new MockPulseExporter;
+    (new TracingListener($exporter))->onTokensUsed(new TokensUsed(
+        node: 'node-a',
+        promptTokens: 10,
+        completionTokens: 8,
+        totalTokens: 18,
+        executionId: 'exec_v2',
+        spanId: 'span_v2',
+        model: 'openai:gpt-6-luna',
+        durationMs: 1.0,
+        startedAt: new \DateTimeImmutable('2024-01-01 10:00:00'),
+        endedAt: new \DateTimeImmutable('2024-01-01 10:00:00.001'),
+        thoughtTokens: $known ? 5 : null,
+        cacheReadTokens: $known ? 6 : null,
+        cacheWriteTokens: $known ? 2 : null,
+        promptFile: $known ? ['name' => 'support.reply', 'version' => '3', 'hash' => 'abc123def456'] : null,
+    ));
+
+    expect(array_intersect_key($exporter->llmCalls[0], array_flip(['thought_tokens', 'cache_read_tokens', 'cache_write_tokens', 'prompt_name', 'prompt_version', 'prompt_hash'])))->toBe($known
+        ? ['thought_tokens' => 5, 'cache_read_tokens' => 6, 'cache_write_tokens' => 2, 'prompt_name' => 'support.reply', 'prompt_version' => '3', 'prompt_hash' => 'abc123def456']
+        : ['thought_tokens' => null, 'cache_read_tokens' => null, 'cache_write_tokens' => null, 'prompt_name' => null, 'prompt_version' => null, 'prompt_hash' => null]);
+})->with(['known' => true, 'unknown' => false]);

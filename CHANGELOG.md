@@ -2,6 +2,15 @@
 
 ## 0.2.0 (unreleased)
 
+### Router token cap, failed model calls, waiting traces
+
+- Changed: `PrismRouter`'s routing call is no longer fixed at 100 output tokens. It sends `agenticgraph.router.max_tokens` (`AGENTICGRAPH_ROUTER_MAX_TOKENS`, default 1024, 1024 in code when unset) and `agenticgraph.router.reasoning` (`AGENTICGRAPH_ROUTER_REASONING`, default none). A subclass sets `protected ?int $maxTokens` or `protected ?string $reasoning`, as on `PrismNode`. On a reasoning model, reasoning tokens count against the cap: 100 made routing fall back to the default route. The retry loop is unchanged.
+- New: `RouteFellBack` event (`router`, `route`, `reason`: `missing_route_key`, `invalid_route` or `routing_failed`, `error`) and a warning log ("PrismRouter fell back to the default route") whenever `PrismRouter` takes its default route. `route.fallback` on the route span stays.
+- **BREAKING:** a `PrismRouter` with no default route that gets no usable decision (no route key, an unknown route, or every retry failed) throws `RoutingException` (`router`, `reason`, `reply`: the reply JSON, or the last error) instead of returning an empty route. A bad reply is not retried. Set a default route to keep the old tolerance. Retries used up threw a `RuntimeException` before; `RoutingException` extends it.
+- New: `LlmCallFailed` event, dispatched when the provider throws (a `PrismException`) before the exception is rethrown unchanged. Tracing writes it as an `llm` span with `status: failed`, `status_code: ERROR`, `error`, and null `prompt_tokens`, `completion_tokens`, `total_tokens` and `cost_usd`. A failed call has no `llm_calls` row: its cost is unknown, and the provider may still bill it. Each router retry is one failed span. A structured reply that does not decode is not a failed call. `TokensUsed` is unchanged.
+- Changed: the merged trace of a run still `running` or waiting at an interrupt has no `ended_at` and no `duration_ms`. It keeps `active_ms` (time so far). That was the schema's rule already; the merger set both from the last segment's end.
+- Trace wire, additive (v1.1): `llm_calls` rows carry nullable `thought_tokens`, `cache_read_tokens`, `cache_write_tokens` (the call span's) and `prompt_name`, `prompt_version`, `prompt_hash` (the call's prompt file). Llm spans may carry `error`, with null counts and cost, when `status_code` is `ERROR`. Wire doc, JSON Schema, key registry and freeze test updated. OTLP mapping unchanged: a failed llm span has error status and exception attributes and no usage attributes.
+
 ### Trace privacy defaults
 
 - **BREAKING:** the default `tracing.capture.state` is now `keys` (was `diff`). Node spans' `state_diff.values` carry, per changed top-level key, `{type, value_type}` (`added`, `changed` or `removed`, and the PHP type of the value): no values and no nested keys. Anyone relying on state values in traces (AgenticPulse users, log or OTLP readers) sets `AGENTICGRAPH_CAPTURE_STATE=diff` to keep today's values, or `full`. An app with a published `config/agenticgraph.php` keeps the default written there.

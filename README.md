@@ -200,6 +200,8 @@ $router = new PrismRouter([
 ], defaultRoute: 'general');
 ```
 
+The routing call sends `agenticgraph.router.max_tokens` (`AGENTICGRAPH_ROUTER_MAX_TOKENS`, default 1024; reasoning tokens count against it) and `agenticgraph.router.reasoning` (`AGENTICGRAPH_ROUTER_REASONING`, default none); a subclass sets `$maxTokens` or `$reasoning` to override both. When it takes the default route instead of a decision, it logs a warning and dispatches `RouteFellBack`; with no default route it throws `RoutingException` instead.
+
 ## Middleware
 
 Configure global node middleware in `config/agenticgraph.php` under `middleware.global` (onion-style around node execution). Built-ins include logging, timing, validation, circuit breaker, and caching.

@@ -76,14 +76,20 @@ final class TraceSegmentMerger
         $lastEnd = $windows === [] ? null : TraceTime::fromMicrotime(max(array_column($windows, 1)));
         $endedAt = $finalEnd !== null && $lastEnd !== null ? max($finalEnd, $lastEnd) : ($finalEnd ?? $lastEnd);
 
+        // A trace that has not finished (running or waiting at an interrupt) has no end yet; active_ms is the time so far.
+        $finished = in_array($trace['status'] ?? null, ['completed', 'failed'], true);
         if ($startedAt) {
             $trace['started_at'] = TraceTime::format($startedAt);
         }
-        if ($endedAt) {
+        if (! $finished) {
+            unset($trace['ended_at'], $trace['duration_ms']);
+        } elseif ($endedAt) {
             $trace['ended_at'] = TraceTime::format($endedAt);
+            if ($startedAt) {
+                $trace['duration_ms'] = TraceTime::diffMs($startedAt, $endedAt);
+            }
         }
-        if ($startedAt && $endedAt) {
-            $trace['duration_ms'] = TraceTime::diffMs($startedAt, $endedAt);
+        if ($windows !== []) {
             $trace['active_ms'] = $this->unionMs($windows);
         }
         if (($trace['status'] ?? null) !== 'interrupted') {

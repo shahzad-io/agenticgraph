@@ -70,6 +70,10 @@ return [
     'router' => [
         'max_retries' => env('AGENTICGRAPH_ROUTER_MAX_RETRIES', 3),
         'retry_delay_ms' => env('AGENTICGRAPH_ROUTER_RETRY_DELAY_MS', 100),
+        // Max output tokens per PrismRouter routing call; reasoning tokens count against it on reasoning models.
+        'max_tokens' => env('AGENTICGRAPH_ROUTER_MAX_TOKENS', 1024),
+        // Reasoning level for routing calls: off, low, medium or high. Null sends nothing (the provider's default).
+        'reasoning' => env('AGENTICGRAPH_ROUTER_REASONING'),
     ],
 
     'cache' => [

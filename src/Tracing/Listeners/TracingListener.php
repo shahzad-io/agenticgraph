@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Events\GraphExecutionCompleted;
 use Shahzad\AgenticGraph\Events\GraphExecutionFailed;
 use Shahzad\AgenticGraph\Events\GraphExecutionStarted;
+use Shahzad\AgenticGraph\Events\LlmCallFailed;
 use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
 use Shahzad\AgenticGraph\Events\NodeExecutionFailed;
 use Shahzad\AgenticGraph\Events\NodeInterrupted;
@@ -320,10 +321,7 @@ class TracingListener
         $this->calculateSpanTimestamps($eventStartedAt, $eventEndedAt, $durationMs, $traceStartDt, $startedAt, $endedAt);
 
         $parentId = $event->parentSpanId;
-        $attributes = [
-            ...($event->contextCount !== null ? ['context.count' => $event->contextCount, 'context.ids' => $event->contextIds ?? []] : []),
-            ...($event->promptFile !== null ? ['prompt.name' => $event->promptFile['name'], 'prompt.version' => $event->promptFile['version'], 'prompt.hash' => $event->promptFile['hash']] : []),
-        ];
+        $attributes = $this->llmAttributes($event->contextCount, $event->contextIds, $event->promptFile);
 
         $this->exporter()->addSpan([
             'id' => $spanId ?? uniqid('span_', true),
@@ -366,6 +364,12 @@ class TracingListener
             'created_at' => TraceTime::format(TraceTime::now()),
             'cost_usd' => $cost,
             'streamed' => $event->streamed,
+            'thought_tokens' => $event->thoughtTokens,
+            'cache_read_tokens' => $event->cacheReadTokens,
+            'cache_write_tokens' => $event->cacheWriteTokens,
+            'prompt_name' => $event->promptFile['name'] ?? null,
+            'prompt_version' => $event->promptFile['version'] ?? null,
+            'prompt_hash' => $event->promptFile['hash'] ?? null,
         ];
 
         // Add prompt if capture is enabled
@@ -387,6 +391,58 @@ class TracingListener
         }
 
         $this->exporter()->addLlmCall($llmCallData);
+    }
+
+    /**
+     * A model call the provider failed: an llm span with status ERROR, the error, and null tokens and cost (unknown:
+     * the provider may still bill it). No llm_calls row, which holds known usage only.
+     */
+    public function onLlmCallFailed(LlmCallFailed $event): void
+    {
+        if (! $this->exporter()->isEnabled()) {
+            return;
+        }
+
+        $attributes = $this->llmAttributes($event->contextCount, $event->contextIds, $event->promptFile);
+
+        $this->exporter()->addSpan([
+            'id' => uniqid('span_', true),
+            'trace_id' => $event->executionId ?? TraceContext::tryGet()?->getExecutionId(),
+            'parent_id' => $event->parentSpanId,
+            'node_name' => $event->node.' llm',
+            'node_type' => 'llm',
+            'span_type' => 'llm',
+            'status' => 'failed',
+            'span_kind' => 'client',
+            'status_code' => 'ERROR',
+            'started_at' => TraceTime::format($event->startedAt),
+            'ended_at' => TraceTime::format(TraceTime::addMs($event->startedAt, $event->durationMs)),
+            'duration_ms' => $event->durationMs,
+            'model' => $event->model,
+            'prompt_tokens' => null,
+            'completion_tokens' => null,
+            'total_tokens' => null,
+            'cost_usd' => null,
+            'cached' => false,
+            'streamed' => $event->streamed,
+            'error' => CaptureDepth::error($event->exception::class, $event->exception->getMessage()),
+            ...($attributes !== [] ? ['attributes' => $attributes] : []),
+        ]);
+    }
+
+    /**
+     * The llm span's context and prompt file attributes; each group whole or absent.
+     *
+     * @param  list<string>|null  $contextIds
+     * @param  array{name: string, version: string, hash: string}|null  $promptFile
+     * @return array<string, mixed>
+     */
+    private function llmAttributes(?int $contextCount, ?array $contextIds, ?array $promptFile): array
+    {
+        return [
+            ...($contextCount !== null ? ['context.count' => $contextCount, 'context.ids' => $contextIds ?? []] : []),
+            ...($promptFile !== null ? ['prompt.name' => $promptFile['name'], 'prompt.version' => $promptFile['version'], 'prompt.hash' => $promptFile['hash']] : []),
+        ];
     }
 
     public function onToolCallCaptured(ToolCallCaptured $event): void
@@ -568,6 +624,7 @@ class TracingListener
             NodeExecutionCompleted::class => 'onNodeCompleted',
             NodeExecutionFailed::class => 'onNodeFailed',
             TokensUsed::class => 'onTokensUsed',
+            LlmCallFailed::class => 'onLlmCallFailed',
             ToolCallCaptured::class => 'onToolCallCaptured',
             // Interrupt events
             NodeInterrupted::class => 'onNodeInterrupted',

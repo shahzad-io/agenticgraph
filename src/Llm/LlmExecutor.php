@@ -34,6 +34,7 @@ use Prism\Prism\ValueObjects\ToolResult;
 use Prism\Prism\ValueObjects\Usage;
 use Prism\Relay\Facades\Relay;
 use Shahzad\AgenticGraph\Contracts\PrismClient;
+use Shahzad\AgenticGraph\Events\LlmCallFailed;
 use Shahzad\AgenticGraph\Events\ReasoningNotDisabled;
 use Shahzad\AgenticGraph\Events\TokensUsed;
 use Shahzad\AgenticGraph\Events\ToolCallCaptured;
@@ -51,7 +52,7 @@ use Shahzad\AgenticGraph\Tracing\TraceContext;
 
 /**
  * The one path every model call takes: it resolves settings (config, then node, then call), builds the Prism request
- * (timeouts on every path), streams, caches, wraps tools for tracing and dispatches TokensUsed.
+ * (timeouts on every path), streams, caches, wraps tools for tracing and dispatches TokensUsed (LlmCallFailed when the provider throws).
  *
  * Streaming matrix: text streams when a sink is bound; a schema streams only when it is a Prism Schema and the
  * request uses prompt() (schema prompt; a reply that fails is retried non-streamed, see structured.retries); tool runs
@@ -288,10 +289,40 @@ final class LlmExecutor
                 $response = $response->withSources($call->sources());
             }
         } catch (PrismException $e) {
-            throw $this->reasoningRejection($settings, $e) ?? $e;
+            $thrown = $this->reasoningRejection($settings, $e) ?? $e;
+            $this->dispatchFailure($call, $model, $startTime, $thrown);
+
+            throw $thrown;
         }
 
         return $this->flagUndisabled($settings, $model, $response);
+    }
+
+    /**
+     * A provider exception becomes a failed llm span. A reply that does not decode is not a failed call: the
+     * provider answered, and the attempts that reported usage are already dispatched.
+     */
+    private function dispatchFailure(LlmCall $call, string $model, float $startTime, \Throwable $e): void
+    {
+        if (! $this->trackTokens || $e instanceof PrismStructuredDecodingException) {
+            return;
+        }
+
+        $this->events->dispatch(LlmCallFailed::fromException(
+            node: $this->nodeName,
+            callStartMicrotime: $startTime,
+            callType: match (true) {
+                $call->toolRequest => $call->mcp !== [] ? 'mcp' : 'tools',
+                $call->schema !== null => 'structured',
+                default => 'text',
+            },
+            model: $model,
+            exception: $e,
+            streamed: $this->streams($call),
+            contextCount: $call->context !== null ? count($call->context['items']) : null,
+            contextIds: $call->context !== null ? self::contextIds($call->context) : null,
+            promptFile: $call->promptFile,
+        ));
     }
 
     /**
