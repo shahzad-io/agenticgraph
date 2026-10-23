@@ -57,7 +57,7 @@ php artisan migrate
 
 Do these steps in order. The full list of changes is in [CHANGELOG.md](CHANGELOG.md).
 
-1. **Platform.** Use PHP 8.3+ and Laravel 12.61.1+ or 13.12+. Older PHP and Laravel versions are no longer supported. The package requires `prism-php/prism` `^0.102.0`:
+1. **Platform.** Use PHP 8.3+ and Laravel 12.61.1+ or 13.12+. Older PHP and Laravel versions are no longer supported. The package requires `prism-php/prism` `^0.102.0`, which sends Anthropic structured output in native mode (Claude Sonnet 4.5 or newer; for an older model set `$providerOptions = ['use_tool_calling' => true]` on the node):
 
    ```bash
    composer require shahzad/agenticgraph:^0.2 prism-php/prism:^0.102 -W
@@ -70,11 +70,13 @@ Do these steps in order. The full list of changes is in [CHANGELOG.md](CHANGELOG
    php artisan migrate
    ```
 
-3. **Cache.** Flush the cache store that `CachingMiddleware` and LLM caching use. Entries written by 0.1.0 cannot be read (`php artisan cache:clear`, or `php artisan cache:clear <store>` for a named store). The LLM cache key and the `PrismRouter` cache key changed too, so each cached reply misses once and is written again.
-4. **Trace state.** The default `tracing.capture.state` is now `keys`: traces carry state key names and value types, not values. To keep sending values, set `AGENTICGRAPH_CAPTURE_STATE=diff` (or `full`). A published `config/agenticgraph.php` keeps the value written in it.
+3. **Cache.** Flush the cache store that `CachingMiddleware` and LLM caching use. Entries written by 0.1.0 cannot be read (`php artisan cache:clear`, or `php artisan cache:clear <store>` for a named store). The LLM cache key and the `PrismRouter` cache key changed too, so each cached reply misses once and is written again. LLM caching is now off by default (`AGENTICGRAPH_PRISM_CACHE=false`): turn it on in config or per request with `->withCache()`. A published `config/agenticgraph.php` keeps the value written in it.
+4. **Trace state.** Tracing is new and off by default. When you turn it on, traces carry state key names and value types, not values (`tracing.capture.state` is `keys`). To send values, set `AGENTICGRAPH_CAPTURE_STATE=diff` (or `full`).
 5. **Stream client.** Core 0.2.0 sends the stream wire contract v1.1 with the new `stream_start` / `stream_end` events and one `step_start` / `step_finish` pair per step. Use `@agenticgraph/stream-client`, `stream-react` or `stream-vue` 0.1.0 with it.
 6. **Token numbers.** Usage follows "usage semantics v2": `prompt_tokens` is the uncached input, cached input is in `cache_read_tokens` / `cache_write_tokens`, and `completion_tokens` includes reasoning. If you store token counts for billing or analytics, expect a step change.
-7. **Removed helpers.** `prompt()`, `promptTemplate()`, `chatPrompt()`, `promptMessages()`, `structured()`, `tools()`, `agent()`, `withMcp()` and the other `PrismNode` helpers are removed. Every model call goes through `$this->llm()`. See the [before and after table](CHANGELOG.md#breaking-one-llm-request-builder-this-llm).
+7. **Removed helpers.** `prompt()`, `promptTemplate()`, `chatPrompt()`, `structured()`, `tools()`, `withModel()` and the other `PrismNode` helpers are removed. Every model call goes through `$this->llm()`. See the [before and after table](CHANGELOG.md#breaking).
+8. **Model.** There is no default model, and a model needs its provider prefix (`openai:gpt-4o`, not `gpt-4o`). Set `AGENTICGRAPH_PRISM_MODEL` or `$model` on each node; otherwise the first call throws `MissingModelException`.
+9. **Routers.** A `PrismRouter` without a default route now throws `RoutingException` when the model gives no usable decision (it returned an empty route). Set a default route to keep the old behavior.
 
 ## Compatibility
 
