@@ -24,7 +24,7 @@ function enableTracingForBufferTests(): PulseExporter
     config([
         'agenticgraph.tracing.enabled' => true,
         'agenticgraph.tracing.exporter' => 'pulse',
-        'agenticgraph.tracing.api_key' => 'pk_test_buffer',
+        'agenticgraph.tracing.api_key' => 'ap_test_buffer',
         'agenticgraph.tracing.endpoint' => 'https://api.example.com',
     ]);
 
@@ -199,7 +199,7 @@ it('still captures graph node and llm spans through the listener stack', functio
     config([
         'agenticgraph.tracing.enabled' => true,
         'agenticgraph.tracing.exporter' => 'pulse',
-        'agenticgraph.tracing.api_key' => 'pk_test_listener',
+        'agenticgraph.tracing.api_key' => 'ap_test_listener',
         'agenticgraph.tracing.endpoint' => 'https://api.example.com',
         'agenticgraph.tracing.capture.state' => 'diff',
         'agenticgraph.tracing.capture.prompts' => true,

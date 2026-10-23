@@ -7,6 +7,7 @@ use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
 use Shahzad\AgenticGraph\Events\NodeInterrupted;
 use Shahzad\AgenticGraph\Events\NodeResumed;
 use Shahzad\AgenticGraph\Events\TokensUsed;
+use Shahzad\AgenticGraph\Events\ToolCallCaptured;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Tracing\Listeners\TracingListener;
 
@@ -286,3 +287,28 @@ it('sends a number as llm_calls duration_ms when the event has no measured durat
 
     expect($exporter->llmCalls[0]['duration_ms'])->toBe(0.0);
 });
+
+it('sends a tool error message only when capture.errors is message', function (string $mode, array $error) {
+    config(['agenticgraph.tracing.capture.errors' => $mode]);
+    $exporter = new MockPulseExporter;
+
+    (new TracingListener($exporter))->onToolCallCaptured(new ToolCallCaptured(
+        executionId: 'exec_t',
+        spanId: 'span_node',
+        toolName: 'lookup',
+        toolCallId: 'call_1',
+        toolType: 'prism',
+        inputSize: 1,
+        outputSize: null,
+        durationMs: 1.0,
+        startedAt: new \DateTimeImmutable,
+        status: 'failed',
+        errorType: \RuntimeException::class,
+        errorMessage: 'card 4242 declined',
+    ));
+
+    expect($exporter->spans[0]['error'])->toBe($error);
+})->with([
+    'message' => ['message', ['type' => \RuntimeException::class, 'message' => 'card 4242 declined']],
+    'class' => ['class', ['type' => \RuntimeException::class]],
+]);

@@ -59,10 +59,7 @@ final class Tracer
         } catch (\Throwable $e) {
             $status = 'failed';
             $statusCode = 'ERROR';
-            $error = [
-                'type' => get_class($e),
-                'message' => $e->getMessage(),
-            ];
+            $error = CaptureDepth::error(get_class($e), $e->getMessage());
             $throwable = $e;
         } finally {
             $durationMs = (microtime(true) - $startMicrotime) * 1000;

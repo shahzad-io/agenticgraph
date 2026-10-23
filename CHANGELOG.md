@@ -2,6 +2,15 @@
 
 ## 0.2.0 (unreleased)
 
+### Trace privacy defaults
+
+- **BREAKING:** the default `tracing.capture.state` is now `keys` (was `diff`). Node spans' `state_diff.values` carry, per changed top-level key, `{type, value_type}` (`added`, `changed` or `removed`, and the PHP type of the value): no values and no nested keys. Anyone relying on state values in traces (AgenticPulse users, log or OTLP readers) sets `AGENTICGRAPH_CAPTURE_STATE=diff` to keep today's values, or `full`. An app with a published `config/agenticgraph.php` keeps the default written there.
+- Fixed: `capture.state=error_only` captured nothing on a failure. A failed trace now carries `trace.final_state`, the state at the failure, under `error_only` and `full`; on success `error_only` sends keys.
+- Changed: `capture.max_length` also bounds state values under `diff`, `full` and `error_only` (node values, `initial_state`, `final_state`): a long string is truncated, an array or object whose JSON is longer becomes that JSON truncated.
+- New: `capture.errors` (`AGENTICGRAPH_CAPTURE_ERRORS`): `message` (default, as before) or `class`, which sends the exception class without its message on graph, node, tool, http and custom spans and on `trace.error`.
+- Trace wire, additive (v1.1): a failed trace may carry `final_state`; `error.message` is optional (`required: ["type"]`). Wire doc, JSON Schema and freeze test updated.
+- Docs: the config comments name what is always sent and point to https://pulse.agenticgraph.dev for keys (`ap_live_` / `ap_test_`).
+
 ### Octane (B13b F)
 
 - Fixed: under Octane the first traced run on each worker was split in two segments (the graph's spans in one, `Trace::span` and vector spans in another). The event dispatcher builds `TracingListener` from the booted app, which autowired that app's exporter into it; it is now bound without arguments and resolves the request's exporter per event.

@@ -254,7 +254,7 @@ class HttpClientInstrumentation
             'ended_at' => TraceTime::format($endedAt),
             'duration_ms' => $durationMs,
             'attributes' => $this->spanAttributes($event->request, null),
-            'error' => ['type' => $event->exception::class, 'message' => $event->exception->getMessage()],
+            'error' => CaptureDepth::error($event->exception::class, $event->exception->getMessage()),
         ]);
 
         if ($this->shouldLog()) {
@@ -326,7 +326,7 @@ class HttpClientInstrumentation
             'attributes' => $this->spanAttributes($request, $response),
         ];
         if ($exception !== null) {
-            $span['error'] = ['type' => $exception::class, 'message' => $exception->getMessage()];
+            $span['error'] = CaptureDepth::error($exception::class, $exception->getMessage());
         }
 
         $this->exporter()->addSpan($span);

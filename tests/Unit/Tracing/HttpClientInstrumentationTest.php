@@ -325,3 +325,14 @@ it('cleans up stored request starts when the execution exits', function () {
 
     expect($requestStarts->call($instrumentation))->toBe([]);
 });
+
+it('leaves the connection failure message out when capture.errors is class', function () {
+    config(['agenticgraph.tracing.capture.errors' => 'class']);
+    [$instrumentation, $exporter] = bindHttpInstrumentationContext();
+    $request = makeHttpRequest();
+
+    $instrumentation->onRequestSending(new RequestSending($request));
+    $instrumentation->onConnectionFailed(new ConnectionFailed($request, new ConnectionException('cURL error for https://user:pw@host')));
+
+    expect($exporter->spans[0]['error'])->toBe(['type' => ConnectionException::class]);
+});

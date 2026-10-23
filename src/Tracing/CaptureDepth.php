@@ -107,6 +107,39 @@ final class CaptureDepth
         };
     }
 
+    /**
+     * Error block for a span or trace: capture.errors=class keeps the exception class only.
+     *
+     * @return array{type: ?string, message?: ?string}
+     */
+    public static function error(?string $type, ?string $message): array
+    {
+        return strtolower((string) config('agenticgraph.tracing.capture.errors', 'message')) === 'class'
+            ? ['type' => $type]
+            : ['type' => $type, 'message' => $message];
+    }
+
+    /**
+     * A captured state value bounded by capture.max_length: a long string is truncated, an array or
+     * object whose JSON is longer becomes that JSON truncated. Short values are unchanged.
+     */
+    public static function stateValue(mixed $value): mixed
+    {
+        if (is_string($value)) {
+            return self::truncate($value);
+        }
+        if ($value === null || is_scalar($value)) {
+            return $value;
+        }
+
+        $encoded = json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR);
+        if (! is_string($encoded) || strlen($encoded) <= (int) config('agenticgraph.tracing.capture.max_length', 2000)) {
+            return $value;
+        }
+
+        return self::truncate($encoded);
+    }
+
     public static function truncate(?string $text): ?string
     {
         if ($text === null) {

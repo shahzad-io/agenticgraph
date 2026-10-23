@@ -23,7 +23,7 @@ it('is disabled when api key is missing', function () {
 
 it('is enabled when configured correctly', function () {
     config()->set('agenticgraph.tracing.enabled', true);
-    config()->set('agenticgraph.tracing.api_key', 'pk_test_xxx');
+    config()->set('agenticgraph.tracing.api_key', 'ap_test_xxx');
     config()->set('agenticgraph.tracing.endpoint', 'https://api.test.io');
 
     $exporter = new PulseExporter;
@@ -32,7 +32,7 @@ it('is enabled when configured correctly', function () {
 
 it('buffers traces and spans', function () {
     config()->set('agenticgraph.tracing.enabled', true);
-    config()->set('agenticgraph.tracing.api_key', 'pk_test_xxx');
+    config()->set('agenticgraph.tracing.api_key', 'ap_test_xxx');
 
     $exporter = new PulseExporter;
 
@@ -57,7 +57,7 @@ it('buffers traces and spans', function () {
 
 it('resets buffer after flush', function () {
     config()->set('agenticgraph.tracing.enabled', true);
-    config()->set('agenticgraph.tracing.api_key', 'pk_test_xxx');
+    config()->set('agenticgraph.tracing.api_key', 'ap_test_xxx');
 
     $exporter = new PulseExporter;
 
@@ -73,7 +73,7 @@ it('resets buffer after flush', function () {
 
 it('completes trace with correct status', function () {
     config()->set('agenticgraph.tracing.enabled', true);
-    config()->set('agenticgraph.tracing.api_key', 'pk_test_xxx');
+    config()->set('agenticgraph.tracing.api_key', 'ap_test_xxx');
 
     $exporter = new PulseExporter;
 
@@ -85,7 +85,7 @@ it('completes trace with correct status', function () {
 
 it('sends each segment with only its own spans across interrupt and resume', function () {
     config()->set('agenticgraph.tracing.enabled', true);
-    config()->set('agenticgraph.tracing.api_key', 'pk_test_xxx');
+    config()->set('agenticgraph.tracing.api_key', 'ap_test_xxx');
     config()->set('agenticgraph.tracing.endpoint', 'https://api.test.io');
 
     Http::fake(['*' => Http::response(['status' => 'captured'], 202)]);

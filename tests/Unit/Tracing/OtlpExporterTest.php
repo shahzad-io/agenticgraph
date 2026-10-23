@@ -493,3 +493,16 @@ it('sends no cache attributes and the plain prompt count when the provider repor
     expect($attrs['gen_ai.usage.input_tokens'])->toBe(10)
         ->and($attrs)->not->toHaveKeys(['gen_ai.usage.cache_read.input_tokens', 'gen_ai.usage.cache_write.input_tokens', 'agenticgraph.cache_read_tokens']);
 });
+
+it('maps a class-only error to exception.type and the span status message to the type', function (): void {
+    $payload = (new OtlpPayloadBuilder)->build(
+        trace: ['id' => 'exec_err', 'graph_name' => 'g', 'status' => 'failed'],
+        spans: [['id' => 'span_e', 'trace_id' => 'exec_err', 'parent_id' => null, 'status' => 'failed', 'status_code' => 'ERROR',
+            'started_at' => '2026-06-27T10:00:00+00:00', 'ended_at' => '2026-06-27T10:00:01+00:00', 'error' => ['type' => 'RuntimeException']]],
+        llmCalls: [],
+    );
+    $span = $payload['resourceSpans'][0]['scopeSpans'][0]['spans'][0];
+
+    expect(array_column($span['attributes'], 'key'))->toContain('exception.type')->not->toContain('exception.message')
+        ->and($span['status'])->toBe(['code' => 2, 'message' => 'RuntimeException']);
+});

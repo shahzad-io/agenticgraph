@@ -23,7 +23,7 @@ class RuntimeToggleExporter extends PulseExporter
 
 it('records spans when tracing is turned on after boot', function () {
     Http::fake();
-    config(['agenticgraph.tracing.api_key' => 'pk_test']);
+    config(['agenticgraph.tracing.api_key' => 'ap_test']);
     $exporter = new RuntimeToggleExporter;
     app()->instance(TracerExporter::class, $exporter);
 
@@ -35,7 +35,7 @@ it('records spans when tracing is turned on after boot', function () {
 });
 
 it('reads tracing.enabled per call in the pulse and otlp exporters', function () {
-    config(['agenticgraph.tracing.api_key' => 'pk_test', 'agenticgraph.tracing.otlp.endpoint' => 'http://collector.test/v1/traces']);
+    config(['agenticgraph.tracing.api_key' => 'ap_test', 'agenticgraph.tracing.otlp.endpoint' => 'http://collector.test/v1/traces']);
     $pulse = new PulseExporter;
     $otlp = new OtlpExporter;
     expect($pulse->isEnabled())->toBeFalse()->and($otlp->isEnabled())->toBeFalse();

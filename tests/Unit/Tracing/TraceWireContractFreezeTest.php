@@ -685,6 +685,20 @@ test('schema fail-first: an unknown key, a missing required key or a wrong type 
     }
 });
 
+test('schema: a failed trace may carry final_state, and an error needs only its type', function () {
+    $failed = array_values(array_filter(fzEnvelopes(), fn (array $e): bool => isset($e['segment']) && $e['trace']['status'] === 'failed'))[0];
+    $classOnly = $failed;
+    $classOnly['trace']['error'] = ['type' => $failed['trace']['error']['type']];
+    $untyped = $failed;
+    unset($untyped['trace']['error']['type']);
+
+    expect($failed['trace'])->toHaveKey('final_state')
+        ->and(fzSchemaErrors($failed))->toBe([])
+        ->and(fzSchemaErrors($classOnly))->toBe([])
+        ->and(fzSchemaErrors($untyped))->not->toBe([])
+        ->and(fzSchemaErrors(array_replace_recursive($failed, ['trace' => ['final_state_keys' => ['a']]])))->not->toBe([]);
+});
+
 test('schema: a span with a type outside the 10 named is a custom span, and a linked queued span validates', function () {
     $envelopes = array_values(array_filter(fzEnvelopes(), fn (array $e): bool => isset($e['segment'])));
     $late = array_values(array_filter($envelopes, fn (array $e): bool => isset($e['spans'][0]['links'])))[0];

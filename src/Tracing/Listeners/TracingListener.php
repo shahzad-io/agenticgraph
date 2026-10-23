@@ -17,6 +17,7 @@ use Shahzad\AgenticGraph\Events\RouteDecided;
 use Shahzad\AgenticGraph\Events\TokensUsed;
 use Shahzad\AgenticGraph\Events\ToolCallCaptured;
 use Shahzad\AgenticGraph\Execution\ExecutionContext;
+use Shahzad\AgenticGraph\Tracing\CaptureDepth;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\ModelPricingCalculator;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
@@ -47,7 +48,7 @@ class TracingListener
         $this->pricingCalculator = $pricingCalculator ?? app(ModelPricingCalculator::class);
 
         // Load capture configuration
-        $this->captureState = config('agenticgraph.tracing.capture.state', 'diff');
+        $this->captureState = config('agenticgraph.tracing.capture.state', 'keys');
         $this->capturePrompts = config('agenticgraph.tracing.capture.prompts', false);
         $this->captureResponses = config('agenticgraph.tracing.capture.responses', false);
         $this->captureMaxLength = (int) config('agenticgraph.tracing.capture.max_length', 2000);
@@ -161,16 +162,13 @@ class TracingListener
             'started_at' => TraceTime::format($resolvedStartedAt),
             'ended_at' => TraceTime::format($resolvedEndedAt),
             'duration_ms' => $durationMs,
-            'error' => [
-                'type' => get_class($event->exception),
-                'message' => $event->exception->getMessage(),
-            ],
+            'error' => CaptureDepth::error(get_class($event->exception), $event->exception->getMessage()),
         ]);
 
-        // On error, capture full state if configured for error_only mode
+        // The state at the failure, for full and error_only
         $finalState = $this->captureStateData(
-            [], // Can't access final state on failure
-            [],
+            $event->state->toArray(),
+            $event->state->toArray(),
             true // Is an error
         );
 
@@ -286,10 +284,7 @@ class TracingListener
             'started_at' => TraceTime::format($resolvedStartedAt),
             'ended_at' => TraceTime::format($resolvedEndedAt),
             'duration_ms' => $event->durationMs,
-            'error' => [
-                'type' => get_class($event->exception),
-                'message' => $event->exception->getMessage(),
-            ],
+            'error' => CaptureDepth::error(get_class($event->exception), $event->exception->getMessage()),
         ]);
     }
 
@@ -430,10 +425,7 @@ class TracingListener
                 'tool.input_size' => $event->inputSize,
                 'tool.output_size' => $event->outputSize,
             ],
-            'error' => $event->errorType || $event->errorMessage ? [
-                'type' => $event->errorType,
-                'message' => $event->errorMessage,
-            ] : null,
+            'error' => $event->errorType || $event->errorMessage ? CaptureDepth::error($event->errorType, $event->errorMessage) : null,
         ]);
     }
 
@@ -594,10 +586,9 @@ class TracingListener
     private function captureStateData(array $currentState, array $previousState, bool $isError): ?array
     {
         return match ($this->captureState) {
-            'none' => null,
-            'full' => $currentState,
-            'error_only' => $isError ? $currentState : null,
-            default => null, // 'diff' mode returns null at trace level (handled per-node)
+            'full' => $this->boundState($currentState),
+            'error_only' => $isError ? $this->boundState($currentState) : null,
+            default => null, // keys, diff and none send no trace-level state (diff is per node)
         };
     }
 
@@ -612,37 +603,51 @@ class TracingListener
     {
         return match ($this->captureState) {
             'none' => null,
-            'full' => $outputState,
+            'full' => $this->boundState($outputState),
             'diff' => $this->computeDiff($inputState, $outputState),
-            'error_only' => $isError ? $outputState : null,
+            // error_only sends keys on success; node spans with state are always successful
+            'keys', 'error_only' => $this->computeDiff($inputState, $outputState, withValues: false),
             default => null,
         };
     }
 
     /**
-     * Compute difference between input and output state.
+     * @param  array<string, mixed>  $state
+     * @return array<string, mixed>
+     */
+    private function boundState(array $state): array
+    {
+        return array_map(CaptureDepth::stateValue(...), $state);
+    }
+
+    /**
+     * Compute difference between input and output state: per changed top-level key the bounded
+     * values, or without values only the type of the new (or removed) value.
      *
      * @param  array<string, mixed>  $input
      * @param  array<string, mixed>  $output
      * @return array<string, mixed>
      */
-    private function computeDiff(array $input, array $output): array
+    private function computeDiff(array $input, array $output, bool $withValues = true): array
     {
         $diff = [];
+        $entry = fn (string $type, array $values): array => $withValues
+            ? ['type' => $type, ...array_map(CaptureDepth::stateValue(...), $values)]
+            : ['type' => $type, 'value_type' => get_debug_type(end($values))];
 
         // Find added and changed keys
         foreach ($output as $key => $value) {
             if (! array_key_exists($key, $input)) {
-                $diff[$key] = ['type' => 'added', 'value' => $value];
+                $diff[$key] = $entry('added', ['value' => $value]);
             } elseif ($input[$key] !== $value) {
-                $diff[$key] = ['type' => 'changed', 'old' => $input[$key], 'new' => $value];
+                $diff[$key] = $entry('changed', ['old' => $input[$key], 'new' => $value]);
             }
         }
 
         // Find removed keys
         foreach ($input as $key => $value) {
             if (! array_key_exists($key, $output)) {
-                $diff[$key] = ['type' => 'removed', 'old' => $value];
+                $diff[$key] = $entry('removed', ['old' => $value]);
             }
         }
 

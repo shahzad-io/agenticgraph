@@ -204,14 +204,16 @@ return [
     |--------------------------------------------------------------------------
     |
     | Configure tracing for observability with AgenticPulse SaaS.
-    | Get your API key at https://agenticpulse.io
+    | Dashboard and API keys (ap_live_..., ap_test_...): https://pulse.agenticgraph.dev
+    | What each capture setting sends, per driver: /docs/tracing#what-leaves-your-app
     |
     */
     'tracing' => [
         'enabled' => env('AGENTICGRAPH_TRACING', false),
 
         // Exporter driver: auto, pulse, log, file, null, otlp. auto is null in unit tests,
-        // pulse when api_key is set, otherwise log.
+        // pulse when api_key is set, otherwise log: without a key, traces (state key names,
+        // error messages, anything captured below) go to your Laravel log channel.
         'exporter' => env('AGENTICGRAPH_TRACING_EXPORTER', 'auto'),
 
         // exporter=file writes {path}/{trace_id}/{Ymd-His-u}.json, one file per segment
@@ -236,16 +238,23 @@ return [
         'environment' => env('APP_ENV', 'local'),
         'instrumentation_scope' => 'agenticgraph',
 
-        // What to capture
+        // What to capture. Always sent: state key names, node and graph names, router classes,
+        // context.ids, prompt name/version/hash, cache_key, interrupt.reason, Trace::span() attributes.
         'capture' => [
-            'state' => env('AGENTICGRAPH_CAPTURE_STATE', 'diff'),
-            // 'diff' = only keys that changed (minimal, default)
-            // 'full' = complete state snapshots
-            // 'error_only' = full on error, keys on success
+            'state' => env('AGENTICGRAPH_CAPTURE_STATE', 'keys'),
+            // 'keys' = changed top-level key names and value types, no values (default)
+            // 'diff' = the values of changed keys per node (old and new)
+            // 'full' = the full state per node, plus initial and final state
+            // 'error_only' = keys on success, the full state at the failure on error
+            // 'none' = no per-key state detail
+            // diff, full and error_only send your state values: OTLP gets them as span attributes.
 
             'prompts' => env('AGENTICGRAPH_CAPTURE_PROMPTS', false),
             'responses' => env('AGENTICGRAPH_CAPTURE_RESPONSES', false),
+            // Bounds prompts, responses, string attributes, tool args/results, SQL and state values
             'max_length' => env('AGENTICGRAPH_CAPTURE_MAX_LENGTH', 2000),
+            // 'message' = exception class and message (default), 'class' = exception class only
+            'errors' => env('AGENTICGRAPH_CAPTURE_ERRORS', 'message'),
 
             // Broad HTTP/DB auto-capture (default off). Tool-internal HTTP/DB still nests
             // under tool spans via the tool wrap without enabling these flags.

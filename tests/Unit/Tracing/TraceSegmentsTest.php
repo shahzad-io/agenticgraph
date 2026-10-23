@@ -79,3 +79,15 @@ it('writes immediately in the console even when a request is bound', function ()
 
     expect(tsgWritten($this->traceDir, 'tr_console'))->toHaveCount(1);
 });
+
+it('keeps every trace id inside the trace directory, including dot and separator ids', function (string $traceId) {
+    $exporter = new FileExporter($this->traceDir);
+    $exporter->startTrace($traceId, 'g');
+    $exporter->completeTrace($traceId, [], 1.0);
+
+    $written = glob($this->traceDir.'/*/*.json') ?: [];
+    expect($written)->toHaveCount(1)
+        ->and(dirname($written[0], 2))->toBe($this->traceDir)
+        ->and(basename(dirname($written[0])))->not->toBeIn(['.', '..', ''])
+        ->and(glob(dirname($this->traceDir).'/*.json') ?: [])->toBe([]);
+})->with(['..', '.', '../..', '../escape', '..\\escape', '/abs/path', 'a/../../b', "nul\0byte", '....']);

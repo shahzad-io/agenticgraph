@@ -35,7 +35,7 @@ it('auto is null in unit tests, an explicit driver still sends', function () {
     config([
         'agenticgraph.tracing.enabled' => true,
         'agenticgraph.tracing.exporter' => 'auto',
-        'agenticgraph.tracing.api_key' => 'pk_test',
+        'agenticgraph.tracing.api_key' => 'ap_test',
         'agenticgraph.tracing.endpoint' => 'https://sink.test',
     ]);
 
@@ -60,7 +60,7 @@ it('resolves pulse exporter when exporter is pulse and api key is set', function
     config([
         'agenticgraph.tracing.enabled' => true,
         'agenticgraph.tracing.exporter' => 'pulse',
-        'agenticgraph.tracing.api_key' => 'pk_test',
+        'agenticgraph.tracing.api_key' => 'ap_test',
     ]);
 
     $exporter = TracerExporterFactory::make(app());

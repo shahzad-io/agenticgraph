@@ -78,7 +78,7 @@ class LoopTraceCriticRouter extends AbstractRouter
 
 beforeEach(function (): void {
     config()->set('agenticgraph.tracing.enabled', true);
-    config()->set('agenticgraph.tracing.api_key', 'pk_test');
+    config()->set('agenticgraph.tracing.api_key', 'ap_test');
     config()->set('agenticgraph.execution.loop.enabled', false);
 
     $exporter = new MockPulseExporter;

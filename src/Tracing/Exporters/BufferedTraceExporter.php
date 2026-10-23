@@ -6,6 +6,7 @@ namespace Shahzad\AgenticGraph\Tracing\Exporters;
 
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
+use Shahzad\AgenticGraph\Tracing\CaptureDepth;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\TracePayloadBuilder;
 use Shahzad\AgenticGraph\Tracing\TraceTime;
@@ -187,10 +188,7 @@ abstract class BufferedTraceExporter implements TracerExporter
         }
 
         $this->endSegment($traceId, 'failed', $at, $durationMs, final: true);
-        $this->open[$traceId]['trace']['error'] = [
-            'type' => get_class($exception),
-            'message' => $exception->getMessage(),
-        ];
+        $this->open[$traceId]['trace']['error'] = CaptureDepth::error(get_class($exception), $exception->getMessage());
 
         if ($finalStateData !== null && $finalStateData !== []) {
             $this->open[$traceId]['trace']['final_state'] = $finalStateData;

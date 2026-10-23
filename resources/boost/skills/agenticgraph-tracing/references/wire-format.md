@@ -39,7 +39,7 @@ Common keys: `id`, `trace_id`, `parent_id`, `node_name`, `node_type`, `span_type
 |---|---|---|
 | `graph` | `error` | none |
 | `node` | `attempt`, `attempt_of`, `state_diff`, `loop_context`, `error` | none |
-| `llm` | `model`, `prompt_tokens`, `completion_tokens`, `total_tokens`, `cost_usd`, `cached`, `streamed` | none |
+| `llm` | `model`, `prompt_tokens`, `completion_tokens`, `total_tokens`, `cost_usd`, `cached`, `streamed`; when reported `thought_tokens`, `cache_read_tokens`, `cache_write_tokens` | `context.count`, `context.ids` (calls that used `context()`); `prompt.name`, `prompt.version`, `prompt.hash` (prompt files) |
 | `route` | none | `route.from`, `route.targets`, `route.router`, `route.kind`, `route.from_cache`, `route.fallback`, `route.reason` |
 | `tool` | `error` | `tool.type`, `tool.provider`, `tool.input_size`, `tool.output_size` (every capture depth), `tool.request_id` and `gen_ai.tool.call.id` (provider-executed calls only), `tool.arg_keys`, `tool.args`, `tool.result_size`, `tool.result` |
 | `db` | none | `laravel.db.connection`, `laravel.db.statement_type`, `db.operation.name`, `laravel.db.bindings_count`, `laravel.db.query_summary`, `db.query.text` |
@@ -48,6 +48,8 @@ Common keys: `id`, `trace_id`, `parent_id`, `node_name`, `node_type`, `span_type
 | `interrupt` | `state_snapshot` | `interrupt.reason`, `checkpoint.id` |
 | `resume` | `state_snapshot` | `checkpoint.id` |
 | `custom` | `error` | whatever the caller passed |
+
+`state_diff.values` per `capture.state`: `keys` (default) and `error_only` send `{type, value_type}` per changed top-level key, no values; `diff` sends `{type, value}` / `{type, old, new}` / `{type, old}`; `full` the node's output state; `none` null. `error` is `{type, message}`, `{type}` with `capture.errors=class`. A failed trace carries `final_state` (the state at the failure) under `full` and `error_only`.
 
 `route.kind` is `llm`, `deterministic`, `fan_out` or `join`. For a join, `route.from` is the sorted branch names joined with `|` and `route.router` is null.
 

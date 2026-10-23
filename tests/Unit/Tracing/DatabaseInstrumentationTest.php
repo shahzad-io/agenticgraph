@@ -17,7 +17,7 @@ function enableDbInstrumentationTracingExporter(): PulseExporter
     config([
         'agenticgraph.tracing.enabled' => true,
         'agenticgraph.tracing.exporter' => 'pulse',
-        'agenticgraph.tracing.api_key' => 'pk_test_db_instrumentation',
+        'agenticgraph.tracing.api_key' => 'ap_test_db_instrumentation',
         'agenticgraph.tracing.endpoint' => 'https://api.example.com',
     ]);
 

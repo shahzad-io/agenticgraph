@@ -16,8 +16,8 @@ Other skills, use them when installed: `agenticgraph-core` for graphs, nodes and
 1. Tracing is the record of a run. Streaming is live progress. Do not use one in place of the other.
 2. Turn tracing on in the environment (`AGENTICGRAPH_TRACING=true`), and set the exporter the same way. The exporter is built once per process, so it cannot change between two runs in the same process.
 3. The wire format is `agenticgraph.trace.v1.1`. Receivers accept `agenticgraph.trace.v1` as well. Keys and values are only added, never renamed or removed.
-4. Do not put secrets in span attributes. Keep capture off unless you have decided what may be stored.
-5. Summary capture modes keep structure, not content. `full` is your choice to store content.
+4. Do not put secrets in span attributes, state key names, node names or exception messages: those are always sent. Keep capture off unless you have decided what may be stored.
+5. The defaults keep structure, not content: `capture.state=keys` sends state key names and value types. `diff`, `full` and `error_only` send state values; `full` on any capture is your choice to store content.
 
 ## Task: turn tracing on
 
@@ -54,10 +54,13 @@ Docs: `/docs/tracing`, `/docs/api/tracing`
 
 ```dotenv
 AGENTICGRAPH_TRACING=true
-AGENTICPULSE_API_KEY=pk_live_...
+AGENTICPULSE_API_KEY=ap_live_...
+AGENTICGRAPH_CAPTURE_STATE=diff
 AGENTICPULSE_ENDPOINT=https://ingest.agenticgraph.dev
 ```
 
+- Keys are `ap_live_...` (production) or `ap_test_...` (staging, local), from https://pulse.agenticgraph.dev.
+- `AGENTICGRAPH_CAPTURE_STATE=diff` sends the old and new values of each changed state key, so Pulse can show them. Leave it out to send key names only.
 - With a key set, `auto` picks `pulse`. Each segment is `POST {endpoint}/v1/ingest` with `Authorization: Bearer {key}`.
 - `AGENTICGRAPH_TRACING_CONNECT_TIMEOUT` (1 s) and `AGENTICGRAPH_TRACING_TIMEOUT` (3 s per attempt).
 - A connection error or 5xx is retried once after 500 ms. A 4xx is never retried. A send never throws into your app.
@@ -174,9 +177,10 @@ Docs: `/docs/tracing#tracespan`, `/docs/api/tracing`
 
 | Env | Default |
 |---|---|
-| `AGENTICGRAPH_CAPTURE_STATE` | `diff`. Also `full`, `error_only`, `none`. |
-| `AGENTICGRAPH_CAPTURE_PROMPTS` / `AGENTICGRAPH_CAPTURE_RESPONSES` | `false` |
-| `AGENTICGRAPH_CAPTURE_MAX_LENGTH` | `2000` characters |
+| `AGENTICGRAPH_CAPTURE_STATE` | `keys`: changed top-level key names and value types, no values. `diff`: old and new values of changed keys. `full`: whole state per node, initial and final state. `error_only`: keys, plus the full state at a failure. `none`. |
+| `AGENTICGRAPH_CAPTURE_PROMPTS` / `AGENTICGRAPH_CAPTURE_RESPONSES` | `false`. Prompts include embedding input text. |
+| `AGENTICGRAPH_CAPTURE_MAX_LENGTH` | `2000` characters, for prompts, responses, attributes, tool args and results, SQL and state values |
+| `AGENTICGRAPH_CAPTURE_ERRORS` | `message`: exception class and message. `class`: class only. |
 | `AGENTICGRAPH_CAPTURE_HTTP` / `AGENTICGRAPH_CAPTURE_DB` | `false`. HTTP and DB outside tool spans. |
 | `AGENTICGRAPH_CAPTURE_TOOL_ARGS` | `summary` (`none`, `summary`, `full`) |
 | `AGENTICGRAPH_CAPTURE_TOOL_RESULTS` | `none` |
@@ -185,6 +189,8 @@ Docs: `/docs/tracing#tracespan`, `/docs/api/tracing`
 | `AGENTICGRAPH_DB_SLOW_THRESHOLD_MS` | `1000` |
 
 - Summary modes keep structure, not content (rule 5).
+- Always sent, whatever the capture: state key names, node and graph names, router class names (`route.router`), exception classes, `context.ids` (first 20), `prompt.name` / `prompt.version` / `prompt.hash`, `cache_key`, `interrupt.reason`, `Trace::span()` attributes, service name and version, `APP_ENV`.
+- Every driver gets the same content: `file` writes it to disk, `log` to your log channel (what `auto` does with no API key), `pulse` to AgenticPulse. `otlp` gets the spans, `state_diff` included (so `diff` values become vendor attributes), but no prompts, responses, initial or final state.
 - With `http_urls=full`, userinfo and known secret query parameters are replaced with `REDACTED`. Nothing else is scanned.
 - HTTP and DB inside a tool call nest under the tool span even with broad capture off.
 
