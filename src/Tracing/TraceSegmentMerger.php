@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Shahzad\AgenticGraph\Tracing;
 
 /**
- * Merges the segment envelopes of one trace into a single trace (the merged shape is in spec/tracing-wire-v1.md).
+ * Merges the segment envelopes of one trace into a single trace (the Pulse exporter's internal, versioned format).
  * Reference implementation of the server-side merge: the final segment wins, otherwise the
  * segment that ended later wins. active_ms is the union of the segment windows.
  */

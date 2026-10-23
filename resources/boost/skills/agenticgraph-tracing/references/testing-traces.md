@@ -6,7 +6,7 @@ Leave tracing off unless a test is about traces. `auto` resolves to `null` in un
 
 ## What a test can change at runtime
 
-Tested in `tests/Feature/Tracing/RuntimeTracingFileTest.php`:
+Covered by the package's own tests:
 
 - `agenticgraph.tracing.enabled` set in a test applies to the next run. The listeners are always registered, and the gate reads the flag per event.
 - The exporter is a singleton that keeps the driver it resolved first. Under `auto` in tests that driver is `null`, so a flag change alone writes nothing.

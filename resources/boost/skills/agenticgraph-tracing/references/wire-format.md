@@ -1,65 +1,37 @@
-# agenticgraph.trace.v1.1 in brief
+# What a trace file holds
 
-The contract is `spec/tracing-wire-v1.md` in this package, locked by `TraceWireContractFreezeTest`. This page summarizes it; read the spec before writing a receiver or changing the payload. Any addition updates the spec's key registry and tables.
+The `pulse`, `file` and `log` exporters send the same JSON. The Pulse exporter's payload is an internal, versioned format between AgenticGraph and AgenticPulse: read a `file` or `log` trace to debug, but do not build a receiver on it. To send traces to your own backend, use OTLP (`AGENTICGRAPH_TRACING_EXPORTER=otlp`).
 
-## Envelope
+## Top level
 
-Keys in order: `schema_version`, `trace`, `segment`, `spans`, `llm_calls`, and `_meta` only when truncated. `schema_version` is always `agenticgraph.trace.v1.1` (`agenticgraph.trace.v1` before the v1.1 amendment).
+`schema_version` (`agenticgraph.trace.v1.1`), `trace`, `segment`, `spans`, `llm_calls`, and `_meta` only when the payload was truncated.
 
-```json
-{
-  "schema_version": "agenticgraph.trace.v1.1",
-  "trace": {"id": "exec_…", "status": "completed", "sampled": true, "graph_name": "content", "resource": {"service.name": "my-app", "service.version": "unknown", "deployment.environment.name": "production"}, "instrumentation_scope": "agenticgraph"},
-  "segment": {"id": "seg_0123456789abcdef", "kind": "initial", "final": true, "started_at": "2026-09-27T14:03:11.482913+00:00", "ended_at": "2026-09-27T14:03:12.104551+00:00"},
-  "spans": [{"id": "…", "trace_id": "exec_…", "parent_id": null, "node_name": "content", "node_type": "graph", "span_type": "graph", "status": "success", "span_kind": "…", "status_code": "OK", "started_at": "…", "ended_at": "…", "duration_ms": 621.6}],
-  "llm_calls": []
-}
-```
-
-- `trace.status`: `running` (non-final segment), `interrupted`, `completed`, `failed`.
-- Every timestamp is UTC with six fraction digits and `+00:00`.
-- `pulse` and `file` keep a zero fraction (`0.0`). Treat numeric fields as numbers.
-
-## Segments and merging
-
-- `segment.kind`: `initial`, `resumed`, `continued`. `final` is true only on the completed or failed segment.
-- A running trace has no root graph span yet. Its spans share the root's id as `parent_id`.
-- A receiver merges by trace id (reference implementation: `TraceSegmentMerger`):
-  - a segment id already seen replaces the earlier one;
-  - segments are ordered by `segment.started_at`, then `segment.id`; the final segment applies last;
-  - trace fields merge shallowly, key by key; spans and LLM calls are upserted by `id`;
-  - `duration_ms` and `active_ms` are recomputed. `active_ms` is the union of segment windows, so human waits and queue gaps are excluded.
-- The merged shape replaces `segment` with `segments`, the list of every segment block. A segment that ended interrupted keeps `interrupt` (`{reason, at}`) there, because the trace-level interrupt keys are removed once the run goes on; the wait is the next segment's `started_at` minus `interrupt.at`.
+- `trace`: the run. `id` (the execution id), `graph_name`, `status` (`running`, `interrupted`, `completed`, `failed`), `sampled`, `resource` (`service.name`, `service.version`, `deployment.environment.name`), `error` on failure, `duration_ms` once the run ends.
+- `segment`: which part of the run this file is. `kind` is `initial`, `resumed` (after an interrupt) or `continued` (a queued job); `final` is true on the completed or failed one. A run that pauses or queues work is sent as several segments with the same `trace.id`.
+- Every timestamp is UTC with six fraction digits: `2026-09-27T14:03:11.482913+00:00`.
 
 ## Spans
 
-Common keys: `id`, `trace_id`, `parent_id`, `node_name`, `node_type`, `span_type`, `status`, `span_kind`, `status_code`, `started_at`, `ended_at`, `duration_ms`.
+Every span has `id`, `parent_id`, `node_name`, `span_type`, `status`, `status_code` (`OK`, `ERROR`, `PAUSED`), `started_at`, `ended_at`, `duration_ms`. What else it carries:
 
-| `span_type` | Top level | `attributes` |
-|---|---|---|
-| `graph` | `error` | none |
-| `node` | `attempt`, `attempt_of`, `state_diff`, `loop_context`, `error` | none |
-| `llm` | `model`, `prompt_tokens`, `completion_tokens`, `total_tokens`, `cost_usd`, `cached`, `streamed`; when reported `thought_tokens`, `cache_read_tokens`, `cache_write_tokens` | `context.count`, `context.ids` (calls that used `context()`); `prompt.name`, `prompt.version`, `prompt.hash` (prompt files) |
-| `route` | none | `route.from`, `route.targets`, `route.router`, `route.kind`, `route.from_cache`, `route.fallback`, `route.reason` |
-| `tool` | `error` | `tool.type`, `tool.provider`, `tool.input_size`, `tool.output_size` (every capture depth), `tool.request_id` and `gen_ai.tool.call.id` (provider-executed calls only), `tool.arg_keys`, `tool.args`, `tool.result_size`, `tool.result` |
-| `db` | none | `laravel.db.connection`, `laravel.db.statement_type`, `db.operation.name`, `laravel.db.bindings_count`, `laravel.db.query_summary`, `db.query.text` |
-| `http` | `error` | `http.request.method`, `http.response.status_code`, `laravel.http.response_size`, `laravel.http.url_summary`, `url.full` |
-| `vector` | `error` | any `vector.*` key |
-| `interrupt` | `state_snapshot` | `interrupt.reason`, `checkpoint.id` |
-| `resume` | `state_snapshot` | `checkpoint.id` |
-| `custom` | `error` | whatever the caller passed |
+| `span_type` | Main fields |
+|---|---|
+| `graph` | the root; `error` on failure |
+| `node` | `attempt`, `state_diff`, `loop_context`, `error` |
+| `llm` | `model`, `prompt_tokens`, `completion_tokens`, `total_tokens`, `cost_usd`, `cached`, `streamed` |
+| `route` | `attributes`: `route.from`, `route.targets`, `route.kind` |
+| `tool` | `attributes`: `tool.type`, sizes, and args or results per capture depth |
+| `http`, `db` | `attributes`: method and status, or statement type, per capture depth |
+| `vector` | `attributes`: `vector.*` counts and timings, never query text |
+| `interrupt`, `resume` | `attributes`: `interrupt.reason`, `checkpoint.id` |
+| `custom` | whatever you passed to `Trace::span()` |
 
-`state_diff.values` per `capture.state`: `keys` (default) and `error_only` send `{type, value_type}` per changed top-level key, no values; `diff` sends `{type, value}` / `{type, old, new}` / `{type, old}`; `full` the node's output state; `none` null. `error` is `{type, message}`, `{type}` with `capture.errors=class`. A failed trace carries `final_state` (the state at the failure) under `full` and `error_only`.
-
-`route.kind` is `llm`, `deterministic`, `fan_out` or `join`. For a join, `route.from` is the sorted branch names joined with `|` and `route.router` is null.
+`state_diff.values` depends on `capture.state`: `keys` (default) sends each changed key's change type and value type, `diff` and `full` send values, `none` sends nothing.
 
 ## llm_calls
 
-`id`, `trace_id`, `span_id`, `node`, `call_type`, `model`, `prompt_tokens`, `completion_tokens`, `total_tokens`, `duration_ms`, `created_at`, `cost_usd`, `streamed`, plus `prompt` / `response` when capture is on, and `cached` / `cache_key` on cache hits.
+One row per LLM call: `model`, tokens, `cost_usd`, `duration_ms`, `streamed`, `cached`, and `prompt` / `response` only when `capture.prompts` / `capture.responses` are on.
 
-## Size limits
+## Size
 
-- Over 1 MB the builder shrinks in order and stops when it fits: LLM responses, LLM prompts, spans (the root stays, plus the first 50 and last 50), state values.
-- Over 10 MB it keeps the full `trace` with its real status and empties `spans` and `llm_calls`. `_meta.error_reason` is `payload_too_large`.
-- `_meta` keys: `truncated`, `truncation_applied`, `original_size_bytes`, `dropped`, `truncated_at`, and `error_reason` on the hard limit only.
-- A kept span whose parent was dropped attaches to the root.
+Large payloads are cut down before they are sent (long responses and prompts first, then spans). `_meta` says what was dropped.

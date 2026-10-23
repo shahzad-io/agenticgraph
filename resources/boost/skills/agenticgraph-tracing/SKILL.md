@@ -7,7 +7,7 @@ description: "Trace AgenticGraph runs: tracing drivers (auto, pulse, file, log, 
 
 docs-sha: 1e3e4db
 
-Condensed from the AgenticGraph docs (`/docs/...` paths below) at that commit and from `spec/tracing-wire-v1.md` in this package, which is the contract. When they disagree with the source, the source wins.
+Condensed from the AgenticGraph docs (`/docs/...` paths below) at that commit. When they disagree with the source, the source wins.
 
 Other skills, use them when installed: `agenticgraph-core` for graphs, nodes and events. `agenticgraph-streaming` for live events while a run is going; tracing is the record afterwards. `agenticgraph-vector` for vector spans, if `shahzad/agenticgraph-vector` is installed.
 
@@ -83,7 +83,7 @@ AGENTICGRAPH_OTLP_HEADERS_JSON={"Authorization":"Bearer token"}
 - Resource: `service.name`, `service.version` (`AGENTICGRAPH_SERVICE_VERSION`), `deployment.environment.name` (`APP_ENV`).
 - LLM spans map to `gen_ai.*` (operation, request model, provider, usage tokens, request stream). Tool spans get `gen_ai.operation.name = execute_tool`. Cost and totals stay `agenticgraph.*`. Cached calls carry no `gen_ai.*` request or usage attributes.
 
-Docs: `/docs/tracing#otlp`. Spec: OTLP mapping.
+Docs: `/docs/tracing#otlp`.
 
 ## Task: read the span tree
 
@@ -125,7 +125,7 @@ graph
 - **Streamed.** `streamed` is true on an LLM span and its `llm_calls` row when the call was streamed.
 - Tools added to raw `prism()->withTools()` get no tool span. The package's own queries and requests are never spans.
 
-Docs: `/docs/tracing#span-tree`. Spec: spans, Route spans, Attribute names.
+Docs: `/docs/tracing#span-tree`.
 
 ## Task: know when a trace is sent
 
@@ -135,17 +135,18 @@ Docs: `/docs/tracing#span-tree`. Spec: spans, Route spans, Attribute names.
 - The listener is synchronous. No queue worker is involved. In an HTTP request the send runs after the response; in console, queue and tests it runs immediately.
 - There is no trace buffer in the cache and no `tracing.buffer` config.
 
-Docs: `/docs/tracing#when-traces-are-sent`. Spec: Segments.
+Docs: `/docs/tracing#when-traces-are-sent`.
 
 ## Task: read the wire format
 
 - Envelope: `schema_version`, `trace`, `segment`, `spans`, `llm_calls`, and `_meta` only when truncated.
-- Current `schema_version` is `agenticgraph.trace.v1.1`. v1.1 is v1 plus `links` on queued work and the late-segment merge rules. A receiver that only knows v1 needs the v1.1 rules before it merges a trace from a queue job.
+- Current `schema_version` is `agenticgraph.trace.v1.1` (earlier releases sent `agenticgraph.trace.v1`). Keys are only added.
 - Every timestamp is UTC with six fraction digits: `2026-09-27T14:03:11.482913+00:00`.
 - Payloads over the size limit are truncated, and `_meta` records what was dropped.
-- Envelope shape, span keys, merge rules and size limits: [references/wire-format.md](references/wire-format.md). The full key registry is at the end of `spec/tracing-wire-v1.md`.
+- The Pulse exporter's payload is an internal, versioned format between AgenticGraph and AgenticPulse. To send traces to your own backend, use OTLP.
+- The main fields of a trace file: [references/wire-format.md](references/wire-format.md).
 
-Docs: `/docs/tracing#wire-contract`. Spec: Envelope, Segments, Size limits.
+Docs: `/docs/tracing#wire-contract`.
 
 ## Task: add a custom span
 
@@ -203,13 +204,13 @@ Docs: `/docs/tracing#capture-and-pii`
 - `tracing.sampling.always_on_error` (default `true`) still sends a failed trace the rate dropped. In v1 it arrives with `trace.sampled: false`, its header and error, and no spans.
 - LLM spans get `cost_usd` from `config/model_pricing.php` (USD per 1M tokens). `php artisan agenticgraph:pricing:sync` refreshes it from OpenRouter; use `--fixture=` in CI. Hand-set prices go in `config/model_pricing_overrides.php`: they win over the table and the sync never writes that file. Unknown models cost `model_pricing.fallback_cost_usd` (0.0). Cached calls cost nothing.
 
-Docs: `/docs/tracing#sampling`, `/docs/tracing#cost`. Spec: Sampling.
+Docs: `/docs/tracing#sampling`, `/docs/tracing#cost`.
 
 ## Task: test traces
 
 - `auto` is `null` in unit tests, so by default tests send nothing.
-- Setting `tracing.enabled` at runtime in a test works: `tests/Feature/Tracing/RuntimeTracingFileTest.php` runs a graph after the flag changes and reads the spans. The driver does not change with it. The exporter is a singleton that keeps the driver it resolved first, so a test that changes the driver must rebind it (see the reference).
-- Under `auto` in tests the driver is `null`, so changing only the flag writes nothing (same test).
+- Setting `tracing.enabled` at runtime in a test works: the package's own tests run a graph after the flag changes and read the spans. The driver does not change with it. The exporter is a singleton that keeps the driver it resolved first, so a test that changes the driver must rebind it (see the reference).
+- Under `auto` in tests the driver is `null`, so changing only the flag writes nothing.
 - The send is immediate in tests, so the file exists when `run()` returns.
 - `Event::fake()` swallows the tracing listener. No trace is sent.
 - Example: [references/testing-traces.md](references/testing-traces.md).

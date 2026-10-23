@@ -17,7 +17,7 @@ use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
  * WIRE-CONTRACT.md version history (v1.1). After it, changing frozen fields, event
  * type strings, or delivery semantics is a breaking change requiring a major version bump.
  *
- * Canonical spec: docs/streaming/WIRE-CONTRACT.md
+ * Canonical spec: https://github.com/shahzad-io/agenticgraph/blob/main/docs/streaming/WIRE-CONTRACT.md
  *
  * FROZEN PUBLIC surface:
  * - Wire body: {@see self::FROZEN_WIRE_BODY_KEYS} (snake_case JSON; `type` is NOT in the body)

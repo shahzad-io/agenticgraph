@@ -333,7 +333,7 @@ class HttpClientInstrumentation
     }
 
     /**
-     * Wire v1 http attributes (spec/tracing-wire-v1.md: OTel names only where the meaning matches exactly).
+     * Wire v1 http attributes (OTel names only where the meaning matches exactly).
      *
      * @return array<string, int|string>
      */

@@ -20,7 +20,7 @@ AgenticGraph is the first open-source Laravel AI orchestration package, bringing
 
 ## Streaming
 
-- **Wire contract v1.1 (frozen):** [docs/streaming/WIRE-CONTRACT.md](docs/streaming/WIRE-CONTRACT.md): canonical NPM/AgenticPulse type spec
+- **Wire contract v1.1 (frozen):** [WIRE-CONTRACT.md](https://github.com/shahzad-io/agenticgraph/blob/main/docs/streaming/WIRE-CONTRACT.md): the event types and payloads the npm stream clients read
 - Streaming guide: [Streaming](https://agenticgraph.dev/docs/streaming)
 - API reference: [Streaming API](https://agenticgraph.dev/docs/api/streaming)
 - Event catalog: every event type and payload is in the wire contract above
@@ -30,7 +30,7 @@ AgenticGraph is the first open-source Laravel AI orchestration package, bringing
 
 ## Tracing
 
-- **Trace wire format `agenticgraph.trace.v1.1`:** [spec/tracing-wire-v1.md](spec/tracing-wire-v1.md): the envelope every JSON exporter sends (pulse, file, log), its segments and merge rules, span types and attribute names, and the OTLP mapping.
+- **Traces:** each run is sent as one or more segments (`agenticgraph.trace.v1.1`): the trace, its spans (graph, node, llm, tool, route, http, db, vector, custom) and its LLM calls. The `file` and `log` exporters write the same JSON, so you can read it. The Pulse exporter's payload is an internal, versioned format between AgenticGraph and AgenticPulse. To send traces to your own backend, use OTLP. See [Tracing](https://agenticgraph.dev/docs/tracing).
 - Exporters: `auto`, `pulse`, `log`, `file`, `null`, `otlp` (`AGENTICGRAPH_TRACING_EXPORTER`). `auto` is `null` in unit tests, `pulse` when `AGENTICPULSE_API_KEY` is set, otherwise `log` (your Laravel log channel).
 - **What leaves your app:** by default state key names and value types (`AGENTICGRAPH_CAPTURE_STATE=keys`), exception classes and messages (`AGENTICGRAPH_CAPTURE_ERRORS`), node, graph and router names, and ids (`context.ids`, prompt name/version/hash, `cache_key`, `interrupt.reason`). Prompts, responses and state values only when you turn them on. See [What leaves your app](https://agenticgraph.dev/docs/tracing#what-leaves-your-app).
 

@@ -53,11 +53,11 @@
 - New: `as(Dto::class)`, `data()`, `LlmResponse::$data`, `#[ListOf]`, `StructuredHydrationException`. Reflection-only hydration (constructor or public properties; scalars, nullable and union types, backed enums, date-times, nested classes, typed lists), strict, errors name the path and expected type.
 - Fixed: `LlmResponse::$usage` of a structured call now sums every attempt (the streamed attempt's usage was lost after a fallback). New `LlmResponse::$attempts` and `attempts` in `toArray()`. When Prism discards the usage of a failed non-streamed attempt, `usage` is `null` with a warning (never zero) and `TokensUsed` is dispatched only for attempts whose usage is known.
 
-The trace wire (`agenticgraph.trace.v1.1`, the v1 contract plus the v1.1 amendment) is frozen; later changes are additive. The contract is `spec/tracing-wire-v1.md`, locked by `TraceWireContractFreezeTest`.
+The trace wire (`agenticgraph.trace.v1.1`, the v1 contract plus the v1.1 amendment) is frozen; later changes are additive, locked by `TraceWireContractFreezeTest`. The Pulse exporter's payload is an internal, versioned format between AgenticGraph and AgenticPulse. To send traces to your own backend, use OTLP.
 
 ### Trace JSON Schema and wire fixes (B13s)
 
-- New: `spec/tracing-wire-v1.1.schema.json`, a JSON Schema 2020-12 for the trace wire (segment envelope and merged trace: every span type with its keys, usage semantics v2, vector keys up to v4, `links`, `_meta`, and the merge rules a schema can express). `TraceWireContractFreezeTest` validates the freeze corpus against it; a key change without a schema change fails. `opis/json-schema` is a dev dependency.
+- New: a JSON Schema for the trace wire (segment envelope and merged trace), kept with AgenticPulse and checked against real captures there. `TraceWireContractFreezeTest` keeps its key registry inline.
 - Pricing: hand-set prices live in `config/model_pricing_overrides.php` (published with the other config). `ModelPricingCalculator` merges it over `config/model_pricing.php` (an override replaces the whole entry) and `agenticgraph:pricing:sync` never writes it; the sync reports the ids an override covers. `openai/gpt-6-luna` moved there from the sync table (OpenAI Standard tier, short context up to 272K input: input 0.10, cached input 0.01, cache write 0.125, output 0.50 per 1M tokens; the cache write rate is marked TODO for a check against the official page).
 - Fixed: a wrapped tool's span now carries `tool.output_size` (the size of the result) at every `tool_results` depth; the key was documented but only a provider-executed tool call could carry it, with a null size. `tool.result_size` (summary depth) is unchanged.
 - Fixed: `llm_calls[].duration_ms` is always a number (0.0 when the event has no measured duration); it could be null.
@@ -67,7 +67,7 @@ The trace wire (`agenticgraph.trace.v1.1`, the v1 contract plus the v1.1 amendme
 
 - **BREAKING:** requires `prism-php/prism` `^0.102.0` (was `^0.100.1`), and therefore `laravel/framework` `^12.61.1 || ^13.12.0`. **Laravel 11 is no longer supported** (Prism 0.101 dropped it; the CI matrix, `composer.json`, README and compatibility table follow). `orchestra/testbench` `^10.0|^11.0`.
 - **BREAKING (numbers): usage semantics v2.** Prism 0.102 gives `Usage` one meaning on every provider, and the package reports it as is: `prompt_tokens` is the uncached input; cached input is in `cache_read_tokens` / `cache_write_tokens` and never inside `prompt_tokens`; `completion_tokens` includes reasoning, `thought_tokens` is its reasoning part. The numbers change wherever a provider used to deviate: Gemini `completion_tokens` now includes thinking (higher) and `prompt_tokens` excludes implicit cache hits; OpenAI streams, OpenRouter, DeepSeek, Mistral, Groq, Z, xAI and Ollama 0.33.3+ `prompt_tokens` exclude cached input (lower); multi-step streams on Gemini, Groq and OpenRouter are now the sum of every step, not the last; `thought_tokens` is newly reported by DeepSeek and OpenRouter. Anyone storing usage for billing or analytics sees a step change.
-- New: nullable `cacheReadTokens` and `cacheWriteTokens` on `TokensUsed` (and `TokensUsed::fromLlmCall()`), `cache_read_tokens` / `cache_write_tokens` in `LlmResponse::toArray()['usage']`, and on the `llm` span. Null: the provider does not report it; 0: it reported zero. Trace wire, additive (v1.1 note "usage semantics v2" in `spec/tracing-wire-v1.md`): the two optional span keys; `total_tokens` stays prompt + completion and so excludes cached input. OTLP: `agenticgraph.cache_read_tokens`, `agenticgraph.cache_write_tokens`, `gen_ai.usage.cache_read.input_tokens` and `gen_ai.usage.cache_write.input_tokens` (names verified against the pinned semantic-conventions-genai commit); `gen_ai.usage.input_tokens` is now `prompt + cache read + cache write`, which is what OTel defines (it was the raw prompt count before).
+- New: nullable `cacheReadTokens` and `cacheWriteTokens` on `TokensUsed` (and `TokensUsed::fromLlmCall()`), `cache_read_tokens` / `cache_write_tokens` in `LlmResponse::toArray()['usage']`, and on the `llm` span. Null: the provider does not report it; 0: it reported zero. Trace wire, additive (v1.1, "usage semantics v2"): the two optional span keys; `total_tokens` stays prompt + completion and so excludes cached input. OTLP: `agenticgraph.cache_read_tokens`, `agenticgraph.cache_write_tokens`, `gen_ai.usage.cache_read.input_tokens` and `gen_ai.usage.cache_write.input_tokens` (names verified against the pinned semantic-conventions-genai commit); `gen_ai.usage.input_tokens` is now `prompt + cache read + cache write`, which is what OTel defines (it was the raw prompt count before).
 - Pricing: `ModelPricingCalculator::calculate()` takes the cache buckets. A `config/model_pricing.php` entry may set `cache_read` and `cache_write` (USD per 1M tokens); cached input costs that rate, else the entry's `input` rate (what it cost when providers counted it inside the prompt). `agenticgraph:pricing:sync` does not write the two keys yet; set them by hand.
 - Finish reasons: `LlmResponse::$finishReason` (and `finish_reason` in `toArray()`) can now be `length` for a **streamed** call cut by `$maxTokens`, with the real usage (a truncated OpenAI stream used to report `stop` and 0 tokens; this was the known upstream issue of B12). New values `refusal` and `pause` exist. A non-streamed OpenAI call cut by the limit still throws `max tokens exceeded`. A stream that ends in an in-stream error now throws a `PrismException` after its events were sent (Prism 0.102 ends it as a normal stream with finish reason `error`); the call's tokens are not tracked, as for a thrown non-streamed call.
 - Fixed: `PrismNode::audioToText()` threw a `TypeError` with token tracking on for duration-billed transcriptions (OpenAI whisper-1, Groq), where Prism 0.102 returns `null` usage. No `TokensUsed` is dispatched for them.
@@ -133,7 +133,7 @@ The trace wire (`agenticgraph.trace.v1.1`, the v1 contract plus the v1.1 amendme
 - An `interrupted` `execution_terminal` keeps the response open (heartbeats), so the resumed segment arrives on the same connection. `completed` and `failed` still close it.
 - At `streaming.sse.max_duration_seconds` the response ends with control `reconnect` (`{"control":"reconnect","after_ms":<retry_ms>}`). It used to end silently.
 - Every SSE response starts with `retry: <ms>`. New config `streaming.sse.retry_ms` (`AGENTICGRAPH_STREAM_SSE_RETRY_MS`, default 2000). `max_duration_seconds` accepts fractions.
-- Wire contract v1.1 amendment: `docs/streaming/WIRE-CONTRACT.md` (SSE connection lifecycle, control events). Use `@agenticgraph/stream-client` from the same release.
+- Wire contract v1.1 amendment: [WIRE-CONTRACT.md](https://github.com/shahzad-io/agenticgraph/blob/main/docs/streaming/WIRE-CONTRACT.md) (SSE connection lifecycle, control events). Use `@agenticgraph/stream-client` from the same release.
 
 ### BREAKING (tools() returns a ToolRun; agent() returns an AgentResponse)
 - `PrismNode::tools()` returns `Shahzad\AgenticGraph\Tools\ToolRun` instead of `ToolCall[]`: `calls` (`ToolCall[]`), `results` (per call: `toolCallId`, `toolName`, `arguments`, `result`, `error`) and `text`. It stays single-step: the results are not sent back to the model. `ToolRun` is `Countable` (calls) and `JsonSerializable`, so it can be stored in state.
@@ -239,7 +239,7 @@ Apps with a published `config/agenticgraph.php` keep their old copy, because the
 ### Added
 - Tracing: the `TracerExporter` abstraction with `pulse`, `log` and `null` exporters; `Trace::span()` and `TraceContext::tryGet()`; tool-scoped tracing with gated HTTP/DB capture; the capture-depth settings; `config/model_pricing.php` and `agenticgraph:pricing:sync`; the OTLP HTTP/JSON exporter.
 - `file` tracing exporter (`AGENTICGRAPH_TRACING_EXPORTER=file`): one JSON file per flushed segment at `{tracing.file.path}/{trace_id}/{Ymd-His-u}.json`. New config key `tracing.file.path` (`AGENTICGRAPH_TRACING_FILE_PATH`).
-- `schema_version: agenticgraph.trace.v1` as the first key of every trace envelope, and the wire description `spec/tracing-wire-v1.md` (shipped with the package) ending in a machine-readable key registry.
+- `schema_version: agenticgraph.trace.v1` as the first key of every trace envelope, and a machine-readable key registry for it.
 - Microsecond timestamps on every span and trace field.
 - `trace.active_ms`: the time the trace was actually running, excluding waits between segments.
 - The `continued` segment kind, for queue jobs and scopes that work on a trace another process started.
@@ -252,7 +252,7 @@ Apps with a published `config/agenticgraph.php` keep their old copy, because the
 - Config `tracing.transport.connect_timeout` (`AGENTICGRAPH_TRACING_CONNECT_TIMEOUT`, default 1) and `tracing.transport.timeout` (`AGENTICGRAPH_TRACING_TIMEOUT`, default 3).
 - Soft truncation (over 1 MB) adds `_meta.dropped` (`spans`, `llm_calls`), the counts removed from the envelope. `llm_calls` is always 0 there. New optional key.
 - `TraceSegmentMerger` keeps each truncated segment's `_meta` in its `segments` entry. The merged `_meta` adds `error_reason` (when a segment has one) and `dropped` (summed over segments).
-- The key registry in `spec/tracing-wire-v1.md` gains a `merged` block (merged keys, `segments` entry keys, merged `_meta` keys), checked by `TraceWireContractFreezeTest` against the merger's own output.
+- The key registry gains a `merged` block (merged keys, `segments` entry keys, merged `_meta` keys), checked by `TraceWireContractFreezeTest` against the merger's own output.
 
 ### Changed
 - Every node span's parent is the root graph span, including fan-out branches.
@@ -271,7 +271,7 @@ Apps with a published `config/agenticgraph.php` keep their old copy, because the
 - Instrumentation resolves the exporter lazily.
 - Floats keep their zero fraction on the file and pulse wire.
 - One instant defines each segment boundary, so a segment's end and the next one's start agree.
-- Docs: `spec/tracing-wire-v1.md` states every merge rule `TraceSegmentMerger` follows (envelope without a segment block, repeated segment ids, segment order, shallow trace field precedence, whole-object upsert of spans and llm calls, start and end fallbacks, recomputed `duration_ms` and `active_ms`, interrupt keys removed, root span widening).
+- Docs: every merge rule `TraceSegmentMerger` follows is written down.
 - Docs: `llm_calls` is the canonical source for cost and tokens; the llm span carries the same values, so a receiver sums one source only. After span truncation an llm call may name a dropped span.
 - Docs: a running trace has no root span until an interrupt or the final segment arrives; receivers group its spans by their shared `parent_id`.
 - Docs: the zero-fraction note matches the drivers: `pulse` and `file` send `0.0` as `0.0`.
@@ -304,7 +304,7 @@ Apps with a published `config/agenticgraph.php` keep their old copy, because the
 - The unused protected helper `PulseExporter::findSpansOutsideTraceWindow()`.
 
 ### Docs
-- `spec/tracing-wire-v1.md` named the sampling keys `tracing.sample_rate` and `tracing.always_on_error`. They are `tracing.sampling.rate` and `tracing.sampling.always_on_error`, as in the config. Prose only; the wire format is unchanged.
+- The wire description named the sampling keys `tracing.sample_rate` and `tracing.always_on_error`. They are `tracing.sampling.rate` and `tracing.sampling.always_on_error`, as in the config. Prose only; the wire format is unchanged.
 - Boost: the single `agenticgraph-core` skill is replaced by three skills, `agenticgraph-core`, `agenticgraph-tracing` and `agenticgraph-streaming`, plus a guideline that names them. `BoostSkillsDriftTest` checks that every class, method and env key the skills name exists.
 
 ### Known limitation

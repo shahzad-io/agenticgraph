@@ -4,7 +4,7 @@
 
 **Source of truth:** `Shahzad\AgenticGraph\Streaming\StreamEventEnvelope` (`src/Streaming/StreamEventEnvelope.php`).
 
-This document is the canonical type spec for NPM streaming clients and AgenticPulse. Field names are **verbatim** - mirror them exactly in TypeScript.
+This document is the canonical type spec for the npm streaming clients. Field names are **verbatim** - mirror them exactly in TypeScript.
 
 ---
 
@@ -203,7 +203,7 @@ Emitted as JSON from `Citation` public properties (`PrismStreamAdapter.php:192`)
 
 `sourceType` / `sourcePositionType` are backed enum **values** (strings). `source` is `string|integer`.
 
-#### Steps (B13b)
+#### Steps
 
 One streamed model request is `stream_start`, then per step `step_start`, its text, thinking and `tool_call` events, the `tool_result` events (tools run between `tool_call` and `tool_result` with no events, so a slow tool is a quiet gap), `step_finish`, and finally `stream_end`. A single-step request has one pair. Each step has its own `message_id`. A run that stops on `maxSteps` ends with `step_finish` (`ToolCalls`) and `stream_end`, without a final text.
 
@@ -214,7 +214,7 @@ One streamed model request is `stream_start`, then per step `step_start`, its te
 | `citations` | `stream_end` | `array \| null`: provider-specific citation parts; shape varies (loose; do not build logic against the inner structure) |
 | `additional_content` | `stream_end` | `object` (`array<string, mixed>`; defaults to `{}`) |
 
-Before B13b, `StreamStartEvent` and `StreamEndEvent` were also mapped to `step_start` and `step_finish` (so one step gave two of each, told apart only by the optional keys), and `step_finish` from a step carried only `{ id, timestamp }`.
+Before this amendment, `StreamStartEvent` and `StreamEndEvent` were also mapped to `step_start` and `step_finish` (so one step gave two of each, told apart only by the optional keys), and `step_finish` from a step carried only `{ id, timestamp }`.
 
 Prism content events: **no** `payload.stream` nesting; `node_seq` continues the per-node sequence.
 
@@ -351,7 +351,7 @@ Delivery mode determines the terminal event. This is **by design**, not a bug.
 
 ### Public observability (frozen, optional for basic clients)
 
-- `span_id`, `parent_span_id` - trace correlation (AgenticPulse)
+- `span_id`, `parent_span_id` - trace correlation
 - `node_seq` - per-node ordering within a node execution
 
 ### Serialized but NOT promised
@@ -412,6 +412,6 @@ export type ExecutionTerminalPayload = {
 |---------|------|-------|
 | **1.0** | 2026-06 | Initial freeze after prefreeze fixes (coherent `node_seq`, `StreamErrorPayload` wire serialization, `NODE_INTERRUPT` constant) |
 | **1.1** | 2026-10 | Pre-release amendment (allowed only because the contract was not yet publicly released). `final_state` is nullable and `null` by default in `execution_terminal`, broadcast `stream_close.meta` and `stream_replay_unavailable`; opt in with `AGENTICGRAPH_STREAM_EXPOSE_FINAL_STATE=true` and an optional `keys` allowlist. When exposed it is the plain state object, not the storage envelope. `execution_terminal` is documented as always emitted regardless of stream filters, and as the last event of a run (`graph_failed` before it, one `stream_close`). Breaking for clients that assume an object |
-| **1.1** | 2026-10 | Additive (B1): `graph_failed` has an optional `reason` string. `agenticgraph:interrupt:expire` sets `interrupt_expired`, then the failed `execution_terminal` follows as for any failure. Clients that ignore unknown payload keys need no change. |
-| **1.1** | 2026-10 | Pre-release amendment (B2, allowed only because the contract was not yet publicly released). SSE control events (`stream_heartbeat`, new `stream_reconnect`, `stream_replay_unavailable`) have no `id:` and no `seq`, and carry a `control` key instead of the 9 wire fields. `stream_replay_unavailable` used to claim the next real seq. Every SSE response starts with `retry:`. An `interrupted` terminal no longer closes the response. Max duration ends with control `reconnect`. Replay-unavailable only when the cursor is below the first stored seq or the stream is empty with `cursor > 0`, never during a wait. Breaking for SSE clients that read heartbeat or replay-unavailable as wire bodies |
-| **1.1** | 2026-10 | Pre-release amendment (B13b B, allowed only because the contract was not yet publicly released). New Prism content types `stream_start` and `stream_end` (Prism `StreamStartEvent`, `StreamEndEvent`; they were mapped to `step_start` and `step_finish`). `step_start` and `step_finish` are now one pair per step; `step_finish` carries that step's `finish_reason` and `usage`, `stream_end` the request's and the cumulative `usage`. Multi-step tool runs and MCP stream. Breaking for clients that counted step events or read `usage` from `step_finish` |
+| **1.1** | 2026-10 | Additive: `graph_failed` has an optional `reason` string. `agenticgraph:interrupt:expire` sets `interrupt_expired`, then the failed `execution_terminal` follows as for any failure. Clients that ignore unknown payload keys need no change. |
+| **1.1** | 2026-10 | Pre-release amendment (allowed only because the contract was not yet publicly released). SSE control events (`stream_heartbeat`, new `stream_reconnect`, `stream_replay_unavailable`) have no `id:` and no `seq`, and carry a `control` key instead of the 9 wire fields. `stream_replay_unavailable` used to claim the next real seq. Every SSE response starts with `retry:`. An `interrupted` terminal no longer closes the response. Max duration ends with control `reconnect`. Replay-unavailable only when the cursor is below the first stored seq or the stream is empty with `cursor > 0`, never during a wait. Breaking for SSE clients that read heartbeat or replay-unavailable as wire bodies |
+| **1.1** | 2026-10 | Pre-release amendment (allowed only because the contract was not yet publicly released). New Prism content types `stream_start` and `stream_end` (Prism `StreamStartEvent`, `StreamEndEvent`; they were mapped to `step_start` and `step_finish`). `step_start` and `step_finish` are now one pair per step; `step_finish` carries that step's `finish_reason` and `usage`, `stream_end` the request's and the cumulative `usage`. Multi-step tool runs and MCP stream. Breaking for clients that counted step events or read `usage` from `step_finish` |

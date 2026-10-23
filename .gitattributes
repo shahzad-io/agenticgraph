@@ -19,8 +19,7 @@
 /phpstan.neon.dist  export-ignore
 /phpstan-baseline.neon  export-ignore
 
-# Engineering docs, specs and tasks (on GitHub, not in the package). /docs covers docs/specs and docs/streaming.
-/spec export-ignore
+# Engineering docs and tasks (on GitHub, not in the package). /docs covers docs/specs and docs/streaming.
 /tasks export-ignore
 # Build output, dev tooling and the lock file (Composer never reads a dependency's lock).
 /build export-ignore

@@ -6,7 +6,7 @@ use Shahzad\AgenticGraph\Tracing\Otlp\OtlpPayloadBuilder;
 
 /**
  * Span attribute names in OTel namespaces, each verified against a pinned semconv release
- * (spec M-3, M-4; the table is in spec/tracing-wire-v1.md). Adding a name here means
+ * (spec M-3, M-4). Adding a name here means
  * verifying it first.
  */
 const VERIFIED_OTEL_ATTRIBUTES = [

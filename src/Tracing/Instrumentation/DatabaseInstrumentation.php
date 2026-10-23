@@ -89,7 +89,7 @@ class DatabaseInstrumentation
             'started_at' => TraceTime::format($startedAt),
             'ended_at' => TraceTime::format($endedAt),
             'duration_ms' => $durationMs,
-            // Wire v1 (spec/tracing-wire-v1.md): a Laravel connection name is not an OTel db.namespace, and the
+            // Wire v1: a Laravel connection name is not an OTel db.namespace, and the
             // read/write class is not an operation, so both use laravel.db.*.
             'attributes' => array_filter([
                 'laravel.db.connection' => $event->connectionName,
