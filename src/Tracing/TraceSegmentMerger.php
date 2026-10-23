@@ -93,7 +93,7 @@ final class TraceSegmentMerger
             $trace['active_ms'] = $this->unionMs($windows);
         }
         if (($trace['status'] ?? null) !== 'interrupted') {
-            unset($trace['interrupt_reason'], $trace['interrupted_at']);
+            unset($trace['interrupt_reason'], $trace['interrupted_at'], $trace['interrupt_expires_at']);
         }
 
         $spans = array_values($spans);

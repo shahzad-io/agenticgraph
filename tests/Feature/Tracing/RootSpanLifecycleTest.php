@@ -4,12 +4,16 @@ declare(strict_types=1);
 
 use Illuminate\Bus\Batch;
 use Illuminate\Bus\PendingBatch;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Shahzad\AgenticGraph\Contracts\RouterInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Contracts\StorageInterface;
 use Shahzad\AgenticGraph\Events\GraphExecutionFailed;
+use Shahzad\AgenticGraph\Events\InterruptExpired;
 use Shahzad\AgenticGraph\Events\TokensUsed;
 use Shahzad\AgenticGraph\Execution\ExecutionContext;
 use Shahzad\AgenticGraph\Execution\ExecutionContextManager;
@@ -17,6 +21,7 @@ use Shahzad\AgenticGraph\Execution\ExecutionCoordinator;
 use Shahzad\AgenticGraph\Execution\ExecutionRepository;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Execution\InterruptManager;
+use Shahzad\AgenticGraph\Execution\InterruptRecord;
 use Shahzad\AgenticGraph\Execution\ParallelExecutionCoordinator;
 use Shahzad\AgenticGraph\Graph\Graph;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
@@ -34,6 +39,7 @@ use Shahzad\AgenticGraph\Tracing\ExecutionClock;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 use Shahzad\AgenticGraph\Tracing\TraceSegmentMerger;
+use Shahzad\AgenticGraph\Tracing\TraceTime;
 
 class RootLifecycleExporter extends PulseExporter
 {
@@ -732,4 +738,117 @@ it('the interrupt segment ends at the same instant as the interrupted root span'
     $root = assertTraceTree($payload);
     expect($root['ended_at'])->toBe($payload['segment']['ended_at'])
         ->and($payload['trace']['interrupted_at'])->toBe($payload['segment']['ended_at']);
+});
+
+it('an interrupt carries its stored expires_at on the interrupt span and the interrupting segment', function () {
+    $exporter = rlExporter();
+    $graph = rlLinearGraph('rl-expiry', [['start', RlStart::class], ['approve', RlApproval::class], ['end', RlEnd::class]]);
+
+    app(GraphExecutor::class)->execute($graph, new State([]));
+
+    $payload = $exporter->sent[0];
+    $interrupt = InterruptRecord::query()->forExecution($payload['trace']['id'])->firstOrFail();
+    $expiresAt = TraceTime::format($interrupt->getAttribute('expires_at'));
+    $span = collect($payload['spans'])->firstWhere('span_type', 'interrupt');
+
+    expect($payload['trace']['interrupt_expires_at'])->toBe($expiresAt)
+        ->and($span['attributes']['interrupt.expires_at'])->toBe($expiresAt);
+});
+
+it('an interrupt without a stored expiry carries neither expiry key', function (string $key, mixed $value) {
+    config([$key => $value]);
+    $exporter = rlExporter();
+    $graph = rlLinearGraph('rl-no-expiry', [['start', RlStart::class], ['approve', RlApproval::class], ['end', RlEnd::class]]);
+
+    app(GraphExecutor::class)->execute($graph, new State([]));
+
+    $payload = $exporter->sent[0];
+    $span = collect($payload['spans'])->firstWhere('span_type', 'interrupt');
+    expect($payload['trace']['status'])->toBe('interrupted')
+        ->and($payload['trace'])->not->toHaveKey('interrupt_expires_at')
+        ->and($span['attributes'])->not->toHaveKey('interrupt.expires_at');
+})->with([
+    'expiry off' => ['agenticgraph.interrupts.default_expiry_days', 0],
+    'persistence off' => ['agenticgraph.interrupts.persistence_enabled', false],
+]);
+
+/**
+ * Interrupts a run, then expires it from a fresh process, as the scheduled command does.
+ *
+ * @return array{0: array<string, mixed>, 1: list<array<string, mixed>>} the interrupted root span and every sent segment
+ */
+function rlExpiredRun(string $name): array
+{
+    $exporter = rlExporter();
+    $graph = rlLinearGraph($name, [['start', RlStart::class], ['approve', RlApproval::class], ['end', RlEnd::class]]);
+    app(GraphExecutor::class)->execute($graph, new State([]));
+    $interruptedRoot = assertTraceTree($exporter->sent[0]);
+
+    rlNewProcess($exporter);
+    InterruptRecord::query()->forExecution($exporter->sent[0]['trace']['id'])->update(['expires_at' => now()->subMinute()]);
+    Artisan::call('agenticgraph:interrupt:expire');
+
+    expect($exporter->sent)->toHaveCount(2)
+        ->and($exporter->sent[1]['segment']['kind'])->toBe('continued')
+        ->and($exporter->sent[1]['segment']['final'])->toBeTrue()
+        ->and($exporter->sent[1]['trace']['status'])->toBe('failed');
+
+    return [$interruptedRoot, $exporter->sent];
+}
+
+it('interrupt:expire ends the interrupted root span, so the merged trace has one root', function () {
+    [$interruptedRoot, $sent] = rlExpiredRun('rl-expire-root');
+
+    $graphSpans = array_values(array_filter($sent[1]['spans'], fn (array $span): bool => $span['span_type'] === 'graph'));
+    $merged = (new TraceSegmentMerger)->merge($sent);
+
+    expect($graphSpans)->toHaveCount(1)
+        ->and($graphSpans[0]['id'])->toBe($interruptedRoot['id'])
+        ->and($graphSpans[0]['status'])->toBe('failed')
+        ->and(array_filter($merged['spans'], fn (array $span): bool => $span['parent_id'] === null))->toHaveCount(1);
+});
+
+it('interrupt:expire sends a final segment and graph span that end at or after they start', function () {
+    [, $sent] = rlExpiredRun('rl-expire-order');
+
+    $segment = $sent[1]['segment'];
+    $graphSpan = collect($sent[1]['spans'])->firstWhere('span_type', 'graph');
+
+    expect(rlMicros($segment['ended_at']))->toBeGreaterThanOrEqual(rlMicros($segment['started_at']))
+        ->and(rlMicros($graphSpan['ended_at']))->toBeGreaterThanOrEqual(rlMicros($graphSpan['started_at']))
+        ->and(rlMicros($sent[1]['trace']['ended_at']))->toBeGreaterThanOrEqual(rlMicros($segment['started_at']));
+});
+
+it('interrupt:expire sends the stored graph_name on the final segment', function () {
+    [, $sent] = rlExpiredRun('rl-expire-name');
+
+    expect($sent[1]['trace']['graph_name'] ?? null)->toBe('rl-expire-name')
+        ->and((new TraceSegmentMerger)->merge($sent)['trace']['graph_name'])->toBe('rl-expire-name');
+});
+
+it('interrupt:expire sends no final segment when the expiry rolls back, and exactly one on the next run', function () {
+    $exporter = rlExporter();
+    $graph = rlLinearGraph('rl-expire-rollback', [['start', RlStart::class], ['approve', RlApproval::class], ['end', RlEnd::class]]);
+    app(GraphExecutor::class)->execute($graph, new State([]));
+    $traceId = $exporter->sent[0]['trace']['id'];
+    $interrupt = InterruptRecord::query()->forExecution($traceId)->firstOrFail();
+    $interrupt->update(['expires_at' => now()->subMinute()]);
+
+    rlNewProcess($exporter);
+    Event::listen(InterruptExpired::class, fn () => throw new RuntimeException('listener failed'));
+    Artisan::call('agenticgraph:interrupt:expire');
+
+    expect($exporter->sent)->toHaveCount(1)
+        ->and($interrupt->refresh()->status())->toBe('pending')
+        ->and(DB::table('agenticgraph_executions')->where('id', $traceId)->value('status'))->toBe('interrupted');
+
+    rlNewProcess($exporter);
+    Event::forget(InterruptExpired::class);
+    Artisan::call('agenticgraph:interrupt:expire');
+
+    $finals = array_filter($exporter->sent, fn (array $payload): bool => $payload['segment']['final']);
+    expect($exporter->sent)->toHaveCount(2)
+        ->and($finals)->toHaveCount(1)
+        ->and($exporter->sent[1]['trace']['status'])->toBe('failed')
+        ->and($interrupt->refresh()->status())->toBe('expired');
 });

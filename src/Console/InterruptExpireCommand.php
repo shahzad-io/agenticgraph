@@ -5,16 +5,23 @@ declare(strict_types=1);
 namespace Shahzad\AgenticGraph\Console;
 
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Shahzad\AgenticGraph\Contracts\StorageInterface;
 use Shahzad\AgenticGraph\Events\InterruptExpired;
 use Shahzad\AgenticGraph\Exceptions\InterruptExpiredException;
 use Shahzad\AgenticGraph\Execution\ExecutionStore;
 use Shahzad\AgenticGraph\Execution\InterruptRecord;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
 use Shahzad\AgenticGraph\Jobs\EndsFailedExecution;
+use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
+use Shahzad\AgenticGraph\Tracing\Exporters\BufferedTraceExporter;
 
 /**
  * Moves pending interrupts past expires_at to expired. Each one's execution becomes failed and its stream ends with
  * graph_failed (reason interrupt_expired), then the terminal, through the same helpers as a failed resume job.
+ * Each interrupt is expired in its own transaction: one that fails stays pending for the next run, and its
+ * final trace segment is sent only after the commit.
  */
 class InterruptExpireCommand extends Command
 {
@@ -36,23 +43,38 @@ class InterruptExpireCommand extends Command
 
         $expired = 0;
         foreach ($due as $interrupt) {
-            // Conditional: a resume that marked it resolving first keeps it.
-            $claimed = InterruptRecord::query()
-                ->whereKey($interrupt->getKey())
-                ->where('status', 'pending')
-                ->update(['status' => 'expired', 'updated_at' => now()]);
-            if ($claimed !== 1) {
-                continue;
+            try {
+                $expired += DB::transaction(fn (): int => $this->expire($interrupt));
+            } catch (\Throwable $e) {
+                Log::error('AgenticGraph: interrupt expiry failed, left pending', [
+                    'interrupt_id' => $interrupt->interruptId(),
+                    'execution_id' => $interrupt->executionId(),
+                    'error_type' => $e::class,
+                    'message' => $e->getMessage(),
+                ]);
             }
-
-            $interrupt->refresh();
-            $this->endExpiredExecution($interrupt);
-            $expired++;
         }
 
         $this->info("Expired {$expired} interrupt(s).");
 
         return self::SUCCESS;
+    }
+
+    private function expire(InterruptRecord $interrupt): int
+    {
+        // Conditional: a resume that marked it resolving first keeps it.
+        $claimed = InterruptRecord::query()
+            ->whereKey($interrupt->getKey())
+            ->where('status', 'pending')
+            ->update(['status' => 'expired', 'updated_at' => now()]);
+        if ($claimed !== 1) {
+            return 0;
+        }
+
+        $interrupt->refresh();
+        $this->endExpiredExecution($interrupt);
+
+        return 1;
     }
 
     private function endExpiredExecution(InterruptRecord $interrupt): void
@@ -65,15 +87,29 @@ class InterruptExpireCommand extends Command
         $streamId = ($record !== null ? $record->streamId : null) ?? ($metadata['stream_id'] ?? null);
         $lastSeq = $metadata['stream_last_seq'] ?? null;
         $finalState = $record?->finalState;
+        $graphName = $record !== null ? $record->graphName : (string) $interrupt->graphName();
+
+        // Continue the interrupted trace as a resume does: its root span id, in a segment that names the graph.
+        $checkpoint = app(StorageInterface::class)->load((string) $interrupt->checkpointId());
+        $rootSpanId = $checkpoint?->metadata['trace_context']['root_span_id'] ?? null;
+        /** @var TracerExporter|null $exporter */
+        $exporter = app()->bound(TracerExporter::class) ? app(TracerExporter::class) : null;
+        if ($exporter?->isEnabled()) {
+            $exporter->resumeTrace($executionId, $graphName, 'continued');
+            if ($exporter instanceof BufferedTraceExporter) {
+                $exporter->sendAfterCommit($executionId);
+            }
+        }
 
         $this->endFailedExecution(
             new InterruptExpiredException($interrupt),
             $executionId,
-            $record !== null ? $record->graphName : (string) $interrupt->graphName(),
+            $graphName,
             is_array($finalState) ? $finalState : [],
             is_string($streamId) ? $streamId : null,
             is_string($delivery) ? StreamingMode::tryFrom($delivery) : null,
             $record?->executionOptions,
+            rootSpanId: is_string($rootSpanId) ? $rootSpanId : null,
             fallbackSeq: is_int($lastSeq) ? $lastSeq : null,
             reason: InterruptExpiredException::REASON,
         );

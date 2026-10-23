@@ -531,7 +531,7 @@ class TracingListener
             'attributes' => [
                 'interrupt.reason' => $event->reason,
                 'checkpoint.id' => $event->checkpointId,
-            ],
+            ] + ($event->expiresAt !== null ? ['interrupt.expires_at' => TraceTime::format($event->expiresAt)] : []),
             'state_snapshot' => array_keys($event->stateSnapshot), // Just keys for size
         ]);
     }

@@ -31,7 +31,7 @@ function tsmInterruptThenResume(): array
     return [
         tsmEnvelope(
             ['id' => 'seg_1', 'kind' => 'initial', 'started_at' => '2026-09-27T10:00:00.000000+00:00', 'ended_at' => '2026-09-27T10:00:02.000000+00:00'],
-            ['status' => 'interrupted', 'started_at' => '2026-09-27T10:00:00.000000+00:00', 'interrupt_reason' => 'approval', 'interrupted_at' => '2026-09-27T10:00:02.000000+00:00'],
+            ['status' => 'interrupted', 'started_at' => '2026-09-27T10:00:00.000000+00:00', 'interrupt_reason' => 'approval', 'interrupted_at' => '2026-09-27T10:00:02.000000+00:00', 'interrupt_expires_at' => '2026-10-04T10:00:02.000000+00:00'],
             [
                 $root + ['status' => 'interrupted', 'started_at' => '2026-09-27T10:00:00.000000+00:00', 'ended_at' => '2026-09-27T10:00:02.000000+00:00', 'duration_ms' => 2000.0],
                 ['id' => 'span_a', 'trace_id' => 'tr_m', 'parent_id' => 'span_root', 'span_type' => 'node'],
@@ -57,6 +57,7 @@ it('merges a root interrupted in segment 1 and completed in the final segment as
     expect($merged['trace']['status'])->toBe('completed')
         ->and($merged['trace'])->not->toHaveKey('interrupt_reason')
         ->and($merged['trace'])->not->toHaveKey('interrupted_at')
+        ->and($merged['trace'])->not->toHaveKey('interrupt_expires_at')
         ->and($merged['trace']['started_at'])->toBe('2026-09-27T10:00:00.000000+00:00')
         ->and($merged['trace']['ended_at'])->toBe('2026-09-27T10:10:03.000000+00:00')
         ->and($merged['trace']['duration_ms'])->toBe(603000.0)
@@ -158,5 +159,6 @@ it('keeps the interrupt marker on a still-interrupted trace too', function () {
     $merged = (new TraceSegmentMerger)->merge([tsmInterruptThenResume()[0]]);
 
     expect($merged['trace']['status'])->toBe('interrupted')
+        ->and($merged['trace']['interrupt_expires_at'])->toBe('2026-10-04T10:00:02.000000+00:00')
         ->and($merged['segments'][0]['interrupt']['reason'])->toBe('approval');
 });

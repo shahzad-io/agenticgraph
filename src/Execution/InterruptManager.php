@@ -118,22 +118,6 @@ final class InterruptManager implements InterruptServiceInterface
 
         $this->repo->interrupted($executionId);
 
-        // One instant for the root span end, the interrupt span, and the segment end.
-        $interruptedAt = TraceTime::now();
-
-        $this->events->dispatch(new NodeInterrupted(
-            executionId: $executionId,
-            nodeName: $nodeName,
-            reason: $reason,
-            checkpointId: $checkpointId,
-            stateSnapshot: $state->toArray(),
-            interruptedAt: $interruptedAt,
-            interruptPayload: $interruptPayload,
-            parentSpanId: $traceContext?->getSpanId(),
-            graphName: $graph->name,
-            rootSpanId: $traceContext?->getRootSpanId(),
-        ));
-
         $metadata = $state->getMetadata();
         if ($session) {
             $metadata['stream_delivery'] = $session->options->delivery;
@@ -159,24 +143,6 @@ final class InterruptManager implements InterruptServiceInterface
             if ($handler) {
                 $interruptRecord = $handler->handle($interruptRecord);
             }
-
-            if ($this->interruptBroadcastEnabled) {
-                $interruptId = $interruptRecord->interruptId();
-                if ($interruptId === null) {
-                    throw new \RuntimeException('Interrupt id is missing.');
-                }
-                $this->events->dispatch(new InterruptPending(
-                    interruptId: $interruptId,
-                    executionId: $executionId,
-                    graphName: $graph->name,
-                    nodeName: $nodeName,
-                    reason: $reason,
-                    checkpointId: $checkpointId,
-                    payload: $interruptPayload,
-                    metadata: $metadata,
-                    occurredAt: new \DateTimeImmutable
-                ));
-            }
         } else {
             $interruptRecord = new InterruptRecord([
                 'execution_id' => $executionId,
@@ -198,6 +164,45 @@ final class InterruptManager implements InterruptServiceInterface
                     'node' => $nodeName,
                 ]
             );
+        }
+
+        // After the record: the trace carries its stored expires_at (null when not persisted).
+        $expiresAt = $interruptRecord->getAttribute('expires_at');
+        $expiresAt = $expiresAt instanceof \DateTimeInterface ? \DateTimeImmutable::createFromInterface($expiresAt) : null;
+
+        // One instant for the root span end, the interrupt span, and the segment end.
+        $interruptedAt = TraceTime::now();
+
+        $this->events->dispatch(new NodeInterrupted(
+            executionId: $executionId,
+            nodeName: $nodeName,
+            reason: $reason,
+            checkpointId: $checkpointId,
+            stateSnapshot: $state->toArray(),
+            interruptedAt: $interruptedAt,
+            interruptPayload: $interruptPayload,
+            parentSpanId: $traceContext?->getSpanId(),
+            graphName: $graph->name,
+            rootSpanId: $traceContext?->getRootSpanId(),
+            expiresAt: $expiresAt,
+        ));
+
+        if ($this->interruptPersistenceEnabled && $this->interruptBroadcastEnabled) {
+            $interruptId = $interruptRecord->interruptId();
+            if ($interruptId === null) {
+                throw new \RuntimeException('Interrupt id is missing.');
+            }
+            $this->events->dispatch(new InterruptPending(
+                interruptId: $interruptId,
+                executionId: $executionId,
+                graphName: $graph->name,
+                nodeName: $nodeName,
+                reason: $reason,
+                checkpointId: $checkpointId,
+                payload: $interruptPayload,
+                metadata: $metadata,
+                occurredAt: new \DateTimeImmutable
+            ));
         }
 
         $sink = $streamContext?->sink();
@@ -243,7 +248,7 @@ final class InterruptManager implements InterruptServiceInterface
         }
 
         if (($tracerExporter = $this->tracerExporter()) && $tracerExporter->isEnabled()) {
-            $tracerExporter->interruptTrace($executionId, $reason, $interruptedAt);
+            $tracerExporter->interruptTrace($executionId, $reason, $interruptedAt, $expiresAt);
         }
 
         if ($this->loggingEnabled) {

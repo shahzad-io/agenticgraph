@@ -75,10 +75,10 @@ class TeeTraceExporter implements TracerExporter
         $this->b->failTrace($traceId, $exception, $durationMs, $finalStateData, $at);
     }
 
-    public function interruptTrace(string $traceId, string $reason, ?DateTimeInterface $at = null): void
+    public function interruptTrace(string $traceId, string $reason, ?DateTimeInterface $at = null, ?DateTimeInterface $expiresAt = null): void
     {
-        $this->a->interruptTrace($traceId, $reason, $at);
-        $this->b->interruptTrace($traceId, $reason, $at);
+        $this->a->interruptTrace($traceId, $reason, $at, $expiresAt);
+        $this->b->interruptTrace($traceId, $reason, $at, $expiresAt);
     }
 
     public function resumeTrace(string $traceId, ?string $graphName = null, string $kind = 'resumed', ?DateTimeInterface $at = null): void

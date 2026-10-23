@@ -96,7 +96,7 @@ final class CapturingToolTracerExporter implements TracerExporter
         ?DateTimeInterface $at = null
     ): void {}
 
-    public function interruptTrace(string $traceId, string $reason, ?DateTimeInterface $at = null): void {}
+    public function interruptTrace(string $traceId, string $reason, ?DateTimeInterface $at = null, ?DateTimeInterface $expiresAt = null): void {}
 
     public function resumeTrace(string $traceId, ?string $graphName = null, string $kind = 'resumed', ?DateTimeInterface $at = null): void {}
 

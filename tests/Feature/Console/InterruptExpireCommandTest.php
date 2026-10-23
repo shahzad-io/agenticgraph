@@ -5,12 +5,14 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\GraphExecutionFailed;
 use Shahzad\AgenticGraph\Events\InterruptExpired;
 use Shahzad\AgenticGraph\Exceptions\InterruptExpiredException;
 use Shahzad\AgenticGraph\Execution\ExecutionMode;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
+use Shahzad\AgenticGraph\Execution\ExecutionRepository;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Execution\InterruptRecord;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
@@ -241,4 +243,66 @@ it('does not let a resume claim an interrupt the expire command claimed first', 
 
     expect($interrupt->markResolving())->toBeFalse()
         ->and($interrupt->refresh()->status())->toBe('expired');
+});
+
+it('expires every due interrupt when the broadcast fails, and logs the failure', function () {
+    $first = expiryInterruptedAsyncRun('expiry-broadcast-down-1');
+    $second = expiryInterruptedAsyncRun('expiry-broadcast-down-2');
+    $first['interrupt']->update(['expires_at' => now()->subMinute()]);
+    $second['interrupt']->update(['expires_at' => now()->subMinute()]);
+    app()->instance(Broadcaster::class, new class extends ExpiryBroadcaster
+    {
+        public function broadcast(array $channels, $event, array $payload = [])
+        {
+            throw new RuntimeException('Reverb down');
+        }
+    });
+    Log::spy();
+
+    $this->artisan('agenticgraph:interrupt:expire')->expectsOutput('Expired 2 interrupt(s).')->assertSuccessful();
+
+    foreach ([$first, $second] as $run) {
+        expect($run['interrupt']->refresh()->status())->toBe('expired')
+            ->and(expiryStatus($run['execution_id']))->toBe('failed')
+            ->and(array_map(fn (StreamEvent $event) => $event->type(), expiryEventsAfter($run['stream_id'], $run['interrupted_seq'])))
+            ->toBe(['graph_failed', 'execution_terminal']);
+    }
+    Event::assertDispatchedTimes(GraphExecutionFailed::class, 2);
+    Event::assertDispatchedTimes(InterruptExpired::class, 2);
+    Log::shouldHaveReceived('warning')->with(Mockery::any(), Mockery::on(fn (array $context) => ($context['message'] ?? null) === 'Reverb down'))->twice();
+});
+
+it('expires each interrupt completely or not at all, independently of the others', function () {
+    $broken = expiryInterruptedAsyncRun('expiry-atomic-broken');
+    $healthy = expiryInterruptedAsyncRun('expiry-atomic-healthy');
+    $broken['interrupt']->update(['expires_at' => now()->subMinute()]);
+    $healthy['interrupt']->update(['expires_at' => now()->subMinute()]);
+    // Fails after the execution row is written, so a partial expiry would leave it failed.
+    app()->instance(ExecutionRepository::class, new class($broken['execution_id']) extends ExecutionRepository
+    {
+        public function __construct(private readonly string $brokenId)
+        {
+            parent::__construct();
+        }
+
+        public function failed(string $id, string $error): bool
+        {
+            $changed = parent::failed($id, $error);
+            if ($id === $this->brokenId) {
+                throw new RuntimeException('database went away');
+            }
+
+            return $changed;
+        }
+    });
+
+    $this->artisan('agenticgraph:interrupt:expire')->expectsOutput('Expired 1 interrupt(s).')->assertSuccessful();
+
+    expect($broken['interrupt']->refresh()->status())->toBe('pending')
+        ->and(expiryStatus($broken['execution_id']))->toBe('interrupted')
+        ->and(expiryEventsAfter($broken['stream_id'], $broken['interrupted_seq']))->toBe([])
+        ->and($healthy['interrupt']->refresh()->status())->toBe('expired')
+        ->and(expiryStatus($healthy['execution_id']))->toBe('failed');
+    Event::assertDispatchedTimes(InterruptExpired::class, 1);
+    Event::assertDispatched(InterruptExpired::class, fn (InterruptExpired $event) => $event->executionId === $healthy['execution_id']);
 });

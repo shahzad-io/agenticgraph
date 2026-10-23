@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph\Jobs;
 
+use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Events\GraphExecutionFailed;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
 use Shahzad\AgenticGraph\Execution\ExecutionRepository;
@@ -107,9 +108,20 @@ trait EndsFailedExecution
             $error,
         )->toStreamEvent());
 
+        // The terminal is stored; the live close is best effort, so a broadcaster that is down
+        // (for example Reverb) does not stop the failure from being recorded.
         if ($streaming === StreamingMode::BROADCAST) {
-            app(BroadcastSink::class, ['streamId' => $streamId])
-                ->close(StreamStatus::ERROR, $error + ['final_state' => $stateData]);
+            try {
+                app(BroadcastSink::class, ['streamId' => $streamId])
+                    ->close(StreamStatus::ERROR, $error + ['final_state' => $stateData]);
+            } catch (\Throwable $broadcastError) {
+                Log::warning('AgenticGraph: stream close broadcast failed', [
+                    'execution_id' => $executionId,
+                    'stream_id' => $streamId,
+                    'error_type' => $broadcastError::class,
+                    'message' => $broadcastError->getMessage(),
+                ]);
+            }
         }
     }
 }

@@ -16,7 +16,7 @@ return [
     ],
     'trace' => [
         'always' => ['id', 'status', 'sampled', 'resource', 'instrumentation_scope'],
-        'optional' => ['graph_name', 'started_at', 'initial_state_keys', 'initial_state', 'interrupt_reason', 'interrupted_at', 'resumed_at', 'ended_at', 'duration_ms', 'active_ms', 'final_state_keys', 'final_state', 'error'],
+        'optional' => ['graph_name', 'started_at', 'initial_state_keys', 'initial_state', 'interrupt_reason', 'interrupted_at', 'interrupt_expires_at', 'resumed_at', 'ended_at', 'duration_ms', 'active_ms', 'final_state_keys', 'final_state', 'error'],
         'status' => ['running', 'interrupted', 'completed', 'failed'],
         'resource' => ['service.name', 'service.version', 'deployment.environment.name'],
     ],
@@ -77,7 +77,7 @@ return [
         'interrupt' => [
             'node_type' => 'interrupt',
             'top' => ['state_snapshot'],
-            'attributes' => ['interrupt.reason', 'checkpoint.id'],
+            'attributes' => ['interrupt.reason', 'checkpoint.id', 'interrupt.expires_at'],
         ],
         'resume' => [
             'node_type' => 'resume',

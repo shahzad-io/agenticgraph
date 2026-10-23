@@ -26,5 +26,6 @@ class NodeInterrupted implements ShouldQueue
         public readonly ?string $parentSpanId = null,
         public readonly ?string $graphName = null,
         public readonly ?string $rootSpanId = null,
+        public readonly ?\DateTimeImmutable $expiresAt = null,
     ) {}
 }

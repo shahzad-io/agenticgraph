@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Shahzad\AgenticGraph\Tracing\Exporters;
 
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Tracing\CaptureDepth;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
@@ -23,7 +24,7 @@ abstract class BufferedTraceExporter implements TracerExporter
     /**
      * Open segments by trace id.
      *
-     * @var array<string, array{trace: array<string, mixed>, segment: array<string, mixed>, start: \DateTimeImmutable, spans: list<array<string, mixed>>, llm_calls: list<array<string, mixed>>, implicit?: bool}>
+     * @var array<string, array{trace: array<string, mixed>, segment: array<string, mixed>, start: \DateTimeImmutable, spans: list<array<string, mixed>>, llm_calls: list<array<string, mixed>>, implicit?: bool, after_commit?: bool}>
      */
     private array $open = [];
 
@@ -202,7 +203,7 @@ abstract class BufferedTraceExporter implements TracerExporter
     /**
      * Interrupt a trace (paused for human input). Sends the segment; the resume opens a new one.
      */
-    public function interruptTrace(string $traceId, string $reason, ?\DateTimeInterface $at = null): void
+    public function interruptTrace(string $traceId, string $reason, ?\DateTimeInterface $at = null, ?\DateTimeInterface $expiresAt = null): void
     {
         if (! $this->isEnabled() || ! isset($this->open[$traceId])) {
             return;
@@ -211,6 +212,9 @@ abstract class BufferedTraceExporter implements TracerExporter
         $interruptedAt = $this->endSegment($traceId, 'interrupted', $at, 0.0, final: false);
         $this->open[$traceId]['trace']['interrupt_reason'] = $reason;
         $this->open[$traceId]['trace']['interrupted_at'] = TraceTime::format($interruptedAt);
+        if ($expiresAt !== null) {
+            $this->open[$traceId]['trace']['interrupt_expires_at'] = TraceTime::format($expiresAt);
+        }
 
         $this->isSampled($traceId) ? $this->sendSegment($traceId) : $this->forget($traceId);
     }
@@ -233,6 +237,17 @@ abstract class BufferedTraceExporter implements TracerExporter
 
         if ($kind === 'resumed') {
             $this->open[$traceId]['trace']['resumed_at'] = $this->open[$traceId]['segment']['started_at'];
+        }
+    }
+
+    /**
+     * Send the open segment of this trace only once the current database transaction commits;
+     * a rollback drops it. Without an open transaction it is sent at once.
+     */
+    public function sendAfterCommit(string $traceId): void
+    {
+        if (isset($this->open[$traceId])) {
+            $this->open[$traceId]['after_commit'] = true;
         }
     }
 
@@ -366,6 +381,12 @@ abstract class BufferedTraceExporter implements TracerExporter
         $payload = $this->whileCapturing(
             fn (): array => $this->buildPayload($open['trace'], $open['segment'], $open['spans'], $open['llm_calls'])
         );
+
+        if ($open['after_commit'] ?? false) {
+            DB::afterCommit(fn () => $this->whileCapturing(fn () => $this->send($payload)));
+
+            return;
+        }
 
         if (app()->bound('request') && ! app()->runningInConsole()) {
             // In HTTP context, send after the response to avoid blocking
