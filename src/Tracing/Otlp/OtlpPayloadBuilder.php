@@ -165,7 +165,13 @@ final class OtlpPayloadBuilder
         }
 
         if (isset($span['error']) && is_array($span['error'])) {
-            $payload = [...$payload, ...$this->prefixKeys($span['error'], 'exception')];
+            // error.stage is ours, not an OTel exception attribute.
+            $error = $span['error'];
+            if (isset($error['stage'])) {
+                $payload['agenticgraph.error.stage'] = $error['stage'];
+                unset($error['stage']);
+            }
+            $payload = [...$payload, ...$this->prefixKeys($error, 'exception')];
         }
 
         $spanType = $span['span_type'] ?? null;

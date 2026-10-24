@@ -87,7 +87,7 @@ class RaStreamThenThrowNode extends AbstractNode
 
 /**
  * Node middleware for the flaky node only: throws before $next, throws after $next returns,
- * or catches and rethrows the node's own exception.
+ * catches and rethrows the node's own exception, or replaces it with its own.
  */
 class RaGuardMiddleware
 {
@@ -105,7 +105,7 @@ class RaGuardMiddleware
         try {
             $result = $next($state);
         } catch (Throwable $e) {
-            throw $e;
+            throw self::$mode === 'replace' ? new RuntimeException('middleware replaced the failure', 0, $e) : $e;
         }
         if (self::$mode === 'after') {
             throw new RuntimeException('middleware rejected the result');
@@ -463,6 +463,7 @@ it('middleware failing before $next still emits one failed attempt span', functi
         ->and($attempts[0]['attempt'])->toBe(1)
         ->and($attempts[0]['attempt_of'])->toBe($attempts[0]['id'])
         ->and($attempts[0]['error']['message'] ?? null)->toBe('middleware rejected before next')
+        ->and($attempts[0]['error']['stage'] ?? null)->toBe('middleware_before')
         ->and($attempts[0]['node_type'])->toBe(RaFlakyNode::class)
         ->and($attempts[0]['parent_id'])->toBe($rootId);
 })->with(['sync', 'fan-out', 'queue', 'streaming']);
@@ -481,6 +482,7 @@ it('middleware failing after $next marks the successful attempt failed', functio
         ->and(array_column($attempts, 'attempt'))->toBe([1, 2])
         ->and(array_column($attempts, 'status'))->toBe(['failed', 'failed'])
         ->and($attempts[1]['error']['message'] ?? null)->toBe('middleware rejected the result')
+        ->and(array_map(fn (array $a): ?string => $a['error']['stage'] ?? null, $attempts))->toBe(['node', 'middleware_after'])
         ->and($attempts[1]['attempt_of'])->toBe($attempts[0]['id'])
         ->and($attempts[1]['parent_id'])->toBe($rootId);
 })->with(['sync', 'fan-out', 'queue', 'streaming']);
@@ -493,6 +495,32 @@ it('guard: a middleware that rethrows the node exception adds no duplicate spans
 
     [$spans, $rootId] = raRunPath($exporter, $path);
 
-    raAssertFourFailedAttempts(raAttempts($spans), $rootId);
-    expect(array_filter($spans, fn (array $s): bool => $s['span_type'] === 'node' && $s['node_name'] === 'flaky'))->toHaveCount(4);
+    $attempts = raAttempts($spans);
+    raAssertFourFailedAttempts($attempts, $rootId);
+    expect(array_filter($spans, fn (array $s): bool => $s['span_type'] === 'node' && $s['node_name'] === 'flaky'))->toHaveCount(4)
+        ->and(array_unique(array_map(fn (array $a): ?string => $a['error']['stage'] ?? null, $attempts)))->toBe(['node']);
+})->with(['sync', 'fan-out', 'queue', 'streaming']);
+
+it('a middleware that replaces the node exception adds no span; the run fails with its exception', function (string $path) {
+    $exporter = raExporter();
+    config(['agenticgraph.middleware.global' => [RaGuardMiddleware::class]]);
+    RaGuardMiddleware::$mode = 'replace';
+    RaFlakyNode::$failures = 99;
+
+    [$spans, $rootId] = raRunPath($exporter, $path);
+    $attempts = raAttempts($spans);
+
+    raAssertFourFailedAttempts($attempts, $rootId);
+    // The last attempt's span is the node's failure, not overwritten by the middleware's exception.
+    expect($attempts[3]['error']['message'])->toBe('flaky attempt 4')
+        ->and(array_filter($spans, fn (array $s): bool => $s['span_type'] === 'node' && $s['node_name'] === 'flaky'))->toHaveCount(4)
+        ->and(array_unique(array_map(fn (array $a): ?string => $a['error']['stage'] ?? null, $attempts)))->toBe(['node']);
+
+    // The queue job runs one node and does not end the run; the other paths end it with the middleware's exception.
+    if ($path !== 'queue') {
+        $graph = array_values(array_filter($spans, fn (array $s): bool => $s['id'] === $rootId))[0];
+        expect($graph['error']['message'])->toBe('middleware replaced the failure')
+            ->and($graph['error'])->not->toHaveKey('stage')
+            ->and($exporter->sent[0]['trace']['error']['message'])->toBe('middleware replaced the failure');
+    }
 })->with(['sync', 'fan-out', 'queue', 'streaming']);

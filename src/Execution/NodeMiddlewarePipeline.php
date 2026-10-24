@@ -52,6 +52,7 @@ final class NodeMiddlewarePipeline
         $this->lastAttempt = null;
         $pipelineStart = microtime(true);
         $reported = null;
+        $entered = false;
         $stack = [];
         foreach ($this->resolveMiddleware() as $middleware) {
             $stack[] = is_string($middleware) ? $this->container->make($middleware) : $middleware;
@@ -64,7 +65,9 @@ final class NodeMiddlewarePipeline
                     return $middleware->handle($state, $node, $next);
                 };
             },
-            function (StateContract $state) use ($node, $executionId, $nodeName, $spanId, &$reported) {
+            function (StateContract $state) use ($node, $executionId, $nodeName, $spanId, &$reported, &$entered) {
+                $entered = true;
+                $reported = null;
                 $attempt = 0;
                 $max = $node->getRetryAttempts();
                 $delay = $node->getRetryDelay();
@@ -119,6 +122,7 @@ final class NodeMiddlewarePipeline
                             $traceContext instanceof TraceContext ? $traceContext->getRootSpanId() : null,
                             $node::class,
                             $spanId,
+                            'node',
                         ));
                         $node->onError($e, $state);
 
@@ -138,8 +142,10 @@ final class NodeMiddlewarePipeline
             return $pipeline($state);
         } catch (\Throwable $e) {
             // A middleware failed outside the retry loop (before $next, or after it returned):
-            // record it as a failed attempt so the node still has a span.
-            if ($e !== $reported) {
+            // record it as a failed attempt so the node still has a span. When the node's own
+            // failure was already reported, its span stands; a middleware that rethrows or
+            // replaces that exception only changes what the run fails with.
+            if ($reported === null) {
                 $attempt = $this->lastAttempt ?? ['spanId' => $spanId, 'attempt' => 1, 'attemptOf' => $spanId, 'startedAt' => $pipelineStart];
                 $traceContext = $this->resolveTraceContext();
 
@@ -156,6 +162,7 @@ final class NodeMiddlewarePipeline
                     $traceContext instanceof TraceContext ? $traceContext->getRootSpanId() : null,
                     $node::class,
                     $attempt['attemptOf'],
+                    $entered ? 'middleware_after' : 'middleware_before',
                 ));
             }
 

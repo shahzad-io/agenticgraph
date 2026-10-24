@@ -507,6 +507,23 @@ it('maps a class-only error to exception.type and the span status message to the
         ->and($span['status'])->toBe(['code' => 2, 'message' => 'RuntimeException']);
 });
 
+it('maps a node error stage to agenticgraph.error.stage, not an exception attribute', function (): void {
+    $attrs = otlpAttrs([
+        'node_name' => 'guarded',
+        'span_type' => 'node',
+        'status' => 'failed',
+        'status_code' => 'ERROR',
+        'error' => ['type' => 'RuntimeException', 'message' => 'rejected', 'stage' => 'middleware_before'],
+    ]);
+
+    expect($attrs)->toMatchArray([
+        'exception.type' => 'RuntimeException',
+        'exception.message' => 'rejected',
+        'agenticgraph.error.stage' => 'middleware_before',
+    ])
+        ->and($attrs)->not->toHaveKey('exception.stage');
+});
+
 it('maps a failed llm span to an error status with the exception and no usage attributes', function (): void {
     $payload = (new OtlpPayloadBuilder)->build(
         trace: ['id' => 'exec_llm_err', 'graph_name' => 'g', 'status' => 'completed'],

@@ -18,6 +18,7 @@ use Illuminate\Support\Facades\Http;
 use Prism\Prism\Exceptions\PrismException;
 use Prism\Prism\Tool;
 use Shahzad\AgenticGraph\AgenticGraphServiceProvider;
+use Shahzad\AgenticGraph\Contracts\NodeInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\LlmCallFailed;
 use Shahzad\AgenticGraph\Events\TokensUsed;
@@ -133,6 +134,35 @@ class FzBoomNode extends PrismNode
     }
 }
 
+class FzGuardedNode extends PrismNode
+{
+    public function execute(StateContract $state): StateContract
+    {
+        return $state->set('guarded', true);
+    }
+}
+
+/**
+ * Fails the guarded node in middleware, before or after $next, for the error.stage values.
+ */
+class FzStageMiddleware
+{
+    public static string $mode = 'before';
+
+    public function handle(StateContract $state, NodeInterface $node, Closure $next): StateContract
+    {
+        if (! $node instanceof FzGuardedNode) {
+            return $next($state);
+        }
+        if (self::$mode === 'before') {
+            throw new RuntimeException('rejected before next');
+        }
+        $next($state);
+
+        throw new RuntimeException('rejected after next');
+    }
+}
+
 class FzRouter extends AbstractRouter
 {
     public function route(StateContract $state): string
@@ -178,7 +208,8 @@ function fzForgetRun(): void
  * Run A: summary capture depths, interrupt then resume in a fresh process, route, custom,
  * vector, tool, http (200, 500, connection failure), db, streamed and cached llm calls, then a
  * job queued by the work node that finishes after the run (a continued segment with a linked span).
- * Run B: full capture depths and a failing node. Plus the builder's two size-limit envelopes.
+ * Run B: full capture depths and a failing node. Runs C and D: a node failed by middleware before
+ * and after $next. Plus the builder's two size-limit envelopes.
  *
  * @return list<array<string, mixed>>
  */
@@ -243,6 +274,14 @@ function fzEnvelopes(): array
     fzForgetRun();
     $failing = GraphBuilder::create('fz-run-b')->addNode('boom', FzBoomNode::class)->setEntryPoint('boom')->addExitPoint('boom')->build();
     fzSwallow(fn () => app(GraphExecutor::class)->execute($failing, new State(['q' => 'y'])));
+
+    config(['agenticgraph.middleware.global' => [FzStageMiddleware::class]]);
+    foreach (['c' => 'before', 'd' => 'after'] as $run => $mode) {
+        FzStageMiddleware::$mode = $mode;
+        fzForgetRun();
+        $guarded = GraphBuilder::create("fz-run-{$run}")->addNode('guarded', FzGuardedNode::class)->setEntryPoint('guarded')->addExitPoint('guarded')->build();
+        fzSwallow(fn () => app(GraphExecutor::class)->execute($guarded, new State(['q' => 'z'])));
+    }
 
     $files = glob(fzDir().'/*/*.json') ?: [];
     sort($files);
@@ -375,6 +414,12 @@ test('contract freeze guard: every emitted key and value is in the registry, and
             if ($type === 'route') {
                 fzSubset([$span['attributes']['route.kind']], $registry['route_kind'], 'route.kind', $problems);
             }
+            if ($type === 'node' && isset($span['error'])) {
+                $see('error_stage', [$span['error']['stage'] ?? '(missing)']);
+                fzSubset([$span['error']['stage'] ?? '(missing)'], $registry['error_stage'], 'node.error.stage', $problems);
+            } elseif (isset($span['error']['stage'])) {
+                $problems[] = "{$type} span carries error.stage";
+            }
         }
 
         foreach ($envelope['llm_calls'] as $call) {
@@ -391,6 +436,7 @@ test('contract freeze guard: every emitted key and value is in the registry, and
         'trace' => [...$registry['trace']['always'], ...$registry['trace']['optional']],
         '_meta' => array_unique([...$registry['_meta']['truncated'], ...$registry['_meta']['payload_too_large']]),
         'span_types' => array_keys($registry['span_types']),
+        'error_stage' => $registry['error_stage'],
         'span.optional' => $registry['span']['optional'],
         'llm_calls' => [...$registry['llm_calls']['always'], ...$registry['llm_calls']['optional']],
     ];

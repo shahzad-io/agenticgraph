@@ -285,7 +285,10 @@ class TracingListener
             'started_at' => TraceTime::format($resolvedStartedAt),
             'ended_at' => TraceTime::format($resolvedEndedAt),
             'duration_ms' => $event->durationMs,
-            'error' => CaptureDepth::error(get_class($event->exception), $event->exception->getMessage()),
+            'error' => [
+                ...CaptureDepth::error(get_class($event->exception), $event->exception->getMessage()),
+                ...($event->stage !== null ? ['stage' => $event->stage] : []),
+            ],
         ]);
     }
 

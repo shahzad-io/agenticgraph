@@ -29,5 +29,7 @@ class NodeExecutionFailed implements ShouldQueue
         public readonly ?string $nodeType = null,
         // Span id of attempt 1 of this step; shared by every attempt.
         public readonly ?string $attemptOf = null,
+        // Where it failed: middleware_before, node or middleware_after.
+        public readonly ?string $stage = null,
     ) {}
 }

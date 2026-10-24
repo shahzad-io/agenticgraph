@@ -91,6 +91,7 @@ return [
         ],
     ],
     'route_kind' => ['llm', 'deterministic', 'fan_out', 'join'],
+    'error_stage' => ['middleware_before', 'node', 'middleware_after'],
     'llm_calls' => [
         'always' => ['id', 'trace_id', 'span_id', 'node', 'call_type', 'model', 'prompt_tokens', 'completion_tokens', 'total_tokens', 'duration_ms', 'created_at', 'cost_usd', 'streamed'],
         'optional' => ['prompt', 'response', 'cached', 'cache_key', 'thought_tokens', 'cache_read_tokens', 'cache_write_tokens', 'prompt_name', 'prompt_version', 'prompt_hash'],

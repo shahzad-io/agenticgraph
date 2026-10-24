@@ -194,7 +194,7 @@ it('capture.errors=class sends the exception class and never its message', funct
     $error = ['type' => RuntimeException::class];
 
     expect($payload['trace']['error'])->toBe($error)
-        ->and(scNodeSpan($payload, 'boom')['error'])->toBe($error)
+        ->and(scNodeSpan($payload, 'boom')['error'])->toBe([...$error, 'stage' => 'node'])
         ->and(scNodeSpan($payload, 'sc-fail')['error'])->toBe($error)
         ->and(scNodeSpan($payload, 'sc.custom')['error'])->toBe($error)
         ->and(json_encode($payload))->not->toContain('secret failure');
