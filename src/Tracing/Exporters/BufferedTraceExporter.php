@@ -24,7 +24,7 @@ abstract class BufferedTraceExporter implements TracerExporter
     /**
      * Open segments by trace id.
      *
-     * @var array<string, array{trace: array<string, mixed>, segment: array<string, mixed>, start: \DateTimeImmutable, spans: list<array<string, mixed>>, llm_calls: list<array<string, mixed>>, implicit?: bool, after_commit?: bool}>
+     * @var array<string, array{trace: array<string, mixed>, segment: array<string, mixed>, start: \DateTimeImmutable, spans: list<array<string, mixed>>, llm_calls: list<array<string, mixed>>, implicit?: bool, after_commit?: bool, annotations?: array<string, mixed>}>
      */
     private array $open = [];
 
@@ -241,6 +241,18 @@ abstract class BufferedTraceExporter implements TracerExporter
     }
 
     /**
+     * Set the trace-level annotations of the open segment; sent as the last key of its trace record.
+     *
+     * @param  array<string, mixed>  $annotations
+     */
+    public function annotateTrace(string $traceId, array $annotations): void
+    {
+        if (isset($this->open[$traceId])) {
+            $this->open[$traceId]['annotations'] = $annotations;
+        }
+    }
+
+    /**
      * Send the open segment of this trace only once the current database transaction commits;
      * a rollback drops it. Without an open transaction it is sent at once.
      */
@@ -379,7 +391,12 @@ abstract class BufferedTraceExporter implements TracerExporter
         $open['segment']['ended_at'] ??= TraceTime::format(TraceTime::now());
 
         $payload = $this->whileCapturing(
-            fn (): array => $this->buildPayload($open['trace'], $open['segment'], $open['spans'], $open['llm_calls'])
+            fn (): array => $this->buildPayload(
+                $open['trace'] + (isset($open['annotations']) ? ['annotations' => $open['annotations']] : []),
+                $open['segment'],
+                $open['spans'],
+                $open['llm_calls'],
+            )
         );
 
         if ($open['after_commit'] ?? false) {

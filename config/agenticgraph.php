@@ -259,6 +259,13 @@ return [
             'max_length' => env('AGENTICGRAPH_CAPTURE_MAX_LENGTH', 2000),
             // 'message' = exception class and message (default), 'class' = exception class only
             'errors' => env('AGENTICGRAPH_CAPTURE_ERRORS', 'message'),
+            // Annotations your developers declare (#[Annotate], label(), outcome(), expectations(), humanInput).
+            // 'all' = everything declared, including state values named in placeholders, outcome fields and
+            //         human input keys, also in keys mode (default)
+            // 'static' = labels, descriptions and headlines without placeholders, the graph label, expectations
+            // 'none' = no annotations anywhere (also not in OTLP); no declared value leaves the app
+            // Any other value is treated as 'none' (fail closed) and logs one warning naming it
+            'annotations' => env('AGENTICGRAPH_CAPTURE_ANNOTATIONS', 'all'),
 
             // Broad HTTP/DB auto-capture (default off). Tool-internal HTTP/DB still nests
             // under tool spans via the tool wrap without enabling these flags.

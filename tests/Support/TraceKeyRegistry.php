@@ -16,7 +16,7 @@ return [
     ],
     'trace' => [
         'always' => ['id', 'status', 'sampled', 'resource', 'instrumentation_scope'],
-        'optional' => ['graph_name', 'started_at', 'initial_state_keys', 'initial_state', 'interrupt_reason', 'interrupted_at', 'interrupt_expires_at', 'resumed_at', 'ended_at', 'duration_ms', 'active_ms', 'final_state_keys', 'final_state', 'error'],
+        'optional' => ['graph_name', 'started_at', 'initial_state_keys', 'initial_state', 'interrupt_reason', 'interrupted_at', 'interrupt_expires_at', 'resumed_at', 'ended_at', 'duration_ms', 'active_ms', 'final_state_keys', 'final_state', 'error', 'annotations'],
         'status' => ['running', 'interrupted', 'completed', 'failed'],
         'resource' => ['service.name', 'service.version', 'deployment.environment.name'],
     ],
@@ -41,7 +41,7 @@ return [
         ],
         'node' => [
             'node_type' => null,
-            'top' => ['attempt', 'attempt_of', 'state_diff', 'loop_context', 'error'],
+            'top' => ['attempt', 'attempt_of', 'state_diff', 'loop_context', 'error', 'annotations'],
             'attributes' => [],
         ],
         'llm' => [
@@ -56,7 +56,7 @@ return [
         ],
         'tool' => [
             'node_type' => 'tool',
-            'top' => ['error'],
+            'top' => ['error', 'annotations'],
             'attributes' => ['tool.type', 'tool.provider', 'tool.input_size', 'tool.output_size', 'tool.request_id', 'gen_ai.tool.call.id', 'tool.arg_keys', 'tool.args', 'tool.result_size', 'tool.result'],
         ],
         'db' => [
@@ -81,7 +81,7 @@ return [
         ],
         'resume' => [
             'node_type' => 'resume',
-            'top' => ['state_snapshot'],
+            'top' => ['state_snapshot', 'human_input', 'annotations'],
             'attributes' => ['checkpoint.id'],
         ],
         'custom' => [
@@ -89,6 +89,17 @@ return [
             'top' => ['error'],
             'attributes_open' => true,
         ],
+    ],
+    'annotations' => [
+        'trace' => ['graph', 'outcome', 'expectations', 'annotation_error'],
+        'graph' => ['label', 'description'],
+        'outcome' => ['headline', 'fields', 'partial', 'missing'],
+        'outcome_field' => ['path', 'label', 'value'],
+        'expectations' => ['read_only', 'max_retries', 'max_loops', 'max_cost_usd'],
+        'node' => ['label', 'description', 'missing', 'annotation_error'],
+        'resume' => ['annotation_error'],
+        'tool' => ['expectations'],
+        'tool_expectations' => ['read_only'],
     ],
     'route_kind' => ['llm', 'deterministic', 'fan_out', 'join'],
     'error_stage' => ['middleware_before', 'node', 'middleware_after'],

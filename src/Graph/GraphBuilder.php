@@ -7,6 +7,7 @@ namespace Shahzad\AgenticGraph\Graph;
 use Illuminate\Container\Container;
 use Shahzad\AgenticGraph\Contracts\NodeInterface;
 use Shahzad\AgenticGraph\Contracts\RouterInterface;
+use Shahzad\AgenticGraph\Tracing\Annotations;
 
 class GraphBuilder
 {
@@ -31,6 +32,20 @@ class GraphBuilder
     /** @var array<string, string> */
     protected array $joins = [];
 
+    protected ?string $label = null;
+
+    /** @var array{headline: string, fields: list<array{path: string, label?: string}>}|null */
+    protected ?array $outcome = null;
+
+    /** @var array<string, bool|int|float> */
+    protected array $expectations = [];
+
+    /** @var array<string, array<string, bool>> */
+    protected array $toolExpectations = [];
+
+    /** @var array<string, array{label?: string, description?: string, human_input?: list<string>}> */
+    protected array $nodeAnnotations = [];
+
     public static function create(string $name): self
     {
         $i = new self;
@@ -46,7 +61,13 @@ class GraphBuilder
         return $this;
     }
 
-    public function addNode(string $name, string $class): self
+    /**
+     * label, description and humanInput annotate the node in traces; they win per field over the
+     * class's #[Annotate].
+     *
+     * @param  list<string>|null  $humanInput
+     */
+    public function addNode(string $name, string $class, ?string $label = null, ?string $description = null, ?array $humanInput = null): self
     {
         $this->validateNodeName($name);
         $this->validateNodeClass($class);
@@ -56,6 +77,82 @@ class GraphBuilder
         }
 
         $this->nodes[$name] = $class;
+        $annotations = $this->nodeAnnotation("Node '{$name}'", $label, $description, $humanInput);
+        if ($annotations !== []) {
+            $this->nodeAnnotations[$name] = $annotations;
+        }
+
+        return $this;
+    }
+
+    /**
+     * The graph's label in traces. The graph block (label and description()) is sent only when this is set.
+     */
+    public function label(string $label): self
+    {
+        $this->checkText('Graph label', $label, 60, placeholders: false);
+        $this->label = $label;
+
+        return $this;
+    }
+
+    /**
+     * What the run produced, for traces: a headline template and up to 8 state paths, each as
+     * 'path' or 'path' => 'Display label'.
+     *
+     * @param  array<int|string, mixed>  $fields
+     */
+    public function outcome(string $headline, array $fields = []): self
+    {
+        $this->checkText('Outcome headline', $headline, 200);
+        if (count($fields) > 8) {
+            throw new InvalidGraphException('Outcome has '.count($fields).' fields; at most 8 are allowed');
+        }
+
+        $declared = [];
+        foreach ($fields as $key => $value) {
+            [$path, $label] = is_int($key) ? [$value, null] : [$key, $value];
+            if (! is_string($path) || ! Annotations::isPath($path)) {
+                throw new InvalidGraphException('Outcome field '.var_export($path, true).' is not a state path (letters, digits, _ and - separated by dots)');
+            }
+            if ($label !== null && ! is_string($label)) {
+                throw new InvalidGraphException("Outcome field '{$path}' label must be a string");
+            }
+            $declared[] = ['path' => $path] + ($label !== null ? ['label' => $label] : []);
+        }
+
+        $this->outcome = ['headline' => $headline, 'fields' => $declared];
+
+        return $this;
+    }
+
+    /**
+     * What the run is expected to do, sent with the trace for AgenticPulse to check. Declarations only:
+     * they never stop or change a run (the loop limit is execution.loop.max_iterations).
+     *
+     * @param  array<string, bool|int|float>  $expectations
+     */
+    public function expectations(array $expectations): self
+    {
+        $this->expectations = array_merge($this->expectations, $this->checkExpectations('Graph', $expectations, Annotations::GRAPH_EXPECTATIONS));
+
+        return $this;
+    }
+
+    /**
+     * Expectations for one tool by its name, sent on that tool's spans.
+     *
+     * @param  array<string, bool>  $expectations
+     */
+    public function toolExpectations(string $tool, array $expectations): self
+    {
+        if (trim($tool) === '') {
+            throw new InvalidGraphException('Tool name cannot be empty');
+        }
+
+        /** @var array<string, bool> $checked */
+        $checked = $this->checkExpectations("Tool '{$tool}'", $expectations, Annotations::TOOL_EXPECTATIONS);
+        $this->toolExpectations[$tool] = array_merge($this->toolExpectations[$tool] ?? [], $checked);
 
         return $this;
     }
@@ -141,6 +238,7 @@ class GraphBuilder
     public function build(): Graph
     {
         $this->validateBeforeBuild();
+        $annotations = $this->annotations();
 
         $container = Container::getInstance();
         $instances = [];
@@ -171,6 +269,7 @@ class GraphBuilder
             $this->edges,
             $metadata,
             $this->joins,
+            $annotations,
         );
         $graph->validate();
 
@@ -214,6 +313,109 @@ class GraphBuilder
         $this->joins[$key] = $target;
 
         return $this;
+    }
+
+    /**
+     * The annotations the Graph carries: builder declarations, with each node's #[Annotate] under its
+     * fluent fields.
+     *
+     * @return array<string, mixed>
+     */
+    private function annotations(): array
+    {
+        $nodes = [];
+        foreach ($this->nodes as $name => $class) {
+            $attribute = (new \ReflectionClass($class))->getAttributes(Annotate::class)[0] ?? null;
+            try {
+                $declared = $attribute?->newInstance();
+            } catch (\Error $e) {
+                throw new InvalidGraphException("Invalid #[Annotate] on {$class}: {$e->getMessage()}", 0, $e);
+            }
+
+            $node = ($this->nodeAnnotations[$name] ?? [])
+                + ($declared !== null ? $this->nodeAnnotation("#[Annotate] on {$class}", $declared->label, $declared->description, $declared->humanInput) : []);
+            if ($node !== []) {
+                $nodes[$name] = $node;
+            }
+        }
+
+        return array_filter([
+            'label' => $this->label,
+            'outcome' => $this->outcome,
+            'expectations' => $this->expectations,
+            'tools' => $this->toolExpectations,
+            'nodes' => $nodes,
+        ], fn (mixed $value): bool => $value !== null && $value !== []);
+    }
+
+    /**
+     * @param  array<int|string, mixed>|null  $humanInput
+     * @return array{label?: string, description?: string, human_input?: list<string>}
+     */
+    private function nodeAnnotation(string $where, ?string $label, ?string $description, ?array $humanInput): array
+    {
+        $annotation = [];
+        if ($label !== null) {
+            $this->checkText("{$where} label", $label, 60);
+            $annotation['label'] = $label;
+        }
+        if ($description !== null) {
+            $this->checkText("{$where} description", $description, 200);
+            $annotation['description'] = $description;
+        }
+        if ($humanInput !== null) {
+            if (count($humanInput) > 8) {
+                throw new InvalidGraphException("{$where} has ".count($humanInput).' human input keys; at most 8 are allowed');
+            }
+            foreach ($humanInput as $key) {
+                if (! is_string($key) || ! Annotations::isPath($key)) {
+                    throw new InvalidGraphException("{$where} human input key ".var_export($key, true).' is not a state path (letters, digits, _ and - separated by dots)');
+                }
+            }
+            $annotation['human_input'] = array_values(array_unique($humanInput));
+        }
+
+        return $annotation;
+    }
+
+    private function checkText(string $where, string $text, int $max, bool $placeholders = true): void
+    {
+        if (mb_strlen($text) > $max) {
+            throw new InvalidGraphException("{$where} is ".mb_strlen($text)." characters; at most {$max} are allowed");
+        }
+        if ($placeholders && ($problem = Annotations::syntaxError($text)) !== null) {
+            throw new InvalidGraphException("{$where} has invalid placeholder syntax: {$problem}");
+        }
+    }
+
+    /**
+     * @param  array<int|string, mixed>  $expectations
+     * @param  array<string, string>  $known  name => bool, int or float
+     * @return array<string, bool|int|float>
+     */
+    private function checkExpectations(string $where, array $expectations, array $known): array
+    {
+        $checked = [];
+        foreach ($expectations as $name => $value) {
+            $type = $known[$name] ?? null;
+            if ($type === null) {
+                throw new InvalidGraphException("{$where} expectation '{$name}' is unknown; known: ".implode(', ', array_keys($known)));
+            }
+
+            $valid = match ($type) {
+                'bool' => is_bool($value),
+                'int' => is_int($value) && $value >= 0,
+                default => (is_int($value) || is_float($value)) && is_finite((float) $value) && $value >= 0,
+            };
+            if (! $valid) {
+                $expected = ['bool' => 'a bool', 'int' => 'an int, at least 0', 'float' => 'a number, at least 0'][$type];
+                throw new InvalidGraphException("{$where} expectation '{$name}' must be {$expected}, got ".get_debug_type($value));
+            }
+
+            $checked[(string) $name] = $type === 'float' ? (float) $value : $value;
+        }
+
+        return $checked;
     }
 
     /**

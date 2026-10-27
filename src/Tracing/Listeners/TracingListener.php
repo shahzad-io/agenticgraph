@@ -18,8 +18,10 @@ use Shahzad\AgenticGraph\Events\RouteDecided;
 use Shahzad\AgenticGraph\Events\TokensUsed;
 use Shahzad\AgenticGraph\Events\ToolCallCaptured;
 use Shahzad\AgenticGraph\Execution\ExecutionContext;
+use Shahzad\AgenticGraph\Tracing\Annotations;
 use Shahzad\AgenticGraph\Tracing\CaptureDepth;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
+use Shahzad\AgenticGraph\Tracing\Exporters\BufferedTraceExporter;
 use Shahzad\AgenticGraph\Tracing\ModelPricingCalculator;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 use Shahzad\AgenticGraph\Tracing\TraceTime;
@@ -123,6 +125,7 @@ class TracingListener
             false // Not an error
         );
 
+        $this->annotateTrace($event->executionId, Annotations::forTrace(Annotations::graph($event->graphName), $event->finalState->toArray()));
         $this->exporter()->completeTrace(
             $event->executionId,
             array_keys($event->finalState->toArray()),
@@ -173,6 +176,7 @@ class TracingListener
             true // Is an error
         );
 
+        $this->annotateTrace($event->executionId, Annotations::forTrace(Annotations::graph($event->graphName), null));
         $this->exporter()->failTrace(
             $event->executionId,
             $event->exception,
@@ -229,6 +233,7 @@ class TracingListener
         );
 
         $spanId = $event->spanId ?? uniqid('span_', true);
+        $annotations = Annotations::forNode(Annotations::graph(), $event->nodeName, $event->outputState->toArray());
         $this->exporter()->addSpan([
             'id' => $spanId,
             'trace_id' => $event->executionId,
@@ -250,6 +255,7 @@ class TracingListener
                 'values' => $stateDiff,
             ],
             'loop_context' => $loopContext,
+            ...($annotations !== null ? ['annotations' => $annotations] : []),
         ]);
     }
 
@@ -462,6 +468,7 @@ class TracingListener
         $status = $event->status;
         $statusCode = $status === 'success' ? 'OK' : 'ERROR';
         $parentId = $event->spanId ?? null;
+        $annotations = Annotations::forTool(Annotations::graph(), $event->toolName);
 
         $this->exporter()->addSpan([
             'id' => uniqid('span_', true),
@@ -485,6 +492,7 @@ class TracingListener
                 'tool.output_size' => $event->outputSize,
             ],
             'error' => $event->errorType || $event->errorMessage ? CaptureDepth::error($event->errorType, $event->errorMessage) : null,
+            ...($annotations !== null ? ['annotations' => $annotations] : []),
         ]);
     }
 
@@ -496,6 +504,9 @@ class TracingListener
         if (! $this->exporter()->isEnabled()) {
             return;
         }
+
+        // The outcome so far, from the state at the pause; the final segment replaces it.
+        $this->annotateTrace($event->executionId, Annotations::forTrace(Annotations::graph($event->graphName), $event->stateSnapshot, partial: true));
 
         // The root graph span is sent now with status interrupted; completion or failure later
         // re-sends the same id in a later segment, and the merge keeps the final segment copy.
@@ -566,6 +577,7 @@ class TracingListener
                 'checkpoint.id' => $event->checkpointId,
             ],
             'state_snapshot' => array_keys($event->stateSnapshot), // Just keys for size
+            ...Annotations::forResume(Annotations::graph($event->graphName), $event->nodeName, $event->stateSnapshot),
         ]);
     }
 
@@ -601,6 +613,19 @@ class TracingListener
                 'route.reason' => null,
             ],
         ]);
+    }
+
+    /**
+     * The trace-level annotations go to the package's buffered exporters; a custom exporter gets span annotations only.
+     *
+     * @param  array<string, mixed>|null  $annotations
+     */
+    private function annotateTrace(string $executionId, ?array $annotations): void
+    {
+        $exporter = $this->exporter();
+        if ($annotations !== null && $exporter instanceof BufferedTraceExporter) {
+            $exporter->annotateTrace($executionId, $annotations);
+        }
     }
 
     /**

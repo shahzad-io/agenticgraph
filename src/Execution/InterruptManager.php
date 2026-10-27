@@ -362,6 +362,7 @@ final class InterruptManager implements InterruptServiceInterface
             stateSnapshot: $state->toArray(),
             resumedAt: $resumedAt,
             parentSpanId: is_string($parentSpanId) ? $parentSpanId : null,
+            graphName: $graph->name,
         ));
 
         if ($this->loggingEnabled) {

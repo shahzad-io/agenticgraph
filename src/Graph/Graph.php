@@ -33,13 +33,21 @@ class Graph
     public readonly array $joins;
 
     /**
+     * Trace annotations declared on the builder and node attributes, validated at build time.
+     *
+     * @var array<string, mixed>
+     */
+    public readonly array $annotations;
+
+    /**
      * @param  array<int, string>  $exitPoints
      * @param  array<string, NodeInterface>  $nodes
      * @param  array<int, EdgeInterface>  $edges
      * @param  array<string, mixed>  $metadata
      * @param  array<string, string>  $joins
+     * @param  array<string, mixed>  $annotations
      */
-    public function __construct(string $name, string $description, string $entryPoint, array $exitPoints, array $nodes, array $edges, array $metadata = [], array $joins = [])
+    public function __construct(string $name, string $description, string $entryPoint, array $exitPoints, array $nodes, array $edges, array $metadata = [], array $joins = [], array $annotations = [])
     {
         $this->name = $name;
         $this->description = $description;
@@ -49,6 +57,7 @@ class Graph
         $this->edges = $edges;
         $this->metadata = $metadata;
         $this->joins = $joins;
+        $this->annotations = $annotations;
     }
 
     public function getNode(string $name): NodeInterface

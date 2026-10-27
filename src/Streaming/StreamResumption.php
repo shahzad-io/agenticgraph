@@ -77,6 +77,7 @@ final class StreamResumption
             stateSnapshot: $state->toArray(),
             resumedAt: $resumedAt,
             parentSpanId: is_string($parentSpanId) ? $parentSpanId : null,
+            graphName: $graph->name,
         ));
 
         if ((bool) config('agenticgraph.logging.enabled', true)) {

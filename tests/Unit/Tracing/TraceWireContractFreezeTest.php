@@ -112,6 +112,40 @@ class FzApproval extends PrismNode
     }
 }
 
+/** Stored and checkpointed like any object; an annotation placeholder lookup into it throws. */
+class FzThrowingAccess implements ArrayAccess
+{
+    public function offsetExists(mixed $offset): bool
+    {
+        throw new LogicException('cannot read');
+    }
+
+    public function offsetGet(mixed $offset): mixed
+    {
+        throw new LogicException('cannot read');
+    }
+
+    public function offsetSet(mixed $offset, mixed $value): void {}
+
+    public function offsetUnset(mixed $offset): void {}
+}
+
+class FzBadValueNode extends PrismNode
+{
+    public function execute(StateContract $state): StateContract
+    {
+        return $state->set('bad', new FzThrowingAccess);
+    }
+}
+
+class FzBadResumeApproval extends FzApproval
+{
+    public function onResume(StateContract $state, mixed $humanInput): StateContract
+    {
+        return parent::onResume($state, $humanInput)->set('bad', new FzThrowingAccess);
+    }
+}
+
 class FzBoomNode extends PrismNode
 {
     public function getRetryAttempts(): int
@@ -243,11 +277,17 @@ function fzEnvelopes(): array
     (fn () => $this->registerTracing())->call($provider);
 
     $graph = GraphBuilder::create('fz-run-a')
-        ->addNode('work', FzWorkNode::class)
-        ->addNode('approve', FzApproval::class)
+        ->addNode('work', FzWorkNode::class, label: 'Work', description: 'Worked on {q}{absent}')
+        ->addNode('approve', FzApproval::class, humanInput: ['approved'])
         ->addConditionalEdge('work', FzRouter::class)
         ->setEntryPoint('work')
         ->addExitPoint('approve')
+        ->label('Freeze run')
+        ->description('Run A')
+        ->outcome('Approved {approved}', ['approved' => 'Approved', 'q', 'absent'])
+        ->expectations(['read_only' => false, 'max_retries' => 1, 'max_loops' => 2, 'max_cost_usd' => 0.5])
+        ->toolExpectations('lookup', ['read_only' => true])
+        ->toolExpectations('provider_tool', ['read_only' => false])
         ->build();
     app(GraphRegistry::class)->register('fz-run-a', $graph);
     $state = app(GraphExecutor::class)->execute($graph, new State(['q' => 'x']));
@@ -282,6 +322,23 @@ function fzEnvelopes(): array
         $guarded = GraphBuilder::create("fz-run-{$run}")->addNode('guarded', FzGuardedNode::class)->setEntryPoint('guarded')->addExitPoint('guarded')->build();
         fzSwallow(fn () => app(GraphExecutor::class)->execute($guarded, new State(['q' => 'z'])));
     }
+
+    // Run E: annotation rendering that throws, on a node span, the trace block and a resume span.
+    config(['agenticgraph.middleware.global' => []]);
+    fzForgetRun();
+    $throwing = GraphBuilder::create('fz-run-e')
+        ->addNode('bad', FzBadValueNode::class, description: 'Bad {bad.key}')
+        ->addNode('approve', FzBadResumeApproval::class, humanInput: ['bad.key'])
+        ->addEdge('bad', 'approve')
+        ->setEntryPoint('bad')
+        ->addExitPoint('approve')
+        ->outcome('Bad {bad.key}')
+        ->build();
+    app(GraphRegistry::class)->register('fz-run-e', $throwing);
+    $state = app(GraphExecutor::class)->execute($throwing, new State(['q' => 'e']));
+    $exporter->reset();
+    fzForgetRun();
+    app(GraphExecutor::class)->resumeWithInput($state->getInterruptCheckpointId(), ['ok' => true]);
 
     $files = glob(fzDir().'/*/*.json') ?: [];
     sort($files);
@@ -329,6 +386,10 @@ test('contract freeze guard: every emitted key and value is in the registry, and
         $seen[$group] = array_unique(array_merge($seen[$group] ?? [], $keys));
     };
     $pattern = '/'.$registry['span']['timestamp_pattern'].'/';
+    $fzAnnotation = function (string $group, array $block) use ($registry, $see, &$problems): void {
+        $see("annotations.{$group}", array_keys($block));
+        fzSubset(array_keys($block), $registry['annotations'][$group], "annotations.{$group}", $problems);
+    };
 
     foreach ($envelopes as $envelope) {
         $keys = array_keys($envelope);
@@ -362,6 +423,22 @@ test('contract freeze guard: every emitted key and value is in the registry, and
         fzSubset([$trace['status']], $registry['trace']['status'], 'trace.status', $problems);
         if (array_keys($trace['resource']) !== $registry['trace']['resource']) {
             $problems[] = 'trace.resource keys: '.json_encode(array_keys($trace['resource']));
+        }
+        if (isset($trace['annotations'])) {
+            $annotations = $trace['annotations'];
+            $fzAnnotation('trace', $annotations);
+            if (isset($annotations['graph'])) {
+                $fzAnnotation('graph', $annotations['graph']);
+            }
+            if (isset($annotations['outcome'])) {
+                $fzAnnotation('outcome', $annotations['outcome']);
+                foreach ($annotations['outcome']['fields'] ?? [] as $field) {
+                    $fzAnnotation('outcome_field', $field);
+                }
+            }
+            if (isset($annotations['expectations'])) {
+                $fzAnnotation('expectations', $annotations['expectations']);
+            }
         }
 
         $segment = $envelope['segment'];
@@ -414,6 +491,16 @@ test('contract freeze guard: every emitted key and value is in the registry, and
             if ($type === 'route') {
                 fzSubset([$span['attributes']['route.kind']], $registry['route_kind'], 'route.kind', $problems);
             }
+            if (isset($span['annotations'])) {
+                if (! in_array($type, ['node', 'resume', 'tool'], true)) {
+                    $problems[] = "{$type} span carries annotations";
+                } else {
+                    $fzAnnotation($type, $span['annotations']);
+                    if ($type === 'tool') {
+                        $fzAnnotation('tool_expectations', $span['annotations']['expectations']);
+                    }
+                }
+            }
             if ($type === 'node' && isset($span['error'])) {
                 $see('error_stage', [$span['error']['stage'] ?? '(missing)']);
                 fzSubset([$span['error']['stage'] ?? '(missing)'], $registry['error_stage'], 'node.error.stage', $problems);
@@ -440,6 +527,9 @@ test('contract freeze guard: every emitted key and value is in the registry, and
         'span.optional' => $registry['span']['optional'],
         'llm_calls' => [...$registry['llm_calls']['always'], ...$registry['llm_calls']['optional']],
     ];
+    foreach ($registry['annotations'] as $group => $keys) {
+        $expected["annotations.{$group}"] = $keys;
+    }
     foreach ($registry['span_types'] as $type => $spec) {
         $expected["{$type}.top"] = $spec['top'];
         $expected["{$type}.attributes"] = $spec['attributes'] ?? [];

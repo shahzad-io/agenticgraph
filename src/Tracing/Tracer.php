@@ -139,6 +139,10 @@ final class Tracer
             $span['error'] = $error;
         }
 
+        if ($spanType === 'tool' && ($annotations = Annotations::forTool(Annotations::graph(), $name)) !== null) {
+            $span['annotations'] = $annotations;
+        }
+
         // Queued work's own spans hang off the root; the link names the span that queued it.
         if ($parentSpanId === $context->getRootSpanId() && $context->getLinks() !== []) {
             $span['links'] = $context->getLinks();

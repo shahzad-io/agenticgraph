@@ -17,6 +17,7 @@ use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
 use Shahzad\AgenticGraph\Events\NodeExecutionStarted;
 use Shahzad\AgenticGraph\Execution\ExecutionContext;
 use Shahzad\AgenticGraph\Execution\NodeMiddlewarePipeline;
+use Shahzad\AgenticGraph\Graph\Graph;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
@@ -103,6 +104,9 @@ class ExecuteNodeJob implements ShouldQueue
         ]);
 
         $node = $graph->getNode($this->nodeName);
+        // Node annotations read the graph of the running execution.
+        $previousGraph = app()->bound(Graph::class) ? app(Graph::class) : null;
+        app()->instance(Graph::class, $graph);
         $inputState = $state;
 
         try {
@@ -166,6 +170,7 @@ class ExecuteNodeJob implements ShouldQueue
             }
             app()->forgetInstance(ExecutionClock::class);
             app()->forgetInstance(TraceContext::class);
+            $previousGraph !== null ? app()->instance(Graph::class, $previousGraph) : app()->forgetInstance(Graph::class);
             if ($loopMetadata !== null) {
                 $previousLoopContext !== null
                     ? app()->instance(ExecutionContext::class, $previousLoopContext)
