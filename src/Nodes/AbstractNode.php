@@ -39,11 +39,6 @@ abstract class AbstractNode implements NodeInterface
         return null;
     }
 
-    public function getTimeout(): ?int
-    {
-        return 300;
-    }
-
     public function getRetryAttempts(): int
     {
         return 3;

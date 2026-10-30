@@ -7,8 +7,10 @@ namespace Shahzad\AgenticGraph\Exceptions;
 use RuntimeException;
 
 /**
- * A PrismRouter with no default route got no usable decision: the reply had no route key (missing_route_key), named
- * an unknown route (invalid_route), or every attempt failed (routing_failed; the reply is the last error).
+ * A router with no usable default route gave no usable decision. PrismRouter: the reply had no route key
+ * (missing_route_key), named an unknown route (invalid_route), or every attempt failed (routing_failed; the reply is
+ * the last error). Any router: it returned an empty route (empty_route) or a node the graph does not have
+ * (unknown_route; a fan-out naming one always throws), and its default route is unset or not a node.
  */
 final class RoutingException extends RuntimeException
 {
@@ -19,7 +21,7 @@ final class RoutingException extends RuntimeException
         ?\Throwable $previous = null,
     ) {
         parent::__construct(
-            "{$router} could not route ({$reason}) and has no default route. Reply: ".mb_strimwidth($reply, 0, 500, '...'),
+            "{$router} could not route ({$reason}) and has no usable default route. Reply: ".mb_strimwidth($reply, 0, 500, '...'),
             0,
             $previous,
         );

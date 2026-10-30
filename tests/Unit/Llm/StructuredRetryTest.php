@@ -187,6 +187,36 @@ describe('structured retry', function () {
         Event::assertDispatchedTimes(TokensUsed::class, 2);
     });
 
+    it('takes structuredRetries() over the config for this call and shows it in explain()', function () {
+        Http::fake(['api.openai.com/*' => Http::response(retryReply('nope'))]);
+        config()->set('agenticgraph.prism.structured.retries', 1);
+        $node = new RetryNode;
+
+        expect(fn () => $node->call(fn (LlmRequest $llm) => $llm->prompt('a')->schema(retrySchema())->structuredRetries(0)->run()))
+            ->toThrow(PrismStructuredDecodingException::class);
+        Http::assertSentCount(1);
+
+        expect(fn () => $node->call(fn (LlmRequest $llm) => $llm->prompt('a')->schema(retrySchema())->structuredRetries(2)->run()))
+            ->toThrow(PrismStructuredDecodingException::class);
+        Http::assertSentCount(4);
+
+        expect($node->call(fn (LlmRequest $llm) => $llm->prompt('a')->schema(retrySchema())->structuredRetries(3)->explain())['settings']['structured_retries'])
+            ->toBe(['value' => 3, 'source' => 'call'])
+            ->and($node->call(fn (LlmRequest $llm) => $llm->prompt('a')->schema(retrySchema())->explain())['settings']['structured_retries'])
+            ->toBe(['value' => 1, 'source' => 'config']);
+    });
+
+    it('refuses negative structuredRetries() and structuredRetries() without a schema', function () {
+        Http::fake();
+        $node = new RetryNode;
+
+        expect(fn () => $node->call(fn (LlmRequest $llm) => $llm->structuredRetries(-1)))
+            ->toThrow(InvalidArgumentException::class)
+            ->and(fn () => $node->call(fn (LlmRequest $llm) => $llm->prompt('a')->structuredRetries(2)->text()))
+            ->toThrow(LogicException::class, 'need schema()');
+        Http::assertNothingSent();
+    });
+
     it('with retries 0 a streamed reply that fails to decode throws instead of silently retrying', function () {
         retryBindSink();
         Prism::fake([

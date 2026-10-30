@@ -6,11 +6,14 @@ namespace Shahzad\AgenticGraph\Execution;
 
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Events\Dispatcher;
+use Psr\Log\LoggerInterface;
 use Shahzad\AgenticGraph\Contracts\LoopAwareRouterInterface;
 use Shahzad\AgenticGraph\Contracts\RouterInterface;
 use Shahzad\AgenticGraph\Contracts\RouterResolverInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\RouteDecided;
+use Shahzad\AgenticGraph\Events\RouteFellBack;
+use Shahzad\AgenticGraph\Exceptions\RoutingException;
 use Shahzad\AgenticGraph\Graph\Graph;
 use Shahzad\AgenticGraph\Routers\PrismRouter;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
@@ -18,6 +21,9 @@ use Shahzad\AgenticGraph\Tracing\TraceTime;
 
 final class RoutingEngine implements RouterResolverInterface
 {
+    /** True once the current routing decision took a default route here. */
+    private bool $fellBack = false;
+
     public function __construct(private readonly Container $container) {}
 
     /**
@@ -29,7 +35,7 @@ final class RoutingEngine implements RouterResolverInterface
         foreach ($edges as $edge) {
             $condition = $this->resolveRouter($edge->getCondition());
             if ($condition !== null) {
-                return $this->traced($currentNode, $condition, fn (): string|array => $this->resolveRoute($condition, $state));
+                return $this->traced($currentNode, $condition, fn (): string|array => $this->checkedRoute($graph, $condition, $state));
             }
             $target = $edge->getTarget();
 
@@ -68,7 +74,7 @@ final class RoutingEngine implements RouterResolverInterface
             }
             $edge = $edges[0];
             $condition = $this->resolveRouter($edge->getCondition());
-            $target = $condition ? $this->resolveRoute($condition, $state) : $edge->getTarget();
+            $target = $condition ? $this->checkedRoute($graph, $condition, $state) : $edge->getTarget();
             $targetName = is_array($target) ? ($target[0] ?? null) : $target;
             if ($targetName) {
                 $nextTargets[] = $targetName;
@@ -94,6 +100,7 @@ final class RoutingEngine implements RouterResolverInterface
      */
     private function traced(string $from, ?RouterInterface $router, \Closure $decide): string|array|null
     {
+        $this->fellBack = false;
         $trace = TraceContext::tryGet();
         $spanId = $trace?->startSpan($from, 'route');
         if ($trace === null || $spanId === null) {
@@ -126,12 +133,47 @@ final class RoutingEngine implements RouterResolverInterface
             router: $router !== null ? $router::class : null,
             kind: $kind,
             fromCache: $flags['from_cache'],
-            fallback: $flags['fallback'],
+            fallback: $flags['fallback'] || $this->fellBack,
             startedAt: $startedAt,
             endedAt: $endedAt,
         ));
 
         return $result;
+    }
+
+    /**
+     * The router's decision, checked against the graph. An empty route, or one naming a node the graph does not have,
+     * takes the router's default route (warning, RouteFellBack, route.fallback on the span). Throws RoutingException
+     * when the default route is unset or not a node, and for a fan-out naming an unknown node.
+     *
+     * @return string|array<int, string>
+     */
+    private function checkedRoute(Graph $graph, RouterInterface $router, StateContract $state): string|array
+    {
+        $route = $this->resolveRoute($router, $state);
+        $targets = (array) $route;
+        $unknown = array_filter($targets, fn (string $target): bool => ! $graph->hasNode($target));
+        if ($targets !== [] && $unknown === []) {
+            return $route;
+        }
+
+        $reason = $targets === [] || $route === '' ? 'empty_route' : 'unknown_route';
+        $default = $router->getDefaultRoute();
+        if ((is_array($route) && $targets !== []) || $default === null || ! $graph->hasNode($default)) {
+            throw new RoutingException($router::class, $reason, (string) json_encode($route));
+        }
+
+        $this->fellBack = true;
+        if ((bool) config('agenticgraph.logging.enabled', true)) {
+            $this->container->make(LoggerInterface::class)->warning('Router fell back to the default route', [
+                'router' => $router::class,
+                'default_route' => $default,
+                'reason' => $reason,
+            ]);
+        }
+        $this->container->make(Dispatcher::class)->dispatch(new RouteFellBack($router::class, $default, $reason));
+
+        return $default;
     }
 
     /**

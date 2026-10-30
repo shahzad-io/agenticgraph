@@ -76,7 +76,8 @@ Do these steps in order. The full list of changes is in [CHANGELOG.md](CHANGELOG
 6. **Token numbers.** Usage follows "usage semantics v2": `prompt_tokens` is the uncached input, cached input is in `cache_read_tokens` / `cache_write_tokens`, and `completion_tokens` includes reasoning. If you store token counts for billing or analytics, expect a step change.
 7. **Removed helpers.** `prompt()`, `promptTemplate()`, `chatPrompt()`, `structured()`, `tools()`, `withModel()` and the other `PrismNode` helpers are removed. Every model call goes through `$this->llm()`. See the [before and after table](CHANGELOG.md#breaking).
 8. **Model.** There is no default model, and a model needs its provider prefix (`openai:gpt-4o`, not `gpt-4o`). Set `AGENTICGRAPH_PRISM_MODEL` or `$model` on each node; otherwise the first call throws `MissingModelException`.
-9. **Routers.** A `PrismRouter` without a default route now throws `RoutingException` when the model gives no usable decision (it returned an empty route). Set a default route to keep the old behavior.
+9. **Routers.** A `PrismRouter` without a default route now throws `RoutingException` when the model gives no usable decision (it returned an empty route). Set a default route to keep the old behavior. Any other router that returns an empty route or a node the graph does not have now takes its `getDefaultRoute()`, or throws `RoutingException` without one (it failed with an undefined array key).
+10. **Node timeout.** `getTimeout()` is removed from `NodeInterface` and `AbstractNode`; nothing read it. Remove `parent::getTimeout()` calls. Use `->timeout()` on a model request and `AGENTICGRAPH_EXECUTION_TIMEOUT` / `AGENTICGRAPH_RESUME_TIMEOUT` for queued runs.
 
 ## Compatibility
 
@@ -163,7 +164,7 @@ $handle = AgenticGraph::execute('my-graph', $state, new ExecutionOptions(
 | `nodeFilter` | `null` | Optional stream node allow-list |
 | `eventTypeFilter` | `null` | Optional stream event allow-list |
 
-There is no `timeout` parameter on `ExecutionOptions`.
+There is no `timeout` parameter on `ExecutionOptions`, and no node timeout. Queued runs use `AGENTICGRAPH_EXECUTION_TIMEOUT` and `AGENTICGRAPH_RESUME_TIMEOUT`; model calls use `->timeout()` (below).
 
 Resume interrupted executions by execution ID:
 
@@ -190,6 +191,8 @@ class RespondNode extends PrismNode {
 }
 ```
 
+`->timeout(90, 5)` sets the provider HTTP timeouts for one request (default `AGENTICGRAPH_API_TIMEOUT` 30 and `AGENTICGRAPH_API_CONNECT_TIMEOUT` 10 seconds). It applies to each HTTP request: each tool step and structured retry gets its own, a streamed reply must finish within it, and tool handlers are not bounded. `->structuredRetries(2)` sets how many times one structured request is sent again after a reply that does not decode or fit `as()` (default `AGENTICGRAPH_PRISM_STRUCTURED_RETRIES`, 1). `explain()` shows both with their source.
+
 Example Prism router:
 
 ```php
@@ -203,6 +206,8 @@ $router = new PrismRouter([
 ```
 
 The routing call sends `agenticgraph.router.max_tokens` (`AGENTICGRAPH_ROUTER_MAX_TOKENS`, default 1024; reasoning tokens count against it) and `agenticgraph.router.reasoning` (`AGENTICGRAPH_ROUTER_REASONING`, default none); a subclass sets `$maxTokens` or `$reasoning` to override both. When it takes the default route instead of a decision, it logs a warning and dispatches `RouteFellBack`; with no default route it throws `RoutingException` instead.
+
+Every router's `getDefaultRoute()` applies when it returns an empty route (`''`, `[]`) or a node the graph does not have: the run takes the default route, logs a warning and dispatches `RouteFellBack` (`empty_route` or `unknown_route`). With no default route, or one that is not a node, it throws `RoutingException`. A fan-out naming an unknown node always throws.
 
 ## Middleware
 

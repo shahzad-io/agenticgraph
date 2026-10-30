@@ -296,6 +296,54 @@ describe('settings', function () {
         'tools' => [fn (LlmRequest $llm) => $llm->prompt('a')->tools([llmTool()])->run(), fn () => [llmText()]],
         'mcp' => [fn (LlmRequest $llm) => $llm->prompt('a')->mcp('docs', ['tools' => [llmTool()]])->run(), fn () => [llmText()]],
     ]);
+
+    it('sends timeout() over the configured timeouts on every path, streamed included', function (Closure $build, array $fakes, bool $stream) {
+        config()->set('agenticgraph.api.timeout', 41);
+        config()->set('agenticgraph.api.connect_timeout', 7);
+        if ($stream) {
+            llmBindSink();
+        }
+
+        $requests = llmRecorded([$build], $fakes);
+
+        expect($requests)->not->toBeEmpty();
+        foreach ($requests as $request) {
+            expect($request->clientOptions())->toMatchArray(['timeout' => 90, 'connect_timeout' => 3]);
+        }
+    })->with([
+        'text' => [fn (LlmRequest $llm) => $llm->prompt('a')->timeout(90, 3)->text(), fn () => [llmText()], false],
+        'structured' => [fn (LlmRequest $llm) => $llm->prompt('a')->schema(llmSchema())->timeout(90, 3)->structured(), fn () => [llmStructured()], false],
+        'tools' => [fn (LlmRequest $llm) => $llm->prompt('a')->tools([llmTool()])->timeout(90, 3)->run(), fn () => [llmText()], false],
+        'mcp' => [fn (LlmRequest $llm) => $llm->prompt('a')->mcp('docs', ['tools' => [llmTool()]])->timeout(90, 3)->run(), fn () => [llmText()], false],
+        'streamed text' => [fn (LlmRequest $llm) => $llm->prompt('a')->timeout(90, 3)->text(), fn () => [llmText()], true],
+        'streamed structured' => [fn (LlmRequest $llm) => $llm->prompt('a')->schema(llmSchema())->timeout(90, 3)->structured(), fn () => [llmText('{"label":"ok"}')], true],
+        'streamed tools' => [fn (LlmRequest $llm) => $llm->prompt('a')->tools([llmTool()])->timeout(90, 3)->run(), fn () => [llmText()], true],
+    ]);
+
+    it('shows timeout() in explain() with its source, the connect timeout staying on config when omitted', function () {
+        config()->set('agenticgraph.api.timeout', 41);
+        config()->set('agenticgraph.api.connect_timeout', 7);
+        $node = new LlmProbeNode;
+
+        $call = $node->call(fn (LlmRequest $llm) => $llm->prompt('a')->timeout(90)->explain())['settings'];
+        $both = $node->call(fn (LlmRequest $llm) => $llm->prompt('a')->timeout(90, 3)->explain())['settings'];
+        $config = $node->call(fn (LlmRequest $llm) => $llm->prompt('a')->explain())['settings'];
+
+        expect([$call['timeout'], $call['connect_timeout']])->toBe([['value' => 90, 'source' => 'call'], ['value' => 7, 'source' => 'config']])
+            ->and([$both['timeout'], $both['connect_timeout']])->toBe([['value' => 90, 'source' => 'call'], ['value' => 3, 'source' => 'call']])
+            ->and([$config['timeout'], $config['connect_timeout']])->toBe([['value' => 41, 'source' => 'config'], ['value' => 7, 'source' => 'config']])
+            ->and($node->call(fn (LlmRequest $llm) => $llm->prompt('a')->timeout(90)->explain())['cache']['key'])
+            ->toBe($node->call(fn (LlmRequest $llm) => $llm->prompt('a')->explain())['cache']['key']);
+    });
+
+    it('refuses a timeout below one second', function (int $seconds, ?int $connect) {
+        expect(fn () => (new LlmProbeNode)->call(fn (LlmRequest $llm) => $llm->timeout($seconds, $connect)))
+            ->toThrow(InvalidArgumentException::class);
+    })->with([
+        'zero' => [0, null],
+        'negative' => [-5, null],
+        'zero connect' => [30, 0],
+    ]);
 });
 
 describe('caching', function () {

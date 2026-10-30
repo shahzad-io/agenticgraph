@@ -141,8 +141,12 @@ final class LlmExecutor
                 ? ['value' => max(0, $call->structuredRetries), 'source' => 'call']
                 : ['value' => max(0, (int) config('agenticgraph.prism.structured.retries', self::DEFAULT_STRUCTURED_RETRIES)), 'source' => 'config'],
             'track_tokens' => ['value' => $this->trackTokens, 'source' => 'node'],
-            'timeout' => ['value' => (int) config('agenticgraph.api.timeout', 30), 'source' => 'config'],
-            'connect_timeout' => ['value' => (int) config('agenticgraph.api.connect_timeout', 10), 'source' => 'config'],
+            'timeout' => $call->timeout !== null
+                ? ['value' => $call->timeout, 'source' => 'call']
+                : ['value' => (int) config('agenticgraph.api.timeout', 30), 'source' => 'config'],
+            'connect_timeout' => $call->connectTimeout !== null
+                ? ['value' => $call->connectTimeout, 'source' => 'call']
+                : ['value' => (int) config('agenticgraph.api.connect_timeout', 10), 'source' => 'config'],
         ];
     }
 

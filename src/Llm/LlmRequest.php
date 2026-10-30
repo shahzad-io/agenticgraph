@@ -20,7 +20,7 @@ use Shahzad\AgenticGraph\Prompts\PromptTemplate;
  *
  * Templates interpolate (prompt(), chat(), with vars()); inline content (system(), user(), assistant(), history())
  * never does. Settings: config, then the node's properties, then model() / maxTokens() / providerOptions() here. reasoning() has
- * no config layer (node, then call).
+ * no config layer (node, then call); timeout() and structuredRetries() have no node layer (config, then call).
  *
  *     $this->llm()->prompt('Summarize {topic}')->vars(['topic' => $topic])->text();
  *     $this->llm()->chat($template)->vars($vars)->user($visitorText)->text();
@@ -74,6 +74,12 @@ final class LlmRequest
     private ?int $reasoningBudget = null;
 
     private ?string $structuredMode = null;
+
+    private ?int $structuredRetries = null;
+
+    private ?int $timeout = null;
+
+    private ?int $connectTimeout = null;
 
     /** @var class-string|null */
     private ?string $dto = null;
@@ -260,6 +266,35 @@ final class LlmRequest
     }
 
     /**
+     * Seconds for each HTTP request to the provider, over agenticgraph.api.timeout (and api.connect_timeout when
+     * $connectSeconds is given). Each tool step and each structured retry is its own request; a streamed request
+     * must finish within it. Tool handlers are not bounded.
+     */
+    public function timeout(int $seconds, ?int $connectSeconds = null): self
+    {
+        if ($seconds < 1 || ($connectSeconds !== null && $connectSeconds < 1)) {
+            throw new \InvalidArgumentException("timeout() takes at least 1 second, got [{$seconds}, ".($connectSeconds ?? 'null').'].');
+        }
+        $request = $this->with('timeout', $seconds);
+        $request->connectTimeout = $connectSeconds;
+
+        return $request;
+    }
+
+    /**
+     * Extra attempts after a structured reply that does not decode or fit as(), over
+     * agenticgraph.prism.structured.retries. 0 throws at once.
+     */
+    public function structuredRetries(int $retries): self
+    {
+        if ($retries < 0) {
+            throw new \InvalidArgumentException("structuredRetries() takes 0 or more, got [{$retries}].");
+        }
+
+        return $this->with('structuredRetries', $retries);
+    }
+
+    /**
      * Exception to the node's $reasoning / $reasoningBudget: a level (off, low, medium, high) or a token budget, for
      * this request only. Throws when the provider cannot apply it; never a silent no-op.
      */
@@ -354,8 +389,8 @@ final class LlmRequest
 
     private function toCall(): LlmCall
     {
-        if (($this->dto !== null || $this->structuredMode !== null) && $this->schema === null) {
-            throw new \LogicException('as() and structuredMode() need schema().');
+        if (($this->dto !== null || $this->structuredMode !== null || $this->structuredRetries !== null) && $this->schema === null) {
+            throw new \LogicException('as(), structuredMode() and structuredRetries() need schema().');
         }
         if ($this->schema !== null && $this->toolRequest) {
             throw new \LogicException('schema() cannot be combined with tools() or mcp().');
@@ -411,10 +446,13 @@ final class LlmRequest
             reasoningBudget: $this->reasoningBudget,
             structuredMode: $this->structuredMode,
             dto: $this->dto,
+            structuredRetries: $this->structuredRetries,
             cache: $this->cache,
             cacheTtl: $this->cacheTtl,
             context: $context,
             promptFile: $this->template instanceof PromptFile ? $this->template->meta() : null,
+            timeout: $this->timeout,
+            connectTimeout: $this->connectTimeout,
         );
     }
 

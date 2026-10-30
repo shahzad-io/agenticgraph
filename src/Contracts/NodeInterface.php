@@ -12,8 +12,6 @@ interface NodeInterface
 
     public function getDescription(): ?string;
 
-    public function getTimeout(): ?int;
-
     public function getRetryAttempts(): int;
 
     public function getRetryDelay(): int;

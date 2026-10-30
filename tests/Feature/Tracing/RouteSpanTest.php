@@ -111,6 +111,21 @@ class RsSupervisorRouter extends AbstractRouter
     }
 }
 
+class RsGhostRouter extends AbstractRouter
+{
+    protected ?string $defaultRoute = 'a';
+
+    public function route(StateContract $state): string
+    {
+        return 'ghost';
+    }
+
+    public function getAvailableRoutes(): array
+    {
+        return ['a'];
+    }
+}
+
 class RsFanOutRouter extends AbstractRouter
 {
     public function route(StateContract $state): array
@@ -307,6 +322,24 @@ it('emits one route span per supervisor visit with the chosen target', function 
             ->and(array_filter(array_keys($route), fn (string $key): bool => str_starts_with($key, 'route.')))->toBe([]);
     }
     expect(rsVisits($payload))->toBe(['supervisor:1', 'worker:1', 'supervisor:2', 'worker:2', 'supervisor:3', 'finish:1']);
+});
+
+it('marks a deterministic router that took its default route as a fallback', function () {
+    $exporter = rsExporter();
+    $graph = rsRegister(GraphBuilder::create('rs-ghost')
+        ->addNode('start', RsStep::class)
+        ->addNode('a', RsStep::class)
+        ->addConditionalEdge('start', RsGhostRouter::class)
+        ->setEntryPoint('start')
+        ->addExitPoint('a')
+        ->build());
+
+    app(GraphExecutor::class)->execute($graph, new State([]));
+
+    $route = rsSpans($exporter->sent[0], 'route')[0];
+    expect($route['attributes']['route.targets'])->toBe(['a'])
+        ->and($route['attributes']['route.kind'])->toBe('deterministic')
+        ->and($route['attributes']['route.fallback'])->toBeTrue();
 });
 
 it('names routers by fully qualified class, so routers sharing a short name stay distinct', function () {

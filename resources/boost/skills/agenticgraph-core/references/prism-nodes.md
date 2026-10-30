@@ -131,7 +131,7 @@ final class LeadProfileNode extends PrismNode
 
 ### Retry and `as(Dto::class)`
 
-Prism checks only that a structured reply is JSON. A reply that does not decode, or does not fit `->as(Ticket::class)`, is sent again with the failed reply and the error appended; `agenticgraph.prism.structured.retries` (`AGENTICGRAPH_PRISM_STRUCTURED_RETRIES`) extra calls, default `1`, `0` throws at once. It replaces the old silent streamed-to-non-streamed fallback. `as()` hydrates by reflection (constructor or public properties; scalars, nullable and union types, backed enums, date-times, nested classes, lists via `#[ListOf(Item::class)]` or `@param list<Item> $items`), strict, extra keys ignored; errors name the path (`lines.1.price`). It needs `schema()` and does not derive it. Read it with `->data()` or `run()->data`.
+Prism checks only that a structured reply is JSON. A reply that does not decode, or does not fit `->as(Ticket::class)`, is sent again with the failed reply and the error appended; `agenticgraph.prism.structured.retries` (`AGENTICGRAPH_PRISM_STRUCTURED_RETRIES`) extra calls, default `1`, `0` throws at once; `->structuredRetries($n)` sets it for one call. It replaces the old silent streamed-to-non-streamed fallback. `as()` hydrates by reflection (constructor or public properties; scalars, nullable and union types, backed enums, date-times, nested classes, lists via `#[ListOf(Item::class)]` or `@param list<Item> $items`), strict, extra keys ignored; errors name the path (`lines.1.price`). It needs `schema()` and does not derive it. Read it with `->data()` or `run()->data`.
 
 ```php
 $ticket = $this->llm()->prompt('{mail}')->vars(['mail' => $mail])->schema($schema)->as(Ticket::class)->data();

@@ -30,7 +30,7 @@ final class SupportIntentRouter extends PrismRouter
 ```
 
 - `routeWithContext()` is final on `PrismRouter`. Change the prompt by overriding `protected function buildPrompt(StateContract $state): string`.
-- A missing or invalid answer falls back to `defaultRoute`.
+- A missing or invalid answer falls back to `defaultRoute`. Without one, `PrismRouter` throws `RoutingException`.
 - If the rule is PHP, use `AbstractRouter` instead.
 
 ## Loop-aware router

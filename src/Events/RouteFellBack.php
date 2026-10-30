@@ -5,8 +5,9 @@ declare(strict_types=1);
 namespace Shahzad\AgenticGraph\Events;
 
 /**
- * Dispatched when PrismRouter takes its default route instead of a decision: the reply had no route key
- * (missing_route_key), named an unknown route (invalid_route), or every attempt failed (routing_failed).
+ * Dispatched when a router's default route is taken instead of its decision. PrismRouter: the reply had no route key
+ * (missing_route_key), named an unknown route (invalid_route), or every attempt failed (routing_failed). Any router:
+ * it returned an empty route (empty_route) or a node the graph does not have (unknown_route).
  */
 final class RouteFellBack
 {
