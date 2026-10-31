@@ -31,6 +31,7 @@ final readonly class LlmCall
      * @param  string|null  $structuredMode  auto, json or structured (OpenAI only); this call's
      * @param  class-string|null  $dto  hydrate the structured reply into this class
      * @param  int|null  $structuredRetries  overrides config agenticgraph.prism.structured.retries (PrismRouter pins 0)
+     * @param  float|null  $temperature  0 to 2; this call's, wins over the node's and config agenticgraph.prism.temperature
      * @param  int|null  $timeout  seconds per provider request; overrides config agenticgraph.api.timeout
      * @param  int|null  $connectTimeout  overrides config agenticgraph.api.connect_timeout
      * @param  bool  $structuredTraceAsJson  TokensUsed response is the JSON of the structured data (PrismRouter parity)
@@ -50,6 +51,7 @@ final readonly class LlmCall
         public ?int $maxSteps = null,
         public ?string $model = null,
         public ?int $maxTokens = null,
+        public ?float $temperature = null,
         public array $providerOptions = [],
         public ?bool $cache = null,
         public ?int $cacheTtl = null,

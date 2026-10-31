@@ -29,7 +29,7 @@ use Shahzad\AgenticGraph\Llm\LlmRequest;
  *
  * Call a model from execute() with $this->llm() (see {@see LlmRequest}). Other helpers for subclasses: prism() (raw
  * Prism text request), embeddings(), embeddingsFromInput(), image(), generateImage(), audio(), audioToText(),
- * textToAudio(), handleApproval(). Set $model, $maxTokens, $providerOptions or $trackTokens to configure the node.
+ * textToAudio(), handleApproval(). Set $model, $maxTokens, $temperature, $providerOptions or $trackTokens to configure the node.
  */
 abstract class PrismNode extends AbstractNode
 {
@@ -43,6 +43,9 @@ abstract class PrismNode extends AbstractNode
 
     /** Max output tokens for this node's LLM calls; null falls back to agenticgraph.prism.max_tokens. */
     protected ?int $maxTokens = null;
+
+    /** Sampling temperature (0 to 2) for this node's LLM calls; null falls back to agenticgraph.prism.temperature. */
+    protected ?float $temperature = null;
 
     /**
      * Prism provider options sent with every request (e.g. ['use_tool_calling' => true] for Anthropic structured).
@@ -100,6 +103,7 @@ abstract class PrismNode extends AbstractNode
             cacheTtl: $this->cacheTtl,
             reasoning: $this->reasoning,
             reasoningBudget: $this->reasoningBudget,
+            temperature: $this->temperature,
         );
     }
 

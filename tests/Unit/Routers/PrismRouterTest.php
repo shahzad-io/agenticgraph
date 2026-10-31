@@ -401,6 +401,19 @@ it('sends agenticgraph.router.max_tokens and reasoning on the routing call, 1024
     'unset' => [null, null, 1024, null],
 ]);
 
+it('sends agenticgraph.router.temperature on the routing call and ignores agenticgraph.prism.temperature', function (mixed $routerTemperature, ?float $sent) {
+    config()->set('agenticgraph.prism.temperature', 1.5);
+    config()->set('agenticgraph.router.temperature', $routerTemperature);
+    $prismFake = Prism::fake([StructuredResponseFake::make()->withStructured(['route' => 'target_a'])->withUsage(new Usage(1, 1))]);
+
+    (new PrismRouter(['target_a' => 'a', 'target_b' => 'b'], defaultRoute: 'target_b'))->route(new State);
+
+    $prismFake->assertRequest(fn (array $requests) => expect($requests[0]->temperature())->toBe($sent));
+})->with([
+    'router config' => ['0.2', 0.2],
+    'unset' => [null, null],
+]);
+
 it('lets a router class set its own max tokens and reasoning over the config', function () {
     config()->set('agenticgraph.router.max_tokens', 321);
     config()->set('agenticgraph.router.reasoning', 'high');

@@ -91,6 +91,8 @@ final class LlmExecutor
         private readonly ?int $cacheTtl = null,
         private readonly ?string $reasoning = null,
         private readonly ?int $reasoningBudget = null,
+        private readonly ?float $temperature = null,
+        private readonly string $temperatureConfig = 'agenticgraph.prism.temperature',
     ) {}
 
     /**
@@ -99,6 +101,7 @@ final class LlmExecutor
      * @return array{
      *     model: array{value: string, source: string},
      *     max_tokens: array{value: int|null, source: string},
+     *     temperature: array{value: float|null, source: string},
      *     provider_options: array{value: array<string, mixed>, source: string},
      *     reasoning: array{value: array{level: string|null, budget: int|null, options: array<string, mixed>, note: string|null}, source: string},
      *     structured_mode: array{value: string|null, source: string},
@@ -112,6 +115,7 @@ final class LlmExecutor
     {
         $call ??= new LlmCall;
         $configuredMaxTokens = config('agenticgraph.prism.max_tokens', null);
+        $configuredTemperature = config($this->temperatureConfig, null);
         $model = match (true) {
             $call->model !== null => ['value' => $call->model, 'source' => 'call'],
             $this->model !== null => ['value' => $this->model, 'source' => 'node'],
@@ -119,6 +123,15 @@ final class LlmExecutor
         };
         $reasoning = $this->reasoningSetting($call, $model['value']);
         $providerOptions = array_replace($this->providerOptions, $call->providerOptions);
+        $temperature = match (true) {
+            $call->temperature !== null => ['value' => $call->temperature, 'source' => 'call'],
+            $this->temperature !== null => ['value' => $this->temperature, 'source' => 'node'],
+            default => ['value' => is_numeric($configuredTemperature) ? (float) $configuredTemperature : null, 'source' => 'config'],
+        };
+        if ($temperature['value'] !== null && ($temperature['value'] < 0 || $temperature['value'] > 2)) {
+            $where = $temperature['source'] === 'config' ? "config ({$this->temperatureConfig})" : $temperature['source'];
+            throw new \InvalidArgumentException("The temperature from {$where} must be 0 to 2, got [{$temperature['value']}].");
+        }
 
         return [
             'model' => $model,
@@ -127,6 +140,7 @@ final class LlmExecutor
                 $this->maxTokens !== null => ['value' => $this->maxTokens, 'source' => 'node'],
                 default => ['value' => is_numeric($configuredMaxTokens) ? (int) $configuredMaxTokens : null, 'source' => 'config'],
             },
+            'temperature' => $temperature,
             'provider_options' => [
                 'value' => array_replace_recursive($providerOptions, $reasoning['value']['options']),
                 'source' => match (true) {
@@ -346,6 +360,7 @@ final class LlmExecutor
             $reasoning['budget'] !== null ? "budget {$reasoning['budget']}" : "level [{$reasoning['level']}]",
             $settings['provider_options']['value'],
             $e,
+            $settings['temperature']['value'],
         );
     }
 
@@ -484,6 +499,10 @@ final class LlmExecutor
 
         if ($settings['max_tokens']['value'] !== null) {
             $request->withMaxTokens($settings['max_tokens']['value']);
+        }
+
+        if ($settings['temperature']['value'] !== null) {
+            $request->usingTemperature($settings['temperature']['value']);
         }
 
         if ($settings['provider_options']['value'] !== []) {
@@ -798,7 +817,7 @@ final class LlmExecutor
     }
 
     /**
-     * Covers the model, max tokens, provider options, system prompt, schema and the canonical message list (role,
+     * Covers the model, max tokens, temperature (when set), provider options, system prompt, schema and the canonical message list (role,
      * content, tool calls, tool results).
      *
      * @param  array<string, mixed>  $settings
@@ -807,6 +826,7 @@ final class LlmExecutor
     {
         $payload = json_encode([
             ...($settings['structured_mode']['value'] !== null ? ['structured_mode' => $settings['structured_mode']['value']] : []),
+            ...($settings['temperature']['value'] !== null ? ['temperature' => $settings['temperature']['value']] : []),
             'model' => $settings['model']['value'],
             'max_tokens' => $settings['max_tokens']['value'],
             'provider_options' => $settings['provider_options']['value'],

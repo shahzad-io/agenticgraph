@@ -164,7 +164,7 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
     /**
      * The routing request: buildPromptWithLoop() as the prompt, or $prompt formatted with routingVars() and the loop
      * context appended to its last message. The router's own cache is checked in routeWithLoop(); routing never
-     * streams. Max tokens and reasoning come from executor(): the class properties, then agenticgraph.router.
+     * streams. Max tokens and reasoning come from executor(): the class properties, then agenticgraph.router. Temperature comes from agenticgraph.router.temperature only.
      *
      * @return array{0: LlmCall, 1: array{vars?: array<string, mixed>, template_vars?: list<string>}}
      */
@@ -439,6 +439,7 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
             maxTokens: $this->maxTokens ?? (is_numeric($maxTokens) ? (int) $maxTokens : 1024),
             trackTokens: $this->trackTokens,
             reasoning: $this->reasoning ?? (is_string($reasoning) && $reasoning !== '' ? $reasoning : null),
+            temperatureConfig: 'agenticgraph.router.temperature',
         );
     }
 

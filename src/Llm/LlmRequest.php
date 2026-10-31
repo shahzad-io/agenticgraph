@@ -19,7 +19,7 @@ use Shahzad\AgenticGraph\Prompts\PromptTemplate;
  * One model call, built from a node with $this->llm(). Immutable: every method returns a new request.
  *
  * Templates interpolate (prompt(), chat(), with vars()); inline content (system(), user(), assistant(), history())
- * never does. Settings: config, then the node's properties, then model() / maxTokens() / providerOptions() here. reasoning() has
+ * never does. Settings: config, then the node's properties, then model() / maxTokens() / temperature() / providerOptions() here. reasoning() has
  * no config layer (node, then call); timeout() and structuredRetries() have no node layer (config, then call).
  *
  *     $this->llm()->prompt('Summarize {topic}')->vars(['topic' => $topic])->text();
@@ -68,6 +68,8 @@ final class LlmRequest
     private ?string $model = null;
 
     private ?int $maxTokens = null;
+
+    private ?float $temperature = null;
 
     private ?string $reasoning = null;
 
@@ -266,6 +268,19 @@ final class LlmRequest
     }
 
     /**
+     * Sampling temperature, 0 to 2, over the node's $temperature and agenticgraph.prism.temperature. Not checked
+     * against the model: one that refuses it (some reasoning models unless reasoning is off) fails the call.
+     */
+    public function temperature(float $value): self
+    {
+        if ($value < 0 || $value > 2) {
+            throw new \InvalidArgumentException("temperature() takes 0 to 2, got [{$value}].");
+        }
+
+        return $this->with('temperature', $value);
+    }
+
+    /**
      * Seconds for each HTTP request to the provider, over agenticgraph.api.timeout (and api.connect_timeout when
      * $connectSeconds is given). Each tool step and each structured retry is its own request; a streamed request
      * must finish within it. Tool handlers are not bounded.
@@ -441,6 +456,7 @@ final class LlmRequest
             maxSteps: $this->maxSteps,
             model: $this->model,
             maxTokens: $this->maxTokens,
+            temperature: $this->temperature,
             providerOptions: $this->providerOptions,
             reasoning: $this->reasoning,
             reasoningBudget: $this->reasoningBudget,

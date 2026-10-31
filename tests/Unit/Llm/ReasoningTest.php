@@ -232,6 +232,15 @@ describe('after the call', function () {
         Http::assertSent(fn ($request) => ($request->data()['reasoning'] ?? null) === ['effort' => 'high']);
     })->with([[400, true], [429, false], [500, false]]);
 
+    it('names the temperature too when a vendor 400 rejects a call with reasoning and temperature', function () {
+        config()->set('prism.providers.openai.api_key', 'test-key');
+        Http::fake(['api.openai.com/*' => Http::response(['error' => ['type' => 'invalid_request_error', 'message' => 'Unsupported parameter: temperature']], 400)]);
+        $node = new ReasoningProbeNode('openai:gpt-4o', 'high');
+
+        expect(fn () => $node->call(fn (LlmRequest $llm) => $llm->prompt('hi')->temperature(0.7)->run()))
+            ->toThrow(ReasoningException::class, 'reasoning level [high] and temperature 0.7');
+    });
+
     it('flags thought tokens under off: a warning, an event and a note on the response', function () {
         Event::fake([ReasoningNotDisabled::class, TokensUsed::class]);
         Log::spy();

@@ -74,6 +74,8 @@ return [
         'max_tokens' => env('AGENTICGRAPH_ROUTER_MAX_TOKENS', 1024),
         // Reasoning level for routing calls: off, low, medium or high. Null sends nothing (the provider's default).
         'reasoning' => env('AGENTICGRAPH_ROUTER_REASONING'),
+        // Temperature for routing calls, 0 to 2. Null sends none. agenticgraph.prism.temperature does not apply to routers.
+        'temperature' => env('AGENTICGRAPH_ROUTER_TEMPERATURE', null),
     ],
 
     'cache' => [
@@ -89,6 +91,7 @@ return [
         'cache_enabled' => env('AGENTICGRAPH_PRISM_CACHE', false),
         'cache_ttl' => env('AGENTICGRAPH_PRISM_CACHE_TTL', 60),
         'max_tokens' => env('AGENTICGRAPH_PRISM_MAX_TOKENS', null), // max output tokens per PrismNode call; null = no limit sent
+        'temperature' => env('AGENTICGRAPH_PRISM_TEMPERATURE', null), // 0 to 2; a node's $temperature or a call's temperature() wins; null = not sent
         // Extra model calls when a structured reply does not decode or fit as(); the error is fed back. 0 = fail at once.
         'structured' => [
             'retries' => env('AGENTICGRAPH_PRISM_STRUCTURED_RETRIES', 1),

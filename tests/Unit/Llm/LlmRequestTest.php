@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Event;
+use PHPUnit\Framework\AssertionFailedError;
 use Prism\Prism\Enums\FinishReason;
 use Prism\Prism\Enums\ToolChoice;
 use Prism\Prism\Exceptions\PrismException;
@@ -34,6 +35,7 @@ use Shahzad\AgenticGraph\Streaming\Sinks\MemorySink;
 use Shahzad\AgenticGraph\Streaming\StreamContext;
 use Shahzad\AgenticGraph\Streaming\StreamOptions;
 use Shahzad\AgenticGraph\Streaming\StreamSession;
+use Shahzad\AgenticGraph\Testing\Llm;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
 
 /** Visitor text that must reach the model byte for byte. */
@@ -44,8 +46,9 @@ const LLM_BRACES = 'Hi {name}, literal {{x}}, stray { and } here';
  */
 class LlmProbeNode extends PrismNode
 {
-    public function __construct(?string $model = null, ?int $maxTokens = null, array $providerOptions = [], ?bool $cacheEnabled = null)
+    public function __construct(?string $model = null, ?int $maxTokens = null, array $providerOptions = [], ?bool $cacheEnabled = null, ?float $temperature = null)
     {
+        $this->temperature = $temperature;
         $this->model = $model;
         $this->maxTokens = $maxTokens;
         $this->providerOptions = $providerOptions;
@@ -344,6 +347,100 @@ describe('settings', function () {
         'negative' => [-5, null],
         'zero connect' => [30, 0],
     ]);
+});
+
+describe('temperature', function () {
+    it('resolves temperature from config, then the node, then the call; null sends none', function () {
+        $text = fn (LlmRequest $llm) => $llm->prompt('a')->text();
+        $node = new LlmProbeNode(temperature: 0.4);
+
+        $none = llmRecorded([$text], [llmText()]);
+        config()->set('agenticgraph.prism.temperature', '0.9');
+        $config = llmRecorded([$text], [llmText()]);
+        $fromNode = llmRecorded([$text], [llmText()], $node);
+        $call = llmRecorded([fn (LlmRequest $llm) => $llm->prompt('a')->temperature(0)->text()], [llmText()], $node);
+
+        expect([$none[0]->temperature(), $config[0]->temperature(), $fromNode[0]->temperature(), $call[0]->temperature()])->toBe([null, 0.9, 0.4, 0.0]);
+    });
+
+    it('shows temperature and its source in explain()', function () {
+        $node = new LlmProbeNode(temperature: 0.4);
+        $settings = fn (LlmProbeNode $node, Closure $build) => $node->call(fn (LlmRequest $llm) => $build($llm->prompt('a'))->explain())['settings']['temperature'];
+
+        $none = $settings(new LlmProbeNode, fn ($llm) => $llm);
+        config()->set('agenticgraph.prism.temperature', 1.2);
+
+        expect($none)->toBe(['value' => null, 'source' => 'config'])
+            ->and($settings(new LlmProbeNode, fn ($llm) => $llm))->toBe(['value' => 1.2, 'source' => 'config'])
+            ->and($settings($node, fn ($llm) => $llm))->toBe(['value' => 0.4, 'source' => 'node'])
+            ->and($settings($node, fn ($llm) => $llm->temperature(2)))->toBe(['value' => 2.0, 'source' => 'call']);
+    });
+
+    it('sends the temperature on every path, streamed included', function (Closure $build, array $fakes, bool $stream) {
+        if ($stream) {
+            llmBindSink();
+        }
+
+        $requests = llmRecorded([$build], $fakes);
+
+        expect($requests)->not->toBeEmpty()
+            ->and(array_unique(array_map(fn ($request) => $request->temperature(), $requests)))->toBe([0.3]);
+    })->with([
+        'text' => [fn (LlmRequest $llm) => $llm->prompt('a')->temperature(0.3)->text(), fn () => [llmText()], false],
+        'structured' => [fn (LlmRequest $llm) => $llm->prompt('a')->schema(llmSchema())->temperature(0.3)->structured(), fn () => [llmStructured()], false],
+        'tools' => [fn (LlmRequest $llm) => $llm->prompt('a')->tools([llmTool()])->temperature(0.3)->run(), fn () => [llmText()], false],
+        'mcp' => [fn (LlmRequest $llm) => $llm->prompt('a')->mcp('docs', ['tools' => [llmTool()]])->temperature(0.3)->run(), fn () => [llmText()], false],
+        'streamed text' => [fn (LlmRequest $llm) => $llm->prompt('a')->temperature(0.3)->text(), fn () => [llmText()], true],
+        'streamed structured' => [fn (LlmRequest $llm) => $llm->prompt('a')->schema(llmSchema())->temperature(0.3)->structured(), fn () => [llmText('{"label":"ok"}')], true],
+        'streamed structured fallback' => [fn (LlmRequest $llm) => $llm->prompt('a')->schema(llmSchema())->temperature(0.3)->structured(), fn () => [llmText('not json'), llmStructured()], true],
+        'streamed tools' => [fn (LlmRequest $llm) => $llm->prompt('a')->tools([llmTool()])->temperature(0.3)->run(), fn () => [llmText()], true],
+    ]);
+
+    it('refuses a temperature outside 0 to 2', function (float $value) {
+        expect(fn () => (new LlmProbeNode)->call(fn (LlmRequest $llm) => $llm->temperature($value)))
+            ->toThrow(InvalidArgumentException::class, 'temperature() takes 0 to 2');
+    })->with([-0.1, 2.01, 5]);
+
+    it('refuses a resolved temperature outside 0 to 2 from any source, naming the source', function (Closure $setup, string $source) {
+        $node = $setup();
+
+        expect(fn () => $node->call(fn (LlmRequest $llm) => $llm->prompt('a')->explain()))
+            ->toThrow(InvalidArgumentException::class, "temperature from {$source} must be 0 to 2")
+            ->and(fn () => llmRecorded([fn (LlmRequest $llm) => $llm->prompt('a')->text()], [llmText()], $node))
+            ->toThrow(InvalidArgumentException::class, "temperature from {$source} must be 0 to 2");
+    })->with([
+        'config' => [function () {
+            config()->set('agenticgraph.prism.temperature', '2.5');
+
+            return new LlmProbeNode;
+        }, 'config (agenticgraph.prism.temperature)'],
+        'node' => [fn () => new LlmProbeNode(temperature: -0.5), 'node'],
+    ]);
+
+    it('accepts the bounds 0 and 2', function () {
+        expect((new LlmProbeNode)->call(fn (LlmRequest $llm) => $llm->prompt('a')->temperature(0)->explain())['settings']['temperature']['value'])->toBe(0.0)
+            ->and((new LlmProbeNode)->call(fn (LlmRequest $llm) => $llm->prompt('a')->temperature(2)->explain())['settings']['temperature']['value'])->toBe(2.0);
+    });
+
+    it('is seen by Llm::fake()->assertSettings()', function () {
+        $llm = Llm::fake([llmText()]);
+        (new LlmProbeNode(temperature: 0.4))->call(fn (LlmRequest $request) => $request->prompt('a')->temperature(0.7)->text());
+
+        $llm->assertSettings(['temperature' => ['value' => 0.7, 'source' => 'call']]);
+        expect(fn () => $llm->assertSettings(['temperature' => 0.4]))->toThrow(AssertionFailedError::class);
+    });
+
+    it('does not share a cached reply between calls differing only in temperature', function () {
+        $node = new LlmProbeNode;
+
+        $requests = llmRecorded([
+            fn (LlmRequest $llm) => $llm->prompt('a')->temperature(0.2)->withCache(10)->text(),
+            fn (LlmRequest $llm) => $llm->prompt('a')->temperature(0.9)->withCache(10)->text(),
+            fn (LlmRequest $llm) => $llm->prompt('a')->temperature(0.9)->withCache(10)->text(),
+        ], [llmText('cold'), llmText('warm')], $node);
+
+        expect(array_map(fn ($request) => $request->temperature(), $requests))->toBe([0.2, 0.9]);
+    });
 });
 
 describe('caching', function () {

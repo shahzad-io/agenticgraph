@@ -26,10 +26,12 @@ final class ReasoningException extends RuntimeException
     /**
      * @param  array<string, mixed>  $options  the provider options sent to Prism
      */
-    public static function rejected(string $setting, array $options, \Throwable $previous): self
+    public static function rejected(string $setting, array $options, \Throwable $previous, ?float $temperature = null): self
     {
+        $settings = $temperature !== null ? "reasoning {$setting} and temperature {$temperature}" : "reasoning {$setting}";
+
         return new self(
-            "The provider rejected the request with reasoning {$setting} set. Options sent to Prism: ".json_encode($options, JSON_UNESCAPED_SLASHES).'. Provider error: '.$previous->getMessage(),
+            "The provider rejected the request with {$settings} set. Options sent to Prism: ".json_encode($options, JSON_UNESCAPED_SLASHES).'. Provider error: '.$previous->getMessage(),
             (int) $previous->getCode(),
             $previous,
         );
