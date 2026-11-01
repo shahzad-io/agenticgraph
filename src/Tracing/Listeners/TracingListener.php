@@ -54,7 +54,7 @@ class TracingListener
         $this->captureState = config('agenticgraph.tracing.capture.state', 'keys');
         $this->capturePrompts = config('agenticgraph.tracing.capture.prompts', false);
         $this->captureResponses = config('agenticgraph.tracing.capture.responses', false);
-        $this->captureMaxLength = (int) config('agenticgraph.tracing.capture.max_length', 2000);
+        $this->captureMaxLength = CaptureDepth::maxLength();
     }
 
     /**

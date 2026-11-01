@@ -58,6 +58,8 @@ Upgrading from 0.1.0? Follow [Upgrading from 0.1.0](README.md#upgrading-from-010
 
 ### Fixed
 
+- A trace envelope of exactly 1 MiB is sent as it is; only one above 1 MiB is shrunk (it was shrunk at 1 MiB). The 10 MiB step already used the same boundary.
+- `capture.max_length` below 50 bytes (the longest truncation marker plus a margin, `CaptureDepth::MIN_MAX_LENGTH`) throws an `InvalidArgumentException` naming the key, the value and the minimum when the setting is read, instead of cutting values to a bare marker mid-run.
 - A middleware that catches a node's final exception and throws a different one no longer sends a second failed span with the last attempt's id (which replaced that attempt's error with the middleware's). The node's span keeps its own exception and `stage: node`; the middleware's exception is what the run fails with, on the graph span and the trace.
 - A false "no outgoing edges" warning for `addJoin()` sources.
 - A queued graph job that fails (for example a graph not registered on the worker) marks the execution failed instead of leaving it running.

@@ -273,7 +273,8 @@ return [
 
             'prompts' => env('AGENTICGRAPH_CAPTURE_PROMPTS', false),
             'responses' => env('AGENTICGRAPH_CAPTURE_RESPONSES', false),
-            // Bounds prompts, responses, string attributes, tool args/results, SQL and state values, in bytes.
+            // Bounds prompts, responses, string attributes, tool args/results, SQL and state values, in bytes. Minimum 50 (the longest
+            // truncation marker plus a margin); a smaller value throws InvalidArgumentException when read.
             // A longer value is cut at a character boundary and ends with " [...truncated N]" (N = original bytes).
             'max_length' => env('AGENTICGRAPH_CAPTURE_MAX_LENGTH', 2000),
             // 'message' = exception class and message (default), 'class' = exception class only

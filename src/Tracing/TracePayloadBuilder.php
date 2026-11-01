@@ -132,7 +132,7 @@ final class TracePayloadBuilder
         $size = $this->measure($payload);
 
         // If under limit, return as-is
-        if ($size < self::MAX_PAYLOAD_BYTES) {
+        if ($size <= self::MAX_PAYLOAD_BYTES) {
             return $payload;
         }
 

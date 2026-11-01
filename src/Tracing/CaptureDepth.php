@@ -18,6 +18,32 @@ final class CaptureDepth
         'x-amz-signature', 'x-amz-credential', 'x-amz-security-token', 'x-goog-signature',
     ];
 
+    /**
+     * Smallest accepted capture.max_length: the longest marker cut() can write (" [...truncated " + 19 digits
+     * of PHP_INT_MAX + "]" = 35 bytes) plus a 15 byte margin, so a cut value always keeps some text.
+     */
+    public const MIN_MAX_LENGTH = 50;
+
+    /**
+     * capture.max_length, validated where it is read.
+     *
+     * @throws \InvalidArgumentException below MIN_MAX_LENGTH
+     */
+    public static function maxLength(): int
+    {
+        $value = config('agenticgraph.tracing.capture.max_length', 2000);
+
+        if ((int) $value < self::MIN_MAX_LENGTH) {
+            throw new \InvalidArgumentException(sprintf(
+                'agenticgraph.tracing.capture.max_length is %s, below the minimum of %d bytes (the longest truncation marker plus a margin).',
+                is_scalar($value) ? var_export($value, true) : get_debug_type($value),
+                self::MIN_MAX_LENGTH,
+            ));
+        }
+
+        return (int) $value;
+    }
+
     public static function shouldCarryPromptInEvent(): bool
     {
         return (bool) config('agenticgraph.tracing.capture.prompts', false);
@@ -133,7 +159,7 @@ final class CaptureDepth
         }
 
         $encoded = json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR);
-        if (! is_string($encoded) || strlen($encoded) <= (int) config('agenticgraph.tracing.capture.max_length', 2000)) {
+        if (! is_string($encoded) || strlen($encoded) <= self::maxLength()) {
             return $value;
         }
 
@@ -142,7 +168,7 @@ final class CaptureDepth
 
     public static function truncate(?string $text): ?string
     {
-        return $text === null ? null : self::cut($text, (int) config('agenticgraph.tracing.capture.max_length', 2000));
+        return $text === null ? null : self::cut($text, self::maxLength());
     }
 
     /**
