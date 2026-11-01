@@ -117,7 +117,7 @@ it('truncates llm responses first and records _meta', function () {
         ->and($payload['_meta']['original_size_bytes'])->toBeGreaterThan(1_048_576)
         ->and($payload['_meta']['truncated_at'])->toMatch(TRACE_TIME_PATTERN)
         ->and(strlen($byId['big']['response']))->toBeLessThan(800_000)
-        ->and($byId['big']['response'])->toEndWith(' [...truncated]')
+        ->and($byId['big']['response'])->toMatch('/ \[\.\.\.truncated 1500000\]$/')
         ->and($byId['big']['prompt'])->toBe('short prompt')
         ->and($byId['small']['response'])->toBe('tiny');
 });

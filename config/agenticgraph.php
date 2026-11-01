@@ -232,10 +232,25 @@ return [
         'api_key' => env('AGENTICPULSE_API_KEY'),
         'endpoint' => env('AGENTICPULSE_ENDPOINT', 'https://ingest.agenticgraph.dev'),
 
-        // Ingest transport: seconds per attempt; one retry on a connection error or 5xx
+        // Ingest transport. connect_timeout and timeout are seconds per attempt; a connection error or a
+        // 5xx is tried twice, a 4xx never. Every request sends User-Agent: agenticgraph/{version}.
+        //
+        // A 429 with Retry-After (seconds or an HTTP date) is honored: a wait up to retry_after_wait seconds
+        // happens in the request or job and the segment is posted once more. A longer wait is handed to a
+        // delayed SendPulseSegmentJob when the app has a real queue (not sync), else the exporter waits
+        // retry_after_wait seconds, posts once more and logs a failure. A 429 without Retry-After, a 413
+        // (Pulse enforces plan limits by truncation) and any other 4xx are logged, not retried.
+        // The job holds the encoded segment (up to about 1 MiB, 10 MiB at most). SQS refuses a message over
+        // 256 KB: that dispatch fails and the exporter falls back to waiting and posting once. Use a queue
+        // without that limit (database, redis) to keep large segments from being lost.
         'transport' => [
             'connect_timeout' => env('AGENTICGRAPH_TRACING_CONNECT_TIMEOUT', 1),
             'timeout' => env('AGENTICGRAPH_TRACING_TIMEOUT', 3),
+            'retry_after_wait' => env('AGENTICGRAPH_TRACING_RETRY_AFTER_WAIT', 2), // seconds to wait in process
+            'max_delay' => env('AGENTICGRAPH_TRACING_MAX_DELAY', 300), // longest delay given to the job, seconds
+            'queue_connection' => env('AGENTICGRAPH_TRACING_QUEUE_CONNECTION'), // null = the app default connection
+            'queue_name' => env('AGENTICGRAPH_TRACING_QUEUE_NAME'), // null = the connection's default queue
+            'job_tries' => env('AGENTICGRAPH_TRACING_JOB_TRIES', 5),
         ],
 
         'service' => [
@@ -258,7 +273,8 @@ return [
 
             'prompts' => env('AGENTICGRAPH_CAPTURE_PROMPTS', false),
             'responses' => env('AGENTICGRAPH_CAPTURE_RESPONSES', false),
-            // Bounds prompts, responses, string attributes, tool args/results, SQL and state values
+            // Bounds prompts, responses, string attributes, tool args/results, SQL and state values, in bytes.
+            // A longer value is cut at a character boundary and ends with " [...truncated N]" (N = original bytes).
             'max_length' => env('AGENTICGRAPH_CAPTURE_MAX_LENGTH', 2000),
             // 'message' = exception class and message (default), 'class' = exception class only
             'errors' => env('AGENTICGRAPH_CAPTURE_ERRORS', 'message'),

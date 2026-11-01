@@ -142,18 +142,35 @@ final class CaptureDepth
 
     public static function truncate(?string $text): ?string
     {
-        if ($text === null) {
-            return null;
-        }
+        return $text === null ? null : self::cut($text, (int) config('agenticgraph.tracing.capture.max_length', 2000));
+    }
 
-        $maxLength = (int) config('agenticgraph.tracing.capture.max_length', 2000);
-        if (strlen($text) <= $maxLength) {
+    /**
+     * The one writer of the truncation marker. Text longer than $maxLength bytes is cut to at most
+     * $maxLength bytes ending in " [...truncated N]", N the original length in bytes. The cut is on a
+     * character boundary (mb_strcut), so the result is valid UTF-8 and json_encode does not throw.
+     * $atWords prefers a sentence or word boundary.
+     */
+    public static function cut(string $text, int $maxLength, bool $atWords = false): string
+    {
+        $length = strlen($text);
+        if ($length <= $maxLength) {
             return $text;
         }
 
-        $truncated = substr($text, 0, $maxLength - 15);
+        $marker = ' [...truncated '.$length.']';
+        $head = mb_strcut($text, 0, max($maxLength - strlen($marker), 0), 'UTF-8');
 
-        return $truncated.' [...truncated]';
+        if ($atWords) {
+            $sentence = strrpos($head, '. ');
+            if ($sentence !== false && $sentence > $maxLength * 0.7) {
+                $head = substr($head, 0, $sentence + 1);
+            } elseif (($space = strrpos($head, ' ')) !== false) {
+                $head = substr($head, 0, $space);
+            }
+        }
+
+        return $head.$marker;
     }
 
     /**

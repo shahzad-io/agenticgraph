@@ -400,8 +400,8 @@ it('serializes values as state capture does: JSON, class names, bools and the si
 
     $outcome = $exporter->sent[0]['trace']['annotations']['outcome'];
     expect(anSpan($exporter->sent[0], 'v')['annotations']['description'])->toBe('{"a":1,"b":[true]}|{"kind":"json"}|AnOpaque|false||')
-        ->and($outcome['headline'])->toBe(str_repeat('x', 85).' [...truncated]')
-        ->and(array_column($outcome['fields'], 'value'))->toBe(['{"a":1,"b":[true]}', '{"kind":"json"}', 'AnOpaque', false, str_repeat('x', 85).' [...truncated]', null])
+        ->and($outcome['headline'])->toBe(str_repeat('x', 80).' [...truncated 3000]')
+        ->and(array_column($outcome['fields'], 'value'))->toBe(['{"a":1,"b":[true]}', '{"kind":"json"}', 'AnOpaque', false, str_repeat('x', 80).' [...truncated 3000]', null])
         ->and($outcome['missing'])->toBe([])
         ->and(anJson($exporter->sent))->not->toContain('opaque-secret');
 });

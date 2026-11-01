@@ -222,21 +222,6 @@ class TokensUsed implements ShouldQueue
             return $text;
         }
 
-        // Try to truncate at sentence boundary first
-        $truncated = substr($text, 0, $maxLength - 20);
-        $lastSentence = strrpos($truncated, '. ');
-
-        if ($lastSentence !== false && $lastSentence > $maxLength * 0.7) {
-            return substr($truncated, 0, $lastSentence + 1).' [...truncated]';
-        }
-
-        // Fallback: truncate at word boundary
-        $lastSpace = strrpos($truncated, ' ');
-        if ($lastSpace !== false) {
-            return substr($truncated, 0, $lastSpace).' [...truncated]';
-        }
-
-        // Final fallback: hard truncate
-        return substr($text, 0, $maxLength - 15).' [...truncated]';
+        return CaptureDepth::cut($text, $maxLength, atWords: true);
     }
 }

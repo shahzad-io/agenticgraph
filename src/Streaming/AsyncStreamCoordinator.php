@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Shahzad\AgenticGraph\Streaming;
 
 use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Execution\ExecutionId;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
 use Shahzad\AgenticGraph\Execution\ExecutionRepository;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
@@ -33,7 +34,7 @@ final class AsyncStreamCoordinator
             );
         }
 
-        $executionId = $this->generateExecutionId();
+        $executionId = ExecutionId::generate();
         $streamId = uniqid('stream_', true);
         $rootSpanId = uniqid('span_', true);
 
@@ -56,14 +57,5 @@ final class AsyncStreamCoordinator
             'executionId' => $executionId,
             'streamId' => $streamId,
         ];
-    }
-
-    private function generateExecutionId(): string
-    {
-        $prefix = 'exec_';
-        $timestamp = microtime(true);
-        $random = bin2hex(random_bytes(8));
-
-        return $prefix.$timestamp.'_'.$random;
     }
 }

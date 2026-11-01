@@ -43,6 +43,8 @@ Upgrading from 0.1.0? Follow [Upgrading from 0.1.0](README.md#upgrading-from-010
 - **Router settings.** `PrismRouter` takes a `prompt:` template or prompt file, sends `agenticgraph.router.max_tokens` (`AGENTICGRAPH_ROUTER_MAX_TOKENS`, default 1024) and `agenticgraph.router.reasoning` (`AGENTICGRAPH_ROUTER_REASONING`), and logs a warning and dispatches `RouteFellBack` whenever it takes the default route.
 - **Events.** `GraphExecutionFailed`, `NodeExecutionFailed`, `NodeInterrupted`, `NodeResumed`, `InterruptPending`, `InterruptExpired`, `CheckpointCreated`, `RouteDecided`, `RouteFellBack`, `LlmCallFailed`, `ReasoningNotDisabled` and `ToolCallCaptured`. `TokensUsed` gains cache, thought-token, streamed and prompt-file fields.
 - **Execution settings.** Loops with iteration and cycle limits (`execution.loop`, opt-in), a checkpoint every N nodes (`AGENTICGRAPH_CHECKPOINT_FREQUENCY`), a maximum state size (`AGENTICGRAPH_MAX_STATE_SIZE`), queue job tries and timeouts (`AGENTICGRAPH_EXECUTION_TRIES`, `AGENTICGRAPH_EXECUTION_TIMEOUT`, `AGENTICGRAPH_RESUME_TRIES`, `AGENTICGRAPH_RESUME_TIMEOUT`), `$maxTokens` and `$providerOptions` on nodes (`AGENTICGRAPH_PRISM_MAX_TOKENS`), and image, audio and embedding helpers on `PrismNode`.
+- **Pulse 429 handling.** The Pulse exporter honors `Retry-After` (seconds or an HTTP date). A wait up to `tracing.transport.retry_after_wait` (2 s) happens in process and the segment is posted once more; a longer one goes to a delayed `SendPulseSegmentJob` when the app has a real queue (not `sync`), else the exporter waits the cap, posts once more and logs. A 429 without `Retry-After`, a 413 and other 4xx stay logged losses. New `tracing.transport` keys: `retry_after_wait`, `max_delay`, `queue_connection`, `queue_name`, `job_tries`. SQS refuses messages over 256 KB, so a large segment falls back to wait-and-retry-once there.
+- **Pulse requests identify the client.** Every exporter request sends `User-Agent: agenticgraph/{version}` (the installed package version) and `Accept: application/json`.
 
 ### Changed
 
@@ -50,6 +52,9 @@ Upgrading from 0.1.0? Follow [Upgrading from 0.1.0](README.md#upgrading-from-010
 - Package logs no longer carry state values, model output or stack traces.
 - Safe under Laravel Octane and long-running queue workers: no graph, trace, execution or pricing state crosses requests (verified on RoadRunner).
 - Config keys that 0.1.0 never read are removed: `checkpoint.strategy` (replaced by `checkpoint.frequency`), `checkpoint.compression`, `checkpoint.encryption`, `events.enabled`, `lock.driver`, `lock.prefix`, `lock.strategy`, `lock.retry_interval`, `logging.channel`, `logging.level`, `logging.log_state`, `execution.max_retries`, `execution.retry_delay`, `execution.parallel`, `prism.timeout`, `prism.track_tokens` and `visualization`. `execution.timeout` now reads `AGENTICGRAPH_EXECUTION_TIMEOUT`.
+- **Truncation marker.** A cut value now ends with ` [...truncated N]`, `N` being the original length in bytes (it was ` [...truncated]`). One helper, `CaptureDepth::cut()`, writes it for state values, prompts, responses and event text, and the marker counts toward `capture.max_length`. A receiver that matches the old literal must match the new form.
+- **Payload size is measured, not estimated.** The 1 MiB and 10 MiB steps now use the real encoded bytes of the request body (`TracePayloadBuilder::encode()`), so non-ASCII or slash-heavy segments that the old estimate undercounted are shrunk when they should be. `_meta.original_size_bytes` is that encoded size.
+- **Execution ids come from one generator** (`ExecutionId::generate()`: `exec_{microtime}_{16 hex}`), also for a `TraceContext` rebuilt without an id (it used `uniqid`).
 
 ### Fixed
 
@@ -58,6 +63,10 @@ Upgrading from 0.1.0? Follow [Upgrading from 0.1.0](README.md#upgrading-from-010
 - A queued graph job that fails (for example a graph not registered on the worker) marks the execution failed instead of leaving it running.
 - `agenticgraph:interrupt:expire` continues the interrupted trace: the failed graph span reuses the stored root span id (one root span in the merged trace), the final segment carries `graph_name` and ends at or after it starts.
 - `agenticgraph:interrupt:expire` keeps going when broadcasting fails (for example Reverb is down): the failed `stream_close` broadcast is logged as a warning, here and when a queued job fails. Each interrupt is expired in its own transaction, so one that fails (a throwing `InterruptExpired` listener, for example) is logged and stays pending for the next run while the others expire, and its final trace segment is sent only after the commit, so a rolled-back expiry sends none. `BufferedTraceExporter::sendAfterCommit()` opts a trace into that.
+- A value cut at `capture.max_length` no longer splits a multibyte character. The cut left invalid UTF-8, `json_encode` threw, and the whole Pulse segment was lost.
+- A value with an invalid UTF-8 byte no longer loses the whole Pulse segment: the encoder replaces the bad sequence with U+FFFD.
+- A caller-supplied execution id (it is the trace id) longer than 200 characters throws `InvalidExecutionIdException` instead of being accepted.
+- A segment refused with a 429 is no longer lost when Pulse says when to come back (see Pulse 429 handling).
 
 The trace wire (`agenticgraph.trace.v1.1`) and the stream wire contract v1.1 are frozen; later changes are additive. To send traces to your own backend, use OTLP.
 

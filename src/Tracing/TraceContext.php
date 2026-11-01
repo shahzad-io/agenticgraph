@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph\Tracing;
 
+use Shahzad\AgenticGraph\Execution\ExecutionId;
+
 /**
  * Request-scoped trace context for span tracking.
  * Manages the current execution's trace ID and span hierarchy.
@@ -167,7 +169,7 @@ final class TraceContext
      */
     public static function fromArray(array $data): self
     {
-        $executionId = $data['execution_id'] ?? uniqid('exec_', true);
+        $executionId = $data['execution_id'] ?? ExecutionId::generate();
         $rootSpanId = $data['root_span_id'] ?? uniqid('span_', true);
 
         $context = new self($executionId, $rootSpanId);

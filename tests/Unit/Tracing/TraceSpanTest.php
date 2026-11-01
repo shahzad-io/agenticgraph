@@ -256,7 +256,7 @@ it('truncates long string attributes using capture max_length', function (): voi
     ]);
 
     $attributes = $exporter->spans[0]['attributes'] ?? [];
-    expect($attributes['payload'] ?? '')->toEndWith('[...truncated]')
+    expect($attributes['payload'] ?? '')->toEndWith('[...truncated 100]')
         ->and(strlen((string) $attributes['payload']))->toBeLessThanOrEqual(50);
 });
 

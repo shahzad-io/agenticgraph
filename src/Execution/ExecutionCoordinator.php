@@ -132,7 +132,7 @@ class ExecutionCoordinator
     ): StateContract {
         $state->validate();
 
-        $executionId = $executionId ?? $this->generateExecutionId();
+        $executionId = ExecutionId::resolve($executionId);
         $scope = $this->enterScope($executionId, $graph, $options);
         $traceContext = $scope->traceContext;
         $executionContext = $scope->context;
@@ -273,7 +273,7 @@ class ExecutionCoordinator
         $options = $options->withStreaming($this->resolveStreamingMode($options));
 
         if ($options->mode === ExecutionMode::SYNC) {
-            $executionId = $executionId ?? $this->generateExecutionId();
+            $executionId = ExecutionId::resolve($executionId);
             if ($options->streaming === StreamingMode::NONE) {
                 $finalState = $this->execute($graph, $state, $options, executionId: $executionId);
                 $status = $finalState->hasInterrupt()
@@ -361,7 +361,7 @@ class ExecutionCoordinator
             );
         }
 
-        $executionId = $executionId ?? $this->generateExecutionId();
+        $executionId = ExecutionId::resolve($executionId);
 
         return $this->streamingCoordinator->execute($graph, $state, $options, $executionId, $executionOptions);
     }
@@ -414,7 +414,7 @@ class ExecutionCoordinator
     ): string {
         $state->validate();
 
-        $executionId = $this->generateExecutionId();
+        $executionId = ExecutionId::generate();
         $scope = $this->contextManager->enter($executionId, $graph->name, $options, null, $graph);
         $traceContext = $scope->traceContext;
         $rootSpanId = $traceContext->getRootSpanId();
@@ -671,7 +671,7 @@ class ExecutionCoordinator
     {
         $state->validate();
 
-        $executionId = $this->generateExecutionId();
+        $executionId = ExecutionId::generate();
         $this->repo->queued($executionId, $graph->name, State::toStoragePayload($state), null, new ExecutionOptions);
         $this->repo->started($executionId, $graph->name, State::toStoragePayload($state), null, new ExecutionOptions);
 
@@ -829,15 +829,6 @@ class ExecutionCoordinator
     public function streamContext(): ?StreamContext
     {
         return $this->streamingCoordinator->streamContext();
-    }
-
-    private function generateExecutionId(): string
-    {
-        $prefix = 'exec_';
-        $timestamp = microtime(true);
-        $random = bin2hex(random_bytes(8));
-
-        return $prefix.$timestamp.'_'.$random;
     }
 
     private function enterScope(

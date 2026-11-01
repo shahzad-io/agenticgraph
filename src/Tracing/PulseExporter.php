@@ -4,11 +4,15 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph\Tracing;
 
+use Composer\InstalledVersions;
+use Illuminate\Contracts\Bus\Dispatcher;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Sleep;
+use Shahzad\AgenticGraph\Jobs\SendPulseSegmentJob;
 use Shahzad\AgenticGraph\Tracing\Exporters\BufferedTraceExporter;
 
 /**
@@ -43,26 +47,11 @@ class PulseExporter extends BufferedTraceExporter
     protected function send(array $payload): void
     {
         try {
-            // Encoded here so float fields keep their zero fraction on the wire.
-            // Short timeouts and one retry on a connection error or 5xx, never on 4xx.
-            /** @var Response $response */
-            $response = Http::withToken($this->apiKey)
-                ->connectTimeout((float) config('agenticgraph.tracing.transport.connect_timeout', 1))
-                ->timeout((float) config('agenticgraph.tracing.transport.timeout', 3))
-                ->retry(2, 500, fn (\Throwable $e): bool => $e instanceof ConnectionException
-                    || ($e instanceof RequestException && $e->response->serverError()), throw: false)
-                ->withBody(json_encode($payload, JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR), 'application/json')
-                ->post("{$this->endpoint}/v1/ingest");
-
-            if ($response->failed()) {
-                $this->logFailure([
-                    'status' => $response->status(),
-                    'code' => $response->json('code'),
-                    'body' => $response->body(),
-                ]);
-            }
-        } catch (ConnectionException $e) {
-            $this->logFailure(['code' => 'connection_error', 'error' => $e->getMessage()]);
+            $this->sendBody(
+                TracePayloadBuilder::encode($payload),
+                (string) ($payload['trace']['id'] ?? ''),
+                (string) ($payload['segment']['id'] ?? ''),
+            );
         } catch (\Throwable $e) {
             // Silent fail - don't break the user's application
             if ((bool) config('agenticgraph.logging.enabled', true)) {
@@ -74,9 +63,114 @@ class PulseExporter extends BufferedTraceExporter
     }
 
     /**
+     * One POST of the exact body. Short timeouts and a second attempt on a connection error or a 5xx,
+     * never on a 4xx. A 429 is handled by the caller. Throws ConnectionException once the attempts are spent.
+     */
+    public function post(string $body): Response
+    {
+        /** @var Response */
+        return Http::withToken($this->apiKey)
+            ->withUserAgent('agenticgraph/'.self::version())
+            ->acceptJson()
+            ->connectTimeout((float) config('agenticgraph.tracing.transport.connect_timeout', 1))
+            ->timeout((float) config('agenticgraph.tracing.transport.timeout', 3))
+            ->retry(2, 500, fn (\Throwable $e): bool => $e instanceof ConnectionException
+                || ($e instanceof RequestException && $e->response->serverError()), throw: false)
+            ->withBody($body, 'application/json')
+            ->post("{$this->endpoint}/v1/ingest");
+    }
+
+    private function sendBody(string $body, string $traceId, string $segmentId): void
+    {
+        try {
+            $response = $this->post($body);
+            if ($response->status() === 429) {
+                $response = $this->afterRateLimit($response, $body, $traceId, $segmentId);
+            }
+        } catch (ConnectionException $e) {
+            $this->logFailure(['code' => 'connection_error', 'error' => $e->getMessage()]);
+
+            return;
+        }
+
+        if ($response?->failed()) {
+            $this->logFailure([
+                'status' => $response->status(),
+                'code' => $response->json('code'),
+                'body' => $response->body(),
+            ]);
+        }
+    }
+
+    /**
+     * The response to report after a 429; null when a delayed job took the segment.
+     * No Retry-After: not retried, the 429 is the logged loss. Up to retry_after_wait seconds: wait here and
+     * post again once. Longer: a delayed job when the app has a real queue, else wait the cap and post once.
+     */
+    private function afterRateLimit(Response $response, string $body, string $traceId, string $segmentId): ?Response
+    {
+        $wait = self::retryAfter($response);
+        if ($wait === null) {
+            return $response;
+        }
+
+        $cap = (int) config('agenticgraph.tracing.transport.retry_after_wait', 2);
+        if ($wait > $cap && $this->hasRealQueue()) {
+            try {
+                $delay = min($wait, (int) config('agenticgraph.tracing.transport.max_delay', 300));
+                app(Dispatcher::class)->dispatch((new SendPulseSegmentJob($body, $traceId, $segmentId))->delay($delay));
+
+                return null;
+            } catch (\Throwable $e) {
+                // For example an SQS message over 256 KB: fall through to wait and retry once.
+                $this->logFailure(['code' => 'dispatch_failed', 'error' => $e->getMessage(), 'trace_id' => $traceId, 'segment_id' => $segmentId]);
+            }
+        }
+
+        Sleep::for(min($wait, $cap))->seconds();
+
+        return $this->post($body);
+    }
+
+    private function hasRealQueue(): bool
+    {
+        $connection = config('agenticgraph.tracing.transport.queue_connection') ?? config('queue.default');
+
+        return ! in_array(config("queue.connections.{$connection}.driver"), [null, 'sync', 'null'], true);
+    }
+
+    /**
+     * Seconds to wait from a Retry-After header, a number of seconds or an HTTP date; null when absent or unreadable.
+     */
+    public static function retryAfter(Response $response): ?int
+    {
+        $value = trim($response->header('Retry-After'));
+        if ($value === '') {
+            return null;
+        }
+        if (ctype_digit($value)) {
+            return (int) $value;
+        }
+        $at = strtotime($value);
+
+        return $at === false ? null : max($at - now()->getTimestamp(), 0);
+    }
+
+    private static function version(): string
+    {
+        static $version = null;
+
+        try {
+            return $version ??= (string) InstalledVersions::getPrettyVersion('shahzad/agenticgraph');
+        } catch (\OutOfBoundsException) {
+            return 'unknown';
+        }
+    }
+
+    /**
      * @param  array<string, mixed>  $context
      */
-    private function logFailure(array $context): void
+    public function logFailure(array $context): void
     {
         if ((bool) config('agenticgraph.logging.enabled', true)) {
             Log::warning('AgenticPulse ingest failed', $context);

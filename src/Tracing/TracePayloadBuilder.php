@@ -13,10 +13,12 @@ final class TracePayloadBuilder
 {
     public const SCHEMA_VERSION = 'agenticgraph.trace.v1.1';
 
-    /** Payload size limits */
-    private const MAX_PAYLOAD_BYTES = 1_048_576; // 1MB
+    private const JSON_FLAGS = JSON_PRESERVE_ZERO_FRACTION | JSON_INVALID_UTF8_SUBSTITUTE;
 
-    private const HARD_PAYLOAD_LIMIT = 10_485_760; // 10MB - absolute maximum
+    /** Payload size limits */
+    private const MAX_PAYLOAD_BYTES = 1_048_576; // 1 MiB
+
+    private const HARD_PAYLOAD_LIMIT = 10_485_760; // 10 MiB - absolute maximum
 
     /**
      * @param  array<string, mixed>  $trace
@@ -127,76 +129,45 @@ final class TracePayloadBuilder
      */
     private function preparePayload(array $payload): array
     {
-        $estimatedSize = $this->estimatePayloadSize($payload);
+        $size = $this->measure($payload);
 
         // If under limit, return as-is
-        if ($estimatedSize < self::MAX_PAYLOAD_BYTES) {
+        if ($size < self::MAX_PAYLOAD_BYTES) {
             return $payload;
         }
 
         // If over hard limit, keep only the trace record
-        if ($estimatedSize > self::HARD_PAYLOAD_LIMIT) {
-            return $this->createErrorPayload($payload, $estimatedSize);
+        if ($size > self::HARD_PAYLOAD_LIMIT) {
+            return $this->createErrorPayload($payload, $size);
         }
 
         // Apply smart truncation
-        return $this->smartTruncatePayload($payload, $estimatedSize);
+        return $this->smartTruncatePayload($payload, $size);
     }
 
     /**
-     * Estimate payload size without full JSON encoding.
+     * The exact request body: the one encoding every size check measures and the Pulse exporter posts.
+     * Encoded here so float fields keep their zero fraction on the wire. A byte sequence that is not valid
+     * UTF-8 becomes U+FFFD in that value, so one bad value never loses the segment.
+     *
+     * @param  array<string, mixed>  $payload
+     *
+     * @throws \JsonException
+     */
+    public static function encode(array $payload): string
+    {
+        return json_encode($payload, self::JSON_FLAGS | JSON_THROW_ON_ERROR);
+    }
+
+    /**
+     * Real encoded bytes. A value json_encode cannot encode is replaced by null for the count, so
+     * measuring never throws into the caller; the exporter's own encode still fails on it.
      *
      * @param  array<string, mixed>  $payload
      */
-    private function estimatePayloadSize(array $payload): int
+    private function measure(array $payload): int
     {
-        $size = 0;
-
-        // Estimate trace size
-        if (isset($payload['trace'])) {
-            $size += $this->estimateArraySize($payload['trace']);
-        }
-
-        // Estimate spans size
-        if (isset($payload['spans'])) {
-            foreach ($payload['spans'] as $span) {
-                $size += $this->estimateArraySize($span);
-            }
-        }
-
-        // Estimate LLM calls size (these often contain large text)
-        if (isset($payload['llm_calls'])) {
-            foreach ($payload['llm_calls'] as $call) {
-                $size += $this->estimateArraySize($call);
-            }
-        }
-
-        return $size;
-    }
-
-    /**
-     * Estimate size of an array without JSON encoding.
-     *
-     * @param  array<int|string, mixed>  $data
-     */
-    private function estimateArraySize(array $data): int
-    {
-        $size = 0;
-        foreach ($data as $key => $value) {
-            $size += strlen((string) $key);
-            if (is_string($value)) {
-                $size += strlen($value);
-            } elseif (is_array($value)) {
-                $size += $this->estimateArraySize($value);
-            } elseif (is_object($value)) {
-                $encoded = json_encode($value);
-                $size += $encoded !== false ? strlen($encoded) : 100;
-            } else {
-                $size += strlen(json_encode($value) ?: '');
-            }
-        }
-
-        return $size;
+        return strlen((string) json_encode($payload, self::JSON_FLAGS | JSON_PARTIAL_OUTPUT_ON_ERROR));
     }
 
     /**
@@ -216,7 +187,7 @@ final class TracePayloadBuilder
         if ($excess > 0 && isset($payload['llm_calls'])) {
             $payload['llm_calls'] = $this->truncateLlmResponses($payload['llm_calls'], $excess);
             $applied[] = 'responses';
-            $newSize = $this->estimatePayloadSize($payload);
+            $newSize = $this->measure($payload);
             if ($newSize <= self::MAX_PAYLOAD_BYTES) {
                 return $this->finalizePayload($payload, $applied, $currentSize);
             }
@@ -227,7 +198,7 @@ final class TracePayloadBuilder
         if ($excess > 0 && isset($payload['llm_calls'])) {
             $payload['llm_calls'] = $this->truncateLlmPrompts($payload['llm_calls'], $excess);
             $applied[] = 'prompts';
-            $newSize = $this->estimatePayloadSize($payload);
+            $newSize = $this->measure($payload);
             if ($newSize <= self::MAX_PAYLOAD_BYTES) {
                 return $this->finalizePayload($payload, $applied, $currentSize);
             }
@@ -243,7 +214,7 @@ final class TracePayloadBuilder
                 $droppedSpans = count($dropped);
                 $payload['spans'] = array_values(array_diff_key($payload['spans'], $dropped));
                 $applied[] = 'spans';
-                $newSize = $this->estimatePayloadSize($payload);
+                $newSize = $this->measure($payload);
                 if ($newSize <= self::MAX_PAYLOAD_BYTES) {
                     return $this->finalizePayload($payload, $applied, $currentSize, $droppedSpans);
                 }
@@ -353,22 +324,7 @@ final class TracePayloadBuilder
             return $text;
         }
 
-        // Try to truncate at sentence boundary
-        $truncated = substr($text, 0, $maxLength - 20);
-        $lastSentence = strrpos($truncated, '. ');
-
-        if ($lastSentence !== false && $lastSentence > $maxLength * 0.7) {
-            return substr($truncated, 0, $lastSentence + 1).' [...truncated]';
-        }
-
-        // Fallback: truncate at word boundary
-        $lastSpace = strrpos($truncated, ' ');
-        if ($lastSpace !== false) {
-            return substr($truncated, 0, $lastSpace).' [...truncated]';
-        }
-
-        // Final fallback: hard truncate
-        return substr($text, 0, $maxLength - 15).' [...truncated]';
+        return CaptureDepth::cut($text, $maxLength, atWords: true);
     }
 
     /**

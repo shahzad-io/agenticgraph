@@ -170,7 +170,7 @@ it('max_length bounds state values in diff', function () {
     $values = scNodeSpan(scRun(scExporter(['state' => 'diff', 'max_length' => 100])), 'profile')['state_diff']['values'];
 
     expect(strlen($values['long']['value']))->toBe(100)
-        ->and($values['long']['value'])->toEndWith('[...truncated]')
+        ->and($values['long']['value'])->toMatch('/ \[\.\.\.truncated \d+\]$/')
         ->and($values['nested']['value'])->toBeString()
         ->and(strlen($values['nested']['value']))->toBe(100)
         ->and($values['small']['value'])->toBe(['ok' => true])
