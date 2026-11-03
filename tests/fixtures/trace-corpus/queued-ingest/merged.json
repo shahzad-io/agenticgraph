@@ -1,0 +1,122 @@
+{
+    "schema_version": "agenticgraph.trace.v1.1",
+    "trace": {
+        "id": "exec_1793538511.2346_c23bcd8446727680",
+        "status": "completed",
+        "sampled": true,
+        "resource": {
+            "service.name": "agenticgraph",
+            "service.version": "unknown",
+            "deployment.environment.name": "local"
+        },
+        "instrumentation_scope": "agenticgraph",
+        "graph_name": "corpus-queued-ingest",
+        "started_at": "2026-11-01T13:08:31.243137+00:00",
+        "initial_state_keys": [],
+        "ended_at": "2026-11-01T13:08:34.288517+00:00",
+        "duration_ms": 3045.38,
+        "active_ms": 801.729,
+        "final_state_keys": [
+            "middleware_ran",
+            "ingest_run"
+        ],
+        "final_state": {
+            "middleware_ran": true,
+            "ingest_run": "4b00bf2b-1158-4216-960b-e570562ad81a"
+        }
+    },
+    "segments": [
+        {
+            "id": "seg_428c6047301bb3df",
+            "kind": "initial",
+            "final": true,
+            "started_at": "2026-11-01T13:08:31.243137+00:00",
+            "ended_at": "2026-11-01T13:08:31.261397+00:00"
+        },
+        {
+            "id": "seg_e3069cf3c9bee0f0",
+            "kind": "continued",
+            "final": false,
+            "started_at": "2026-11-01T13:08:33.505048+00:00",
+            "ended_at": "2026-11-01T13:08:34.288517+00:00"
+        }
+    ],
+    "spans": [
+        {
+            "id": "span_6ae739d17c7ca1.02662945",
+            "trace_id": "exec_1793538511.2346_c23bcd8446727680",
+            "parent_id": "span_6ae739cf394460.67401500",
+            "node_name": "vector.upsert",
+            "node_type": "vector",
+            "span_type": "vector",
+            "status": "success",
+            "span_kind": "internal",
+            "status_code": "OK",
+            "started_at": "2026-11-01T13:08:33.509910+00:00",
+            "ended_at": "2026-11-01T13:08:34.287362+00:00",
+            "duration_ms": 777.4519920349121,
+            "attributes": {
+                "vector.store": "pgvector",
+                "vector.collection": "b13s_queued",
+                "vector.operation": "upsert",
+                "vector.latency_ms": 777,
+                "vector.embedding_ms": 722
+            },
+            "links": [
+                {
+                    "trace_id": "exec_1793538511.2346_c23bcd8446727680",
+                    "span_id": "span_6ae739cf3ba3f8.08520424"
+                }
+            ]
+        },
+        {
+            "id": "span_6ae739cf3ba3f8.08520424",
+            "trace_id": "exec_1793538511.2346_c23bcd8446727680",
+            "parent_id": "span_6ae739cf394460.67401500",
+            "node_name": "queue_ingest",
+            "node_type": "CorpusQueueIngestNode",
+            "span_type": "node",
+            "attempt": 1,
+            "attempt_of": "span_6ae739cf3ba3f8.08520424",
+            "status": "success",
+            "span_kind": "internal",
+            "status_code": "OK",
+            "started_at": "2026-11-01T13:08:31.244718+00:00",
+            "ended_at": "2026-11-01T13:08:31.256780+00:00",
+            "duration_ms": 12.061834335327148,
+            "state_diff": {
+                "added": [
+                    "middleware_ran",
+                    "ingest_run"
+                ],
+                "removed": [],
+                "values": {
+                    "middleware_ran": true,
+                    "ingest_run": "4b00bf2b-1158-4216-960b-e570562ad81a"
+                }
+            },
+            "loop_context": {
+                "global_iterations": 1,
+                "node_visit_count": 1,
+                "active_cycles": [],
+                "path_depth": 1,
+                "in_cycle": false
+            }
+        },
+        {
+            "id": "span_6ae739cf394460.67401500",
+            "trace_id": "exec_1793538511.2346_c23bcd8446727680",
+            "parent_id": null,
+            "node_name": "corpus-queued-ingest",
+            "node_type": "graph",
+            "span_type": "graph",
+            "status": "success",
+            "span_kind": "internal",
+            "status_code": "OK",
+            "started_at": "2026-11-01T13:08:31.243137+00:00",
+            "ended_at": "2026-11-01T13:08:31.261397+00:00",
+            "duration_ms": 18.26
+        }
+    ],
+    "llm_calls": []
+}

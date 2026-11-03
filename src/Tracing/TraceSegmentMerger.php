@@ -20,11 +20,16 @@ final class TraceSegmentMerger
         $segments = [];
         foreach ($envelopes as $envelope) {
             $segment = is_array($envelope['segment'] ?? null) ? $envelope['segment'] : ['id' => '', 'final' => true];
-            $segments[(string) ($segment['id'] ?? '')] = $envelope + ['segment' => $segment];
+            $id = (string) ($segment['id'] ?? '');
+            // R2: the first copy of a segment id stays. R1: an envelope without a segment block (id '') is replaced by a later one.
+            if ($id === '' || ! isset($segments[$id])) {
+                $segments[$id] = $envelope + ['segment' => $segment];
+            }
         }
 
-        usort($segments, fn (array $a, array $b): int => [(string) ($a['segment']['started_at'] ?? ''), (string) ($a['segment']['id'] ?? '')]
-            <=> [(string) ($b['segment']['started_at'] ?? ''), (string) ($b['segment']['id'] ?? '')]);
+        // R3: parsed start, then id.
+        usort($segments, fn (array $a, array $b): int => [$this->time($a['segment']['started_at'] ?? null), (string) ($a['segment']['id'] ?? '')]
+            <=> [$this->time($b['segment']['started_at'] ?? null), (string) ($b['segment']['id'] ?? '')]);
 
         // Precedence order: later-ended segments last, the final segment last of all.
         $ranked = $segments;
@@ -35,7 +40,9 @@ final class TraceSegmentMerger
         $llmCalls = [];
         $meta = [];
         $status = null;
+        $last = null;
         foreach ($ranked as $envelope) {
+            $last = $envelope['trace']['status'] ?? $last;
             $trace = array_merge($trace, array_diff_key(is_array($envelope['trace'] ?? null) ? $envelope['trace'] : [], ['status' => 1]));
             $status = $this->statusFrom($envelope, $status);
             foreach ($envelope['spans'] ?? [] as $span) {
@@ -49,9 +56,14 @@ final class TraceSegmentMerger
             }
         }
 
+        // R4: a trace with only continued segments takes the status of the last of them.
+        $status ??= $last;
         if ($status !== null) {
             $trace['status'] = $status;
         }
+
+        // R1: a lone envelope without a segment block keeps its own times.
+        $passThrough = count($segments) === 1 && ($segments[0]['segment']['id'] ?? '') === '' && ! isset($segments[0]['segment']['started_at']);
 
         $final = null;
         foreach ($segments as $envelope) {
@@ -76,7 +88,9 @@ final class TraceSegmentMerger
             }
         }
 
-        $startedAt = $initialStart ?? ($windows === [] ? null : TraceTime::fromMicrotime(min(array_column($windows, 0))));
+        // R6: the initial segment's trace start, else the earliest segment start of all segments, also those without an end.
+        $starts = array_filter(array_map(fn (array $envelope): ?float => ($t = TraceTime::parse($envelope['segment']['started_at'] ?? null)) ? TraceTime::toMicrotime($t) : null, $segments));
+        $startedAt = $initialStart ?? ($starts === [] ? null : TraceTime::fromMicrotime(min($starts)));
         // The last segment to end, which is the final one unless queued work outlived the run.
         $finalEnd = TraceTime::parse($final['ended_at'] ?? null);
         $lastEnd = $windows === [] ? null : TraceTime::fromMicrotime(max(array_column($windows, 1)));
@@ -84,10 +98,15 @@ final class TraceSegmentMerger
 
         // A trace that has not finished (running or waiting at an interrupt) has no end yet; active_ms is the time so far.
         $finished = in_array($trace['status'] ?? null, ['completed', 'failed'], true);
+        if ($passThrough) {
+            $startedAt = null;
+        }
         if ($startedAt) {
             $trace['started_at'] = TraceTime::format($startedAt);
         }
-        if (! $finished) {
+        if ($passThrough) {
+            // nothing recomputed
+        } elseif (! $finished) {
             unset($trace['ended_at'], $trace['duration_ms']);
         } elseif ($endedAt) {
             $trace['ended_at'] = TraceTime::format($endedAt);
@@ -95,7 +114,7 @@ final class TraceSegmentMerger
                 $trace['duration_ms'] = TraceTime::diffMs($startedAt, $endedAt);
             }
         }
-        if ($windows !== []) {
+        if ($windows !== [] && ! $passThrough) {
             $trace['active_ms'] = $this->unionMs($windows);
         }
         if (($trace['status'] ?? null) !== 'interrupted') {
@@ -186,11 +205,19 @@ final class TraceSegmentMerger
 
     /**
      * @param  array<string, mixed>  $segment
-     * @return array{int, string}
+     * @return array{int, float}
      */
     private function rank(array $segment): array
     {
-        return [($segment['final'] ?? false) ? 1 : 0, (string) ($segment['ended_at'] ?? '')];
+        return [($segment['final'] ?? false) ? 1 : 0, $this->time($segment['ended_at'] ?? null)];
+    }
+
+    /** Parsed time as microtime; a missing or unreadable time sorts before every real one. */
+    private function time(mixed $value): float
+    {
+        $at = TraceTime::parse($value);
+
+        return $at ? TraceTime::toMicrotime($at) : -INF;
     }
 
     /**
@@ -224,8 +251,8 @@ final class TraceSegmentMerger
     }
 
     /**
-     * The root span of a resumed trace comes from the final segment, which only knows its own
-     * start. Widen it back to the trace start. Its end stays the graph's end, also when queued
+     * The root graph span of a resumed trace comes from the final segment, which only knows its own
+     * start. Any such span (parent_id null, span_type graph) that starts after the trace is widened back to the trace start (R9). Its end stays the graph's end, also when queued
      * work ended later (those spans carry links and may end after the root).
      *
      * @param  array<string, mixed>  $span
