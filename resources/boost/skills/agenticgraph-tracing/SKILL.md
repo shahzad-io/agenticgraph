@@ -80,7 +80,7 @@ AGENTICGRAPH_OTLP_HEADERS_JSON={"Authorization":"Bearer token"}
 
 - Only `http/json`. Another protocol logs `agenticgraph.otlp.unsupported_protocol` and skips the POST. An empty endpoint disables the exporter.
 - Header shortcuts: `AGENTICGRAPH_OTLP_HONEYCOMB_API_KEY` (`x-honeycomb-team`), `AGENTICGRAPH_OTLP_DATADOG_API_KEY` (`dd-api-key`).
-- Resource: `service.name`, `service.version` (`AGENTICGRAPH_SERVICE_VERSION`), `deployment.environment.name` (`APP_ENV`).
+- Resource: `service.name`, `service.version` (`AGENTICGRAPH_SERVICE_VERSION`, else `config('app.version')`, else left out), `deployment.environment.name` (`APP_ENV`).
 - LLM spans map to `gen_ai.*` (operation, request model, provider, usage tokens, request stream). Tool spans get `gen_ai.operation.name = execute_tool`. Cost and totals stay `agenticgraph.*`. Cached calls carry no `gen_ai.*` request or usage attributes.
 
 Docs: `/docs/tracing#otlp`.

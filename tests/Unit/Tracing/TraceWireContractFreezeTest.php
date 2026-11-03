@@ -250,6 +250,7 @@ function fzForgetRun(): void
 function fzEnvelopes(): array
 {
     config([
+        'agenticgraph.tracing.service.version' => '1.0.0', // the registry lists service.version; it is emitted only when set
         'agenticgraph.tracing.enabled' => true,
         'agenticgraph.checkpoint.enabled' => true,
         'agenticgraph.tracing.capture.http' => true,

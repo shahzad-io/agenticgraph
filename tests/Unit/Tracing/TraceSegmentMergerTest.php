@@ -114,7 +114,7 @@ it('covers a queued segment that ends after the final segment: duration to the l
         ->and($mergedRoot['duration_ms'])->toBe(1000.0);
 });
 
-it('without a final segment takes status from the segment that ended last and leaves out ended_at and duration_ms', function () {
+it('without a final segment takes status from the latest initial or resumed segment and leaves out ended_at and duration_ms', function () {
     $merged = (new TraceSegmentMerger)->merge([
         tsmEnvelope(['id' => 'seg_1', 'kind' => 'initial', 'started_at' => '2026-09-27T10:00:00.000000+00:00', 'ended_at' => '2026-09-27T10:00:05.000000+00:00'], ['status' => 'interrupted', 'interrupt_reason' => 'approval']),
         tsmEnvelope(['id' => 'seg_2', 'started_at' => '2026-09-27T10:00:01.000000+00:00', 'ended_at' => '2026-09-27T10:00:02.000000+00:00'], ['status' => 'running']),
@@ -124,6 +124,16 @@ it('without a final segment takes status from the segment that ended last and le
         ->and($merged['trace']['interrupt_reason'])->toBe('approval')
         ->and($merged['trace'])->not->toHaveKeys(['ended_at', 'duration_ms'])
         ->and($merged['trace']['active_ms'])->toBe(5000.0);
+});
+
+it('a continued segment that ends after an interrupt does not set the status (D8)', function () {
+    $merged = (new TraceSegmentMerger)->merge([
+        tsmEnvelope(['id' => 'seg_1', 'kind' => 'initial', 'started_at' => '2026-09-27T10:00:00.000000+00:00', 'ended_at' => '2026-09-27T10:00:02.000000+00:00'], ['status' => 'interrupted', 'interrupt_reason' => 'approval']),
+        tsmEnvelope(['id' => 'seg_2', 'started_at' => '2026-09-27T10:00:01.000000+00:00', 'ended_at' => '2026-09-27T10:00:09.000000+00:00'], ['status' => 'running']),
+    ]);
+
+    expect($merged['trace']['status'])->toBe('interrupted')
+        ->and($merged['trace']['interrupt_reason'])->toBe('approval');
 });
 
 it('keeps each segment _meta in its segments entry, error_reason, and dropped summed over segments', function () {

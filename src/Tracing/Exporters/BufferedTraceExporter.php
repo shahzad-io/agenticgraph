@@ -333,13 +333,15 @@ abstract class BufferedTraceExporter implements TracerExporter
             $trace['graph_name'] = $graphName;
         }
 
+        $version = config('agenticgraph.tracing.service.version') ?: config('app.version');
+
         $this->open[$traceId] = [
             'trace' => $trace + [
                 'status' => 'running',
                 'sampled' => $this->isSampled($traceId),
                 'resource' => [
                     'service.name' => (string) config('agenticgraph.tracing.service.name', 'agenticgraph'),
-                    'service.version' => (string) config('agenticgraph.tracing.service.version', 'unknown'),
+                ] + (is_scalar($version) && $version !== '' ? ['service.version' => (string) $version] : []) + [
                     'deployment.environment.name' => (string) config('agenticgraph.tracing.environment', 'local'),
                 ],
                 'instrumentation_scope' => (string) config('agenticgraph.tracing.instrumentation_scope', 'agenticgraph'),

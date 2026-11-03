@@ -78,15 +78,14 @@ final class OtlpPayloadBuilder
     {
         $resource = is_array($trace['resource'] ?? null) ? $trace['resource'] : [];
 
+        $version = $resource['service.version'] ?? (config('agenticgraph.tracing.service.version') ?: config('app.version'));
+
         $attributes = [
             OtlpAttributeMapper::attribute(
                 'service.name',
                 (string) ($resource['service.name'] ?? config('agenticgraph.tracing.service.name', 'agenticgraph'))
             ),
-            OtlpAttributeMapper::attribute(
-                'service.version',
-                (string) ($resource['service.version'] ?? config('agenticgraph.tracing.service.version', 'unknown'))
-            ),
+            ...(is_scalar($version) && $version !== '' ? [OtlpAttributeMapper::attribute('service.version', (string) $version)] : []),
             OtlpAttributeMapper::attribute(
                 'deployment.environment.name',
                 (string) ($resource['deployment.environment.name'] ?? config('agenticgraph.tracing.environment', 'local'))

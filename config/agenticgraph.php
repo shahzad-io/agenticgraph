@@ -255,7 +255,8 @@ return [
 
         'service' => [
             'name' => env('AGENTICGRAPH_SERVICE_NAME', 'agenticgraph'),
-            'version' => env('AGENTICGRAPH_SERVICE_VERSION', 'unknown'),
+            // service.version: this env value, else config('app.version') if your app sets it, else left out.
+            'version' => env('AGENTICGRAPH_SERVICE_VERSION'),
         ],
         'environment' => env('APP_ENV', 'local'),
         'instrumentation_scope' => 'agenticgraph',

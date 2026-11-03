@@ -6,8 +6,8 @@ namespace Shahzad\AgenticGraph\Tracing;
 
 /**
  * Merges the segment envelopes of one trace into a single trace (the Pulse exporter's internal, versioned format).
- * Reference implementation of the server-side merge: the final segment wins, otherwise the
- * segment that ended later wins. active_ms is the union of the segment windows.
+ * Reference implementation of the server-side merge: the final segment sets the status, otherwise the
+ * latest initial or resumed segment does (a continued segment never does). active_ms is the union of the segment windows.
  */
 final class TraceSegmentMerger
 {
@@ -34,8 +34,10 @@ final class TraceSegmentMerger
         $spans = [];
         $llmCalls = [];
         $meta = [];
+        $status = null;
         foreach ($ranked as $envelope) {
-            $trace = array_merge($trace, is_array($envelope['trace'] ?? null) ? $envelope['trace'] : []);
+            $trace = array_merge($trace, array_diff_key(is_array($envelope['trace'] ?? null) ? $envelope['trace'] : [], ['status' => 1]));
+            $status = $this->statusFrom($envelope, $status);
             foreach ($envelope['spans'] ?? [] as $span) {
                 $spans[(string) ($span['id'] ?? count($spans))] = $span;
             }
@@ -45,6 +47,10 @@ final class TraceSegmentMerger
             if (is_array($envelope['_meta'] ?? null)) {
                 $meta = $this->mergeMeta($meta, $envelope['_meta']);
             }
+        }
+
+        if ($status !== null) {
+            $trace['status'] = $status;
         }
 
         $final = null;
@@ -116,6 +122,23 @@ final class TraceSegmentMerger
         }
 
         return $merged;
+    }
+
+    /**
+     * Trace status (D8): the final segment's; without one, the latest initial or resumed segment's.
+     * A continued segment never sets it. Called in rank order, so the last qualifying envelope wins.
+     *
+     * @param  array<string, mixed>  $envelope
+     */
+    private function statusFrom(array $envelope, mixed $current): mixed
+    {
+        $segment = $envelope['segment'];
+        $status = $envelope['trace']['status'] ?? null;
+        if ($status === null || ! (($segment['final'] ?? false) || in_array($segment['kind'] ?? null, ['initial', 'resumed'], true))) {
+            return $current;
+        }
+
+        return $status;
     }
 
     /**

@@ -56,6 +56,7 @@ it('uses no OTel-namespace attribute name in src that is not in the verified tab
 });
 
 it('emits no unverified OTel-namespace key in the OTLP payload', function (): void {
+    config(['agenticgraph.tracing.service.version' => '1.0.0']);
     $base = ['trace_id' => 'exec_guard', 'status' => 'failed', 'status_code' => 'ERROR', 'started_at' => '2026-09-27T10:00:00+00:00', 'ended_at' => '2026-09-27T10:00:01+00:00'];
     $payload = (new OtlpPayloadBuilder)->build(
         trace: ['id' => 'exec_guard', 'graph_name' => 'g', 'status' => 'failed'],

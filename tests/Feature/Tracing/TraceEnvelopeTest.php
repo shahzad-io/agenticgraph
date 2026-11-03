@@ -286,6 +286,29 @@ it('factory resolves the file driver and names it in the error message', functio
         ->toThrow(InvalidArgumentException::class, 'Supported: auto, pulse, log, file, null, otlp.');
 });
 
+it('service.version comes from the config value, then app.version, and stays absent without either', function () {
+    $captured = [];
+    Log::shouldReceive('info')->andReturnUsing(function (string $message, array $payload) use (&$captured): void {
+        $captured = $payload['trace']['resource'];
+    });
+    $resource = function () use (&$captured): array {
+        $exporter = new LogExporter;
+        $exporter->startTrace('tr_v', 'g', ['q'], new DateTimeImmutable('2026-09-27T10:00:00+00:00'));
+        $exporter->completeTrace('tr_v', [], 1.0);
+
+        return $captured;
+    };
+
+    config(['agenticgraph.tracing.service.version' => null, 'app.version' => null]);
+    expect($resource())->not->toHaveKey('service.version');
+
+    config(['app.version' => '2.0.0']);
+    expect($resource()['service.version'])->toBe('2.0.0');
+
+    config(['agenticgraph.tracing.service.version' => '3.1.0']);
+    expect($resource()['service.version'])->toBe('3.1.0');
+});
+
 it('log exporter logs the shared envelope', function () {
     Log::spy();
     $exporter = new LogExporter;
