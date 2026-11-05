@@ -161,7 +161,7 @@ class PulseExporter extends BufferedTraceExporter
         static $version = null;
 
         try {
-            return $version ??= (string) InstalledVersions::getPrettyVersion('shahzad/agenticgraph');
+            return $version ??= (string) InstalledVersions::getPrettyVersion('agenticgraph/agenticgraph');
         } catch (\OutOfBoundsException) {
             return 'unknown';
         }

@@ -5,11 +5,11 @@ description: "Trace AgenticGraph runs: tracing drivers (auto, pulse, file, log, 
 
 # AgenticGraph Tracing
 
-docs-sha: 34f68f1
+docs-sha: 06d7b21
 
 Condensed from the AgenticGraph docs (`/docs/...` paths below) at that commit. When they disagree with the source, the source wins.
 
-Other skills, use them when installed: `agenticgraph-core` for graphs, nodes and events. `agenticgraph-streaming` for live events while a run is going; tracing is the record afterwards. `agenticgraph-vector` for vector spans, if `shahzad/agenticgraph-vector` is installed.
+Other skills, use them when installed: `agenticgraph-core` for graphs, nodes and events. `agenticgraph-streaming` for live events while a run is going; tracing is the record afterwards. `agenticgraph-vector` for vector spans, if `agenticgraph/vector` is installed.
 
 ## Rules
 
@@ -114,7 +114,7 @@ graph
 | `llm` | A model call | `model`, token counts, `cost_usd`, `cached`, `streamed` |
 | `tool` | A tool call made through `$this->llm()` with `tools()` or `mcp()` | `tool.type`, `tool.provider`, args and result per capture depth |
 | `http` / `db` | Inside a tool or node body | `http.*`, `url.*`, `laravel.http.*`; `db.*`, `laravel.db.*` |
-| `vector` | A vector store operation | `vector.*`, sent by `shahzad/agenticgraph-vector` |
+| `vector` | A vector store operation | `vector.*`, sent by `agenticgraph/vector` |
 | `interrupt` / `resume` | Human pause and continuation | `interrupt.reason`, `checkpoint.id` |
 | `custom` | `Trace::span()` | your attributes |
 

@@ -302,7 +302,10 @@ it('service.version comes from the config value, then app.version, and stays abs
     config(['agenticgraph.tracing.service.version' => null, 'app.version' => null]);
     expect($resource())->not->toHaveKey('service.version');
 
-    config(['app.version' => '2.0.0']);
+    config(['agenticgraph.tracing.service.version' => '', 'app.version' => '']);
+    expect($resource())->not->toHaveKey('service.version');
+
+    config(['agenticgraph.tracing.service.version' => null, 'app.version' => '2.0.0']);
     expect($resource()['service.version'])->toBe('2.0.0');
 
     config(['agenticgraph.tracing.service.version' => '3.1.0']);

@@ -422,7 +422,7 @@ test('contract freeze guard: every emitted key and value is in the registry, and
         fzSubset(array_keys($trace), [...$registry['trace']['always'], ...$registry['trace']['optional']], 'trace', $problems);
         fzSubset($registry['trace']['always'], array_keys($trace), 'trace (missing always key)', $problems);
         fzSubset([$trace['status']], $registry['trace']['status'], 'trace.status', $problems);
-        if (array_keys($trace['resource']) !== $registry['trace']['resource']) {
+        if (array_values(array_diff(array_keys($trace['resource']), $registry['trace']['resource_optional'])) !== $registry['trace']['resource']) {
             $problems[] = 'trace.resource keys: '.json_encode(array_keys($trace['resource']));
         }
         if (isset($trace['annotations'])) {

@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-AgenticGraph (`shahzad/agenticgraph`) is before 1.0. Only the latest minor version gets security fixes.
+AgenticGraph (`agenticgraph/agenticgraph`) is before 1.0. Only the latest minor version gets security fixes.
 
 ## Report a vulnerability
 

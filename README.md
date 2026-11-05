@@ -41,7 +41,7 @@ AgenticGraph is the first open-source Laravel AI orchestration package, bringing
 Requirements: PHP 8.3+, Laravel 12.61.1+ or 13.12+.
 
 ```bash
-composer require shahzad/agenticgraph
+composer require agenticgraph/agenticgraph
 ```
 
 Publish configuration and run migrations in your host app:
@@ -53,6 +53,10 @@ php artisan vendor:publish --provider="Shahzad\AgenticGraph\AgenticGraphServiceP
 php artisan migrate
 ```
 
+### AI assistants
+
+Run `php artisan boost:install` and select the AgenticGraph skills, so your coding assistant knows how to build and trace graphs with this package.
+
 ### Upgrading from 0.1.0
 
 Do these steps in order. The full list of changes is in [CHANGELOG.md](CHANGELOG.md).
@@ -60,7 +64,7 @@ Do these steps in order. The full list of changes is in [CHANGELOG.md](CHANGELOG
 1. **Platform.** Use PHP 8.3+ and Laravel 12.61.1+ or 13.12+. Older PHP and Laravel versions are no longer supported. The package requires `prism-php/prism` `^0.102.0`, which sends Anthropic structured output in native mode (Claude Sonnet 4.5 or newer; for an older model set `$providerOptions = ['use_tool_calling' => true]` on the node):
 
    ```bash
-   composer require shahzad/agenticgraph:^0.2 prism-php/prism:^0.102 -W
+   composer require agenticgraph/agenticgraph:^0.2 prism-php/prism:^0.102 -W
    ```
 
 2. **Migrations.** Publish the migrations again and run them. Files you already published keep their names. The new tables and the `zzzz_*` upgrade migrations are added, and each upgrade checks the schema first:
@@ -85,8 +89,8 @@ The three packages are released together:
 
 | Package | Version | Works with |
 |---|---|---|
-| `shahzad/agenticgraph` (core) | 0.2.x | PHP 8.3+, Laravel 12.61.1+ or 13.12+, Prism 0.102 |
-| `shahzad/agenticgraph-vector` | 0.1.x | PHP 8.3+, Laravel 12.61.1+ or 13.12+, Prism 0.102, PostgreSQL with pgvector (0.8+ for iterative scan). Core 0.2.x is optional (tracing) |
+| `agenticgraph/agenticgraph` (core) | 0.2.x | PHP 8.3+, Laravel 12.61.1+ or 13.12+, Prism 0.102 |
+| `agenticgraph/vector` | 0.1.x | PHP 8.3+, Laravel 12.61.1+ or 13.12+, Prism 0.102, PostgreSQL with pgvector (0.8+ for iterative scan). Core 0.2.x is optional (tracing) |
 | `@agenticgraph/stream-client`, `@agenticgraph/stream-react`, `@agenticgraph/stream-vue` | 0.1.x | Core 0.2.x on the server (stream wire contract v1.1), Node.js 18+, React 18+ or Vue 3.4+ for the adapters |
 
 ## Quick Start

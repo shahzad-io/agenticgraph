@@ -1,5 +1,5 @@
 {
-    "name": "shahzad/agenticgraph",
+    "name": "agenticgraph/agenticgraph",
     "description": "AgenticGraph is a Laravel package that provides LangGraph-inspired agentic workflow orchestration with native Laravel patterns, integrated with PrismPHP for AI capabilities. It enables developers to build complex, stateful AI agents and multi-step workflows using a graph-based architecture.",
     "keywords": [
         "shahzad",

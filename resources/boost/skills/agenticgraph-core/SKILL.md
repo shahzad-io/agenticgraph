@@ -5,11 +5,11 @@ description: "Build AgenticGraph agent graphs in Laravel: GraphBuilder, nodes (A
 
 # AgenticGraph Core
 
-docs-sha: 34f68f1
+docs-sha: 06d7b21
 
 Condensed from the AgenticGraph docs (`/docs/...` paths below) at that commit. When a detail here and the package source disagree, the source wins.
 
-Other skills, use them when installed: `agenticgraph-streaming` for `stream()`, `broadcast()`, SSE and the JS clients. `agenticgraph-tracing` for traces, spans and AgenticPulse. `agenticgraph-vector` for retrieval and vector stores, if `shahzad/agenticgraph-vector` is installed.
+Other skills, use them when installed: `agenticgraph-streaming` for `stream()`, `broadcast()`, SSE and the JS clients. `agenticgraph-tracing` for traces, spans and AgenticPulse. `agenticgraph-vector` for retrieval and vector stores, if `agenticgraph/vector` is installed.
 
 ## Rules
 
@@ -25,7 +25,7 @@ Other skills, use them when installed: `agenticgraph-streaming` for `stream()`, 
 ## Task: install and configure
 
 ```bash
-composer require shahzad/agenticgraph
+composer require agenticgraph/agenticgraph
 php artisan vendor:publish --tag=agenticgraph-config
 php artisan vendor:publish --tag=agenticgraph-migrations
 php artisan migrate
