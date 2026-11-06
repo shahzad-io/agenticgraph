@@ -5,7 +5,7 @@ description: "Stream AgenticGraph output: the stream and broadcast presets, Exec
 
 # AgenticGraph Streaming
 
-docs-sha: 06d7b21
+docs-sha: febf56c
 
 Condensed from the AgenticGraph docs (`/docs/...` paths below) at that commit. When a detail here and the package source disagree, the source wins.
 
@@ -110,7 +110,7 @@ $this->whenStreaming(function () use ($items): void {
 - **Lifecycle**, from the coordinator: `graph_start`, `graph_complete`, `graph_failed`, `node_start`, `node_complete`, `node_error`, `node_interrupt`, `stream_resume`.
 - **Terminal**: `execution_terminal` (SSE; `status` is `completed`, `interrupted` or `failed`, plus `final_state`), `stream_close` (broadcast; `{status, meta}`), `stream_error`.
 - **Prism**, from `$this->llm()`: `text_start`, `text_delta`, `text_complete`, `tool_call`, `tool_result`, `thinking_*`, `stream_start`, `step_start`, `step_finish`, `stream_end`, `provider_tool_event`, `artifact`, `error`. One `stream_start` and one `stream_end` per model request (end: cumulative `usage` and `finish_reason`); one `step_start` and `step_finish` per step (finish: that step's `usage` and `finish_reason`). Each step has its own `message_id`.
-- **Yours**: any string through `streamEvent($type, $payload)`.
+- **Yours**: any string through `streamEvent($type, $payload)`. Over SSE, add `?custom_events=wrap` to the stream URL (core 0.2.1) and they arrive as `event: custom_event` with your name in `event_type`, so a browser `EventSource` needs no list of names. Without the parameter the frames are unchanged. Stream client 0.1.1 sends it by itself and delivers them under your type; against core 0.2.0 the parameter is ignored and custom events are not delivered over SSE.
 - `stream_heartbeat` and `stream_replay_unavailable` are SSE only and may change.
 - The type is the SSE `event:` line or the broadcast event name. It is not in the JSON body.
 - The body is frozen: `stream_id`, `execution_id`, `node_name`, `span_id`, `parent_span_id`, `seq`, `node_seq`, `occurred_at`, `payload`. `seq` is the SSE `id:` and the replay cursor.
@@ -125,6 +125,31 @@ Docs: `/docs/streaming#your-own-events`, `/docs/api/streaming`
 - `stream_close` is never filtered, so a client still learns that the run was interrupted.
 
 Docs: `/docs/streaming#filters`
+
+## Task: error details on the wire
+
+- Since 0.2.1 the browser gets generic errors by default. `graph_failed`, `node_error`, the failed `execution_terminal` `meta` and broadcast `stream_close` `meta` carry `error_type: ExecutionFailed` and `message: Execution failed`. `stream_error` carries `StreamError` and `Stream error`. A failed `tool_result` carries `Tool failed`. `reason` (`interrupt_expired`, `stale_queued`, `stale_running`) is always sent.
+- A node failed by a model provider exception shows a category instead: `rate_limited`, `provider_unavailable` or `provider_error`, with a fixed message. The Prism `error` event carries the same categories and `metadata: null`. The package picks the category from the exception type, never from the provider's text, which can hold keys, account ids or internal URLs.
+- `AGENTICGRAPH_STREAM_EXPOSE_ERROR_DETAILS=true` (default `false`) sends the real exception or provider type, the message (cut to `AGENTICGRAPH_CAPTURE_MAX_LENGTH`; `AGENTICGRAPH_CAPTURE_ERRORS=class` still removes it) and the metadata. Turn it on only for a trusted audience, such as an internal tool.
+- The stored execution `error` and the logs always keep the real message. Look there, not in the browser, when a run fails.
+
+Docs: `/docs/streaming`, `/docs/stream-limitations`
+
+## Task: expire stale executions
+
+- An async execution no worker picks up would leave the visitor's stream silent. `php artisan agenticgraph:executions:expire` fails it: status `failed`, `graph_failed` with `reason` `stale_queued` or `stale_running`, and a failed `execution_terminal`, so the client ends in `error`.
+- A `queued` execution older than `AGENTICGRAPH_EXECUTION_QUEUED_TIMEOUT` (300 s) is failed. A `running` one with no progress for longer than `max(AGENTICGRAPH_EXECUTION_TIMEOUT, AGENTICGRAPH_RESUME_TIMEOUT)` plus `AGENTICGRAPH_EXECUTION_STALE_GRACE` (60 s) is failed; with `AGENTICGRAPH_EXECUTION_TIMEOUT` at 0 the limit is `AGENTICGRAPH_EXECUTION_STALE_RUNNING_AFTER` (900 s). Each finished node counts as progress. Interrupted and sync executions are never touched.
+- Schedule it every minute, next to `agenticgraph:interrupt:expire`:
+
+```php
+// routes/console.php
+Schedule::command('agenticgraph:executions:expire')->everyMinute();
+Schedule::command('agenticgraph:interrupt:expire')->everyMinute();
+```
+
+- The scheduler must run (`php artisan schedule:work`, or the `schedule:run` cron entry). Without it nothing expires.
+
+Docs: `/docs/streaming`
 
 ## Task: serve SSE
 
@@ -155,7 +180,7 @@ AGENTICGRAPH_QUEUE_NAME=agenticgraph
 
 - `STREAM_STORE_DRIVER` is `redis` (default) or `database` (the `stream_events` table from the package migrations).
 - Store write errors are not fatal unless `AGENTICGRAPH_STREAM_STORE_FATAL=true`. Transport errors are fatal by default.
-- "No events" checklist: store driver set, migrations run, `php artisan queue:work --queue=agenticgraph` on the same connection as `AGENTICGRAPH_QUEUE_CONNECTION`, one connect per transport.
+- "No events" checklist: store driver set, migrations run, `php artisan queue:work --queue=agenticgraph` on the same connection as `AGENTICGRAPH_QUEUE_CONNECTION`, one connect per transport. A run stuck in `queued` with no worker is failed by `agenticgraph:executions:expire` (scheduled).
 
 Docs: `/docs/stream-transports`, `/docs/stream-limitations`
 
@@ -201,7 +226,8 @@ The client owns the connection. Create the transport after the start request, gi
 | `@agenticgraph/stream-vue` | Same API with refs. Vue 3.4+. |
 
 - `AgenticStream.connect()` is the only constructor. It resolves once the transport is connected, and rejects if the transport reports `failed` first.
-- Rule 3: `SSETransport` reconnects by itself. A transient drop keeps `status` where it was. After `maxAttempts` (5) failed retries it reports `failed`: `status` is `error` with `error.kind` `connection`. Call `stream.reconnect()`, or make a new transport.
+- Rule 3: `SSETransport` reconnects by itself. A transient drop keeps `status` where it was. After `maxAttempts` (5) failed retries it reports `failed`: `status` is `error` with `error.kind` `connection` and `error.canReconnect` `true` (a lost connection only; `false` for the other kinds and when the first connect fails). Call `stream.reconnect()`, or `reconnect()` from `useAgenticStream` (client 0.1.1): it resumes from the last event, `status` goes back to `streaming`, `error` clears and the text is kept. Or make a new transport.
+- Client 0.1.1 with core 0.2.1: custom events arrive over SSE (the client sends `?custom_events=wrap`), and `execution_terminal` handlers run before `status` changes. `error.kind` `terminal_error` shows `meta.message` and `error_type`, which is generic or a provider category (`rate_limited`, `provider_unavailable`, `provider_error`) unless the server sets `AGENTICGRAPH_STREAM_EXPOSE_ERROR_DETAILS`. Do not show `error_type` to a visitor as a diagnosis.
 - Rule 4: `resolveUrl(lastSeq)` runs before each reconnect. Return a fresh URL, or `null` to end the stream. Return `null` on purpose: the transport stops with reason `resolver`, and that is not an error. A throw counts as one failed attempt.
 - `transport.getStopReason()`: `terminal` (execution completed or failed), `replay_unavailable` (cursor too old; `error.kind` is `replay_unavailable`), `resolver` (`null` from `resolveUrl`), `manual` (`disconnect()`), `failed` (gave up). `null` while running.
 - `status`: `idle`, `streaming`, `complete`, `interrupted`, `error`. `error.kind`: `connection`, `stream_error`, `terminal_error`, `replay_unavailable`.
@@ -231,7 +257,7 @@ Copy the file from `node_modules/@agenticgraph/stream-client/dist/index.global.j
 ## Task: test streams
 
 - Inline iterator: `AgenticGraph::stream(..., inline: true)` needs no Redis, Reverb or worker.
-- Client tests: `MockTransport` with `emitSequence()` and `simulateDrop()`. It does not reconnect; test `SSETransport` reconnect with an injected `eventSourceFactory`.
+- Client tests: `MockTransport` with `emitSequence()`, `simulateDrop()` and `simulateFailure()` (a transport that gave up: the `error` state and `reconnect()`). It does not reconnect; test `SSETransport` reconnect with an injected `eventSourceFactory`.
 - Assert the server side with `AgenticGraph::stream()` and the `stream_events` table in a test database.
 
 Docs: `/docs/guide-testing`
@@ -246,5 +272,8 @@ Docs: `/docs/guide-testing`
 6. `streamEvent()` in a graph started with `run()`; nothing is emitted.
 7. A signed URL that covers `cursor`, so every reconnect gets a 403.
 8. No `execution_id` in the stream URL, so `replay_unavailable` arrives without `final_state`.
+9. Expecting the exception message in the browser. It is generic unless `AGENTICGRAPH_STREAM_EXPOSE_ERROR_DETAILS=true`; read the stored execution `error` or the logs.
+10. `agenticgraph:executions:expire` not scheduled, so a run without a worker never ends and the stream stays quiet.
+11. Custom events with a raw `EventSource` and no `?custom_events=wrap`: they arrive under your own event names, which `onmessage` never sees.
 
 Docs: `/docs/streaming`, `/docs/stream-limitations`

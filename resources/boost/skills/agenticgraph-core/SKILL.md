@@ -5,7 +5,7 @@ description: "Build AgenticGraph agent graphs in Laravel: GraphBuilder, nodes (A
 
 # AgenticGraph Core
 
-docs-sha: 06d7b21
+docs-sha: febf56c
 
 Condensed from the AgenticGraph docs (`/docs/...` paths below) at that commit. When a detail here and the package source disagree, the source wins.
 
@@ -48,7 +48,7 @@ AGENTICGRAPH_QUEUE_NAME=agenticgraph
 
 - `AGENTICGRAPH_PRISM_MODEL` has no default. Set it, or `$model` on the node or router, as `provider:model`. A missing model or a model without a provider throws `MissingModelException` on the first Prism call. The provider key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) is Prism's env.
 - `AGENTICGRAPH_STORAGE`: `database` (default), `redis` or `file`. Same value in every environment, or resume cannot find snapshots.
-- `AGENTICGRAPH_QUEUE_CONNECTION` defaults to `redis`. It matters only for async runs, async fan-out and async resume. Run a worker on the graph queue: `php artisan queue:work --queue=agenticgraph`.
+- `AGENTICGRAPH_QUEUE_CONNECTION` defaults to `redis`. It matters only for async runs, async fan-out and async resume. Run a worker on the graph queue: `php artisan queue:work --queue=agenticgraph`. Schedule `agenticgraph:executions:expire` every minute (0.2.1), so an async run no worker took ends as `failed` instead of staying `queued`; see the `agenticgraph-streaming` skill.
 - `AGENTICGRAPH_MAX_ITERATIONS` (1000) caps a run.
 
 Docs: `/docs/getting-started`
@@ -152,7 +152,7 @@ final class SummaryNode extends PrismNode
 | `embeddingsFromInput`, `generateImage`, `audioToText`, `textToAudio` | Prism responses | Media |
 
 - Inputs: `prompt($stringOrPromptTemplate)` or `chat(ChatPromptTemplate)`, plus `vars()`. Templates interpolate; `system()`, `user()`, `assistant()` and `history()` are literal. Rules 2, 3 and 5 apply.
-- `user()` and `assistant()` append after `chat()` and throw with `prompt()`. `attach($media)` adds media to the last user turn.
+- `prompt()` with `history()` (0.2.1): the history messages come first, then the prompt as the latest user message; `system()` stays first and `explain()` shows the final order. History text is never interpolated. `user()` and `assistant()` append after `chat()` and throw with `prompt()`; use `chat()` for those. `attach($media)` adds media to the last user turn.
 - Retrieved documents go through `context($items, as: 'context', format: ?PromptTemplate, separator: "\n\n")`, never through a hand-built string in `vars()`. `$items`: a list of `id`/`content`/`metadata`/`score` arrays, or any object with `toContextItems()` (a vector `SearchResult`; core never imports vector). `format:` renders each item from its metadata plus `id`, `content`, `score` (missing key throws). The joined text is a value for `{context}`, never interpolated; the same name in `vars()` throws. `run()->sources()` returns the items (`id`, `metadata`, `score`); the llm span gets `context.count` and `context.ids` (first 20); `explain()['context']` shows the text and count. Store `toContextItems()` (plain arrays) on state when retrieval and generation are separate nodes.
 - `schema($schema)` then `structured(): array`; the root schema should be an `ObjectSchema`. A schema with tools throws. `->as(Dto::class)->data()` hydrates the reply into a class (reflection; `#[ListOf]` for lists; errors name the path). Constrain values in the schema first (enums, required fields; measured 3 of 20 calls retried without the enum, 0 of 20 with it); the retry (`agenticgraph.prism.structured.retries`, default `1`, error fed back; `->structuredRetries($n)` for one call) is a safety net. `->structuredMode('json')` is OpenAI only and throws elsewhere. `run()->usage` sums every attempt and is null when one attempt's usage is unknown.
 - `tools()`, `mcp($server)`, `toolChoice()`, `maxSteps()`: one step and Prism's tool choice by default. Raise `maxSteps` for a tool loop. `run()` returns an `LlmResponse` with the tool calls and results of every step and `steps` (each step's text, tool calls, results, usage, finish reason); `text` is the final step's.

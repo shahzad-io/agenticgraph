@@ -5,7 +5,7 @@ description: "Trace AgenticGraph runs: tracing drivers (auto, pulse, file, log, 
 
 # AgenticGraph Tracing
 
-docs-sha: 06d7b21
+docs-sha: febf56c
 
 Condensed from the AgenticGraph docs (`/docs/...` paths below) at that commit. When they disagree with the source, the source wins.
 
@@ -59,6 +59,7 @@ AGENTICGRAPH_CAPTURE_STATE=diff
 AGENTICPULSE_ENDPOINT=https://ingest.agenticgraph.dev
 ```
 
+- `AGENTICPULSE_ENDPOINT` is the base URL with no path and must be `https` (0.2.1; `localhost`, `127.0.0.1` and `*.test` may use `http`). Anything else is refused with a log line naming the setting, and tracing to Pulse stays off.
 - Keys are `ap_live_...` (production) or `ap_test_...` (staging, local), from https://pulse.agenticgraph.dev.
 - `AGENTICGRAPH_CAPTURE_STATE=diff` sends the old and new values of each changed state key, so Pulse can show them. Leave it out to send key names only.
 - With a key set, `auto` picks `pulse`. Each segment is `POST {endpoint}/v1/ingest` with `Authorization: Bearer {key}`.
@@ -131,6 +132,7 @@ Docs: `/docs/tracing#span-tree`.
 
 - Spans stay in memory in the process that made them. That process sends them as one **segment** when the run completes or fails, when a node interrupts, when a queued job for the run ends, or when an execution scope exits mid-trace.
 - Segment kinds: `initial` (run start), `resumed` (after an interrupt), `continued` (queue jobs). At most one segment is `final`: the completed or failed one. A paused trace has none yet.
+- An execution that `agenticgraph:executions:expire` fails (0.2.1) sends a final segment on the original root span, so the trace ends instead of staying open.
 - The receiver merges segments by trace id. Nothing is repeated across segments.
 - The listener is synchronous. No queue worker is involved. In an HTTP request the send runs after the response; in console, queue and tests it runs immediately.
 - There is no trace buffer in the cache and no `tracing.buffer` config.
