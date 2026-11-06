@@ -44,18 +44,27 @@ Requirements: PHP 8.3+, Laravel 12.61.1+ or 13.12+.
 composer require agenticgraph/agenticgraph
 ```
 
-Publish configuration and run migrations in your host app:
+Publish the config and the migrations, then migrate:
 
 ```bash
-php artisan vendor:publish --tag=prism-config
-php artisan vendor:publish --tag=relay-config
-php artisan vendor:publish --provider="Shahzad\AgenticGraph\AgenticGraphServiceProvider"
+php artisan vendor:publish --tag=agenticgraph-config
+php artisan vendor:publish --tag=agenticgraph-migrations
 php artisan migrate
 ```
 
+| Tag | What it publishes |
+|---|---|
+| `agenticgraph-config` | `config/agenticgraph.php`, `config/model_pricing.php` and `config/model_pricing_overrides.php` |
+| `agenticgraph-migrations` | The migrations for the four tables: executions, checkpoints, interrupts and stream events |
+| `agenticgraph-prompts` (optional) | The packaged prompt files, into `resources/prompts` |
+
+Prism and Relay are dependencies and work without publishing their configs. Publish `prism-config` or `relay-config` only to change provider settings or MCP servers.
+
+If you run async graphs, schedule `agenticgraph:executions:expire` every minute, next to `agenticgraph:interrupt:expire`, so a run no worker picked up (or whose worker died) ends with a failed stream instead of waiting forever.
+
 ### AI assistants
 
-Run `php artisan boost:install` and select the AgenticGraph skills, so your coding assistant knows how to build and trace graphs with this package.
+Run `php artisan boost:update`. It finds the AgenticGraph packages and asks which skills to add; tick `agenticgraph-core`, `agenticgraph-streaming` and `agenticgraph-tracing`, so your coding assistant knows how to build, stream and trace graphs with this package. A first-time Boost setup is `php artisan boost:install`.
 
 ### Upgrading from 0.1.0
 
@@ -76,7 +85,7 @@ Do these steps in order. The full list of changes is in [CHANGELOG.md](CHANGELOG
 
 3. **Cache.** Flush the cache store that `CachingMiddleware` and LLM caching use. Entries written by 0.1.0 cannot be read (`php artisan cache:clear`, or `php artisan cache:clear <store>` for a named store). The LLM cache key and the `PrismRouter` cache key changed too, so each cached reply misses once and is written again. LLM caching is now off by default (`AGENTICGRAPH_PRISM_CACHE=false`): turn it on in config or per request with `->withCache()`. A published `config/agenticgraph.php` keeps the value written in it.
 4. **Trace state.** Tracing is new and off by default. When you turn it on, traces carry state key names and value types, not values (`tracing.capture.state` is `keys`). To send values, set `AGENTICGRAPH_CAPTURE_STATE=diff` (or `full`).
-5. **Stream client.** Core 0.2.0 sends the stream wire contract v1.1 with the new `stream_start` / `stream_end` events and one `step_start` / `step_finish` pair per step. Use `@agenticgraph/stream-client`, `stream-react` or `stream-vue` 0.1.0 with it.
+5. **Stream client.** Core 0.2.0 sends the stream wire contract v1.1 with the new `stream_start` / `stream_end` events and one `step_start` / `step_finish` pair per step. Use `@agenticgraph/stream-client`, `stream-react` or `stream-vue` 0.1.0 with it (0.1.1 with core 0.2.1, for custom events over SSE and error details).
 6. **Token numbers.** Usage follows "usage semantics v2": `prompt_tokens` is the uncached input, cached input is in `cache_read_tokens` / `cache_write_tokens`, and `completion_tokens` includes reasoning. If you store token counts for billing or analytics, expect a step change.
 7. **Removed helpers.** `prompt()`, `promptTemplate()`, `chatPrompt()`, `structured()`, `tools()`, `withModel()` and the other `PrismNode` helpers are removed. Every model call goes through `$this->llm()`. See the [before and after table](CHANGELOG.md#breaking).
 8. **Model.** There is no default model, and a model needs its provider prefix (`openai:gpt-4o`, not `gpt-4o`). Set `AGENTICGRAPH_PRISM_MODEL` or `$model` on each node; otherwise the first call throws `MissingModelException`.
@@ -91,7 +100,7 @@ The three packages are released together:
 |---|---|---|
 | `agenticgraph/agenticgraph` (core) | 0.2.x | PHP 8.3+, Laravel 12.61.1+ or 13.12+, Prism 0.102 |
 | `agenticgraph/vector` | 0.1.x | PHP 8.3+, Laravel 12.61.1+ or 13.12+, Prism 0.102, PostgreSQL with pgvector (0.8+ for iterative scan). Core 0.2.x is optional (tracing) |
-| `@agenticgraph/stream-client`, `@agenticgraph/stream-react`, `@agenticgraph/stream-vue` | 0.1.x | Core 0.2.x on the server (stream wire contract v1.1), Node.js 18+, React 18+ or Vue 3.4+ for the adapters |
+| `@agenticgraph/stream-client`, `@agenticgraph/stream-react`, `@agenticgraph/stream-vue` | 0.1.x | Core 0.2.x on the server (stream wire contract v1.1; core 0.2.1 and client 0.1.1 together for custom events and error details), Node.js 18+, React 18+ or Vue 3.4+ for the adapters |
 
 ## Quick Start
 
