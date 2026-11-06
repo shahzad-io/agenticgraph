@@ -13,7 +13,7 @@ use Shahzad\AgenticGraph\Tracing\TraceSegmentMerger;
  */
 function tsmCorpus(): array
 {
-    $dir = __DIR__.'/../../Fixtures/trace-corpus/queued-ingest';
+    $dir = __DIR__.'/../../fixtures/trace-corpus/queued-ingest';
     $files = glob($dir.'/segments/*.json');
     sort($files);
 
@@ -31,7 +31,7 @@ function tsmWith(array $envelope, array $segment, array $trace = []): array
 
 it('the unchanged queued-ingest case merges to its merged.json', function () {
     ['a' => $a, 'b' => $b] = tsmCorpus();
-    $expected = json_decode((string) file_get_contents(__DIR__.'/../../Fixtures/trace-corpus/queued-ingest/merged.json'), true);
+    $expected = json_decode((string) file_get_contents(__DIR__.'/../../fixtures/trace-corpus/queued-ingest/merged.json'), true);
 
     expect(json_decode(json_encode((new TraceSegmentMerger)->merge([$b, $a])), true))->toEqual($expected);
 });

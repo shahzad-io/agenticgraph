@@ -22,7 +22,7 @@
 ### Fixed
 
 - `agenticgraph:list` no longer prints `()` for a graph without a description.
-- Tests: `TraceSegmentsTest` uses its own unique temporary directory, so a stray file in the shared temp folder no longer fails it.
+- Tests: `TraceSegmentsTest` uses its own unique temporary directory, so a stray file in the shared temp folder no longer fails it, and `TraceSegmentMergerCorpusTest` reads `tests/fixtures` with the case it is tracked under, so it also passes on a case-sensitive filesystem (CI).
 - The Pulse exporter refuses a non-`https` endpoint, except `localhost`, `127.0.0.1` and `*.test`, and logs the setting to fix (`AGENTICPULSE_ENDPOINT`; use the base URL with no path). An `http://` endpoint was redirected to `https://`, which turned the POST into a GET and failed every segment with 405. Tracing to Pulse stays off until the endpoint is fixed.
 
 ## 0.2.0 - 2026-11-06
