@@ -40,7 +40,7 @@ final class StreamController
                 ob_implicit_flush(true);
             }
             $maxDuration = (float) config('agenticgraph.streaming.sse.max_duration_seconds', 120);
-            $pollIntervalMs = (int) config('agenticgraph.streaming.sse.poll_interval_ms', 250);
+            $pollIntervalMs = (int) config('agenticgraph.streaming.sse.poll_interval_ms', 100);
             $pollIntervalUs = max(1000, $pollIntervalMs * 1000);
             $heartbeatInterval = (int) config('agenticgraph.streaming.sse.heartbeat_interval', 30);
             $retryMs = (int) config('agenticgraph.streaming.sse.retry_ms', 2000);

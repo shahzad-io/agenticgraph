@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Shahzad\AgenticGraph\Streaming;
 
 use Illuminate\Support\Facades\Log;
+use Shahzad\AgenticGraph\Exceptions\ExecutionEndedException;
+use Shahzad\AgenticGraph\Execution\ExecutionRepository;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamEvent;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
@@ -16,6 +18,11 @@ final class WrappedStreamSink implements StreamSinkInterface
 
     /** Set by the first close(); later closes and emits are dropped, so execution_terminal and stream_close stay last. */
     private bool $closed = false;
+
+    /** Seconds between heartbeats on the execution row while events flow. */
+    private const HEARTBEAT_SECONDS = 10;
+
+    private ?int $lastHeartbeat = null;
 
     public function __construct(
         private readonly StreamSinkInterface $sink,
@@ -33,6 +40,7 @@ final class WrappedStreamSink implements StreamSinkInterface
         if ($this->closed || ! $this->shouldEmit($event)) {
             return;
         }
+        $this->heartbeat($event);
         if ($this->store) {
             try {
                 $this->store->append($event);
@@ -55,6 +63,28 @@ final class WrappedStreamSink implements StreamSinkInterface
         }
 
         $this->recordContentEmissionForRetryGate($event);
+    }
+
+    /**
+     * A streaming node is alive: refresh the execution row at most once per HEARTBEAT_SECONDS, so
+     * agenticgraph:executions:expire leaves it alone. The first event after a quiet gap always checks, so once the
+     * execution has ended elsewhere, nothing more is written and the worker stops.
+     *
+     * ponytail: fixed 10 s beat; a running limit (timeout + stale_grace) under 10 s can still expire a streaming run.
+     */
+    private function heartbeat(StreamEvent $event): void
+    {
+        $now = now()->getTimestamp();
+        if ($this->lastHeartbeat !== null && $now - $this->lastHeartbeat < self::HEARTBEAT_SECONDS) {
+            return;
+        }
+        $this->lastHeartbeat = $now;
+
+        if (! app(ExecutionRepository::class)->touch($event->executionId())) {
+            $this->closed = true;
+
+            throw new ExecutionEndedException($event->executionId());
+        }
     }
 
     private function recordContentEmissionForRetryGate(StreamEvent $event): void

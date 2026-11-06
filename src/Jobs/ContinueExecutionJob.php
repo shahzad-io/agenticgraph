@@ -9,6 +9,8 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Log;
+use Shahzad\AgenticGraph\Exceptions\ExecutionEndedException;
 use Shahzad\AgenticGraph\Execution\ExecutionMode;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
 use Shahzad\AgenticGraph\Execution\ExecutionRepository;
@@ -50,9 +52,19 @@ class ContinueExecutionJob implements ShouldQueue
 
     public function handle(GraphExecutor $executor, GraphRegistry $registry): void
     {
-        // Progress: the execution is alive, so the expire command leaves it alone. No ended-check here: this job also
-        // recovers a run after a crash, when the row is already failed.
-        app(ExecutionRepository::class)->touch($this->executionId);
+        // An execution that already ended (expired, or failed by another branch) stays ended: nothing runs and
+        // nothing is written. Otherwise this is progress, so the expire command leaves the run alone.
+        $repo = app(ExecutionRepository::class);
+        // Deliberate crash recovery (a resume payload from a checkpoint) continues a failed run; any other job on an
+        // ended execution, for example a branch that outlived an expiry, stays out.
+        if ($this->resumePayload !== null && $repo->getStatus($this->executionId) === 'failed') {
+            $repo->reopen($this->executionId);
+        }
+        if (! $repo->touch($this->executionId)) {
+            Log::info('AgenticGraph: job skipped, execution already ended', ['execution_id' => $this->executionId]);
+
+            return;
+        }
 
         // Auto-build graph from config if not cached (supports async workflows)
         $graph = $registry->getOrBuild($this->graphName);
@@ -113,6 +125,9 @@ class ContinueExecutionJob implements ShouldQueue
             } else {
                 $executor->executeFromNode($graph, $state, $this->startNode, $this->executionId, useBatch: true, loopMetadata: $loopMeta);
             }
+        } catch (ExecutionEndedException) {
+            // Ended elsewhere while this worker ran it: nothing more to write, not a failure.
+            Log::info('AgenticGraph: worker stopped, execution already ended', ['execution_id' => $this->executionId]);
         } finally {
             app()->forgetInstance(TraceContext::class);
             app()->forgetInstance(StreamContext::class);

@@ -5,7 +5,7 @@ description: "Build AgenticGraph agent graphs in Laravel: GraphBuilder, nodes (A
 
 # AgenticGraph Core
 
-docs-sha: febf56c
+docs-sha: 8292430
 
 Condensed from the AgenticGraph docs (`/docs/...` paths below) at that commit. When a detail here and the package source disagree, the source wins.
 

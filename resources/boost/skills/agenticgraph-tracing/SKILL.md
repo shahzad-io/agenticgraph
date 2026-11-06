@@ -5,7 +5,7 @@ description: "Trace AgenticGraph runs: tracing drivers (auto, pulse, file, log, 
 
 # AgenticGraph Tracing
 
-docs-sha: febf56c
+docs-sha: 8292430
 
 Condensed from the AgenticGraph docs (`/docs/...` paths below) at that commit. When they disagree with the source, the source wins.
 

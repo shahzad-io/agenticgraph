@@ -23,11 +23,18 @@ class GraphRegistry
         $this->graphs[$name] = $graph;
     }
 
+    /**
+     * The registered graph, or one built from config/agenticgraph.php `graphs` when this process has not seen it
+     * yet (a fresh worker, a console command). Null when neither knows the name.
+     */
     public function get(string $name): ?Graph
     {
         $graph = $this->graphs[$name] ?? null;
+        if ($graph instanceof Graph) {
+            return $graph;
+        }
 
-        return $graph instanceof Graph ? $graph : null;
+        return $this->buildFromConfig($name);
     }
 
     /**
@@ -66,11 +73,11 @@ class GraphRegistry
      */
     public function getOrBuild(string $name): ?Graph
     {
-        $graph = $this->get($name);
-        if ($graph instanceof Graph) {
-            return $graph;
-        }
+        return $this->get($name);
+    }
 
+    private function buildFromConfig(string $name): ?Graph
+    {
         $graphClass = config("agenticgraph.graphs.{$name}");
         if ($graphClass === null || ! class_exists($graphClass)) {
             return null;

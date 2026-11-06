@@ -14,6 +14,7 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Contracts\InterruptHandlerInterface;
 use Shahzad\AgenticGraph\Contracts\InterruptServiceInterface;
+use Shahzad\AgenticGraph\Exceptions\ExecutionEndedException;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
 use Shahzad\AgenticGraph\Execution\ExecutionStore;
 use Shahzad\AgenticGraph\Execution\InterruptRecord;
@@ -87,6 +88,9 @@ class ResumeExecutionJob implements ShouldBeUnique, ShouldQueue
             if ($handler) {
                 $handler->resolved($interrupt, $resolution);
             }
+        } catch (ExecutionEndedException) {
+            // The execution ended elsewhere (for example expired) while this worker ran it: nothing to write or retry.
+            Log::info('AgenticGraph: worker stopped, execution already ended', ['interrupt_id' => $this->interruptId]);
         } catch (\Throwable $e) {
             $interrupt->markPending([
                 'last_error' => [

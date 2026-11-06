@@ -43,6 +43,10 @@ trait EndsFailedExecution
         ?string $reason = null,
     ): void {
         $changed = app(ExecutionRepository::class)->failed($executionId, $e->getMessage());
+        if ($changed && $reason !== null) {
+            // An expiry command (stale_queued, stale_running, interrupt_expired) ended it: final, see reopen().
+            app(ExecutionRepository::class)->markEndedByExpiry($executionId, $reason);
+        }
 
         if ($streamId !== null && $streaming !== null && $streaming !== StreamingMode::NONE) {
             $this->appendFailedTerminalIfMissing($e, $executionId, $stateData, $streamId, $streaming, $executionOptions ?? new ExecutionOptions, $fallbackSeq, $reason);

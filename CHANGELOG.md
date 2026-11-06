@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.2 - 2026-11-07
+
+### Fixed
+
+- **An expired execution stays expired.** A worker still running when `agenticgraph:executions:expire` failed its execution no longer marks it `completed`, fires `GraphExecutionCompleted` or `GraphExecutionFailed` again, or writes a second `graph_failed` or `execution_terminal`. `ExecutionRepository::completed()` and `started()` now return `bool` and refuse an ended row, a retried or continued job on an ended execution exits without running (a retry while the row is still running proceeds as before), and a node whose execution ended is stopped, never retried. An execution an expiry command ended (`stale_queued`, `stale_running`, `interrupt_expired`) is final: it is recorded in `execution_options` (`ended_by`, `ended_reason`, no migration) and no job reopens it. A crash-failed execution is still continued by `ContinueExecutionJob` with a resume payload, and `executeFromNode()` called directly is an explicit new run that re-runs any ended execution.
+- `agenticgraph:execute` finds graphs registered in `config/agenticgraph.php`, and so do queued branch jobs, interrupt resume and `AgenticGraph::get()` on a fresh process (`GraphRegistry::get()` builds config graphs, as `getOrBuild()` did).
+- `vendor:publish --tag=agenticgraph-config --force` no longer overwrites `config/model_pricing_overrides.php`. It is published once, when missing; `config/agenticgraph.php` and `config/model_pricing.php` are overwritten only with `--force`.
+
+### Changed
+
+- `AGENTICGRAPH_STREAM_SSE_POLL_INTERVAL` defaults to 100 ms (was 250). The SSE route reads the store once per interval, so streamed text reached the browser in flushes 250 ms apart (3 to 20 tokens at a time at normal model speed). It is now about 100 ms. Measured on the database store: events are written every 12 ms on average, and flushes came 253 ms apart before and 103 ms after. The Redis store uses the same value as its blocking-read wait.
+- A node that streams keeps its execution alive: while events are written, the execution row's `updated_at` is refreshed at most once every 10 seconds, so `agenticgraph:executions:expire` does not fail a long streamed answer.
+
+### Later
+
+Not in this release: stored stream events for model output (`text_delta` and the rest) carry the provider's whole-second time in `occurred_at`. They will be stamped with microseconds at write time instead.
+
 ## 0.2.1 - 2026-11-07
 
 ### Added

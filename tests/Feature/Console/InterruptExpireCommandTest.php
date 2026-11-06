@@ -148,6 +148,7 @@ it('expires a pending interrupt past expires_at and ends its execution and strea
         ->and(array_map(fn (StreamEvent $event) => $event->type(), $after))->toBe(['graph_failed', 'execution_terminal'])
         ->and($after[0]->payload()['reason'])->toBe('interrupt_expired')
         ->and($after[0]->payload()['error_type'])->toBe('ExecutionFailed')
+        ->and(app(ExecutionRepository::class)->endedByExpiry($run['execution_id']))->toBeTrue()
         ->and($after[1]->payload()['status'])->toBe('failed')
         ->and(array_column($broadcasts, 'event'))->toBe(['stream_close'])
         ->and($broadcasts[0]['payload']['status'])->toBe('error');

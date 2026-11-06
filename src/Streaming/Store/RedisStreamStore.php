@@ -63,7 +63,7 @@ final class RedisStreamStore implements StreamStoreInterface
         $startId = ($fromSeq <= 0 ? '0-0' : $fromSeq.'-0');
         $useBlocking = (bool) config('agenticgraph.streaming.sse.use_blocking_reads', false);
         if ($useBlocking) {
-            $blockMs = (int) config('agenticgraph.streaming.sse.poll_interval_ms', 250);
+            $blockMs = (int) config('agenticgraph.streaming.sse.poll_interval_ms', 100);
             $xreadStart = $fromSeq <= 1 ? '0-0' : ($fromSeq - 1).'-0';
             $entries = $this->connection->xread([$key => $xreadStart], $limit, $blockMs);
             yield from $this->hydrateEntries($streamId, $entries, true);

@@ -9,6 +9,7 @@ use Illuminate\Contracts\Events\Dispatcher;
 use Shahzad\AgenticGraph\Contracts\NodeInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\NodeExecutionFailed;
+use Shahzad\AgenticGraph\Exceptions\ExecutionEndedException;
 use Shahzad\AgenticGraph\Middleware\LoggingMiddleware;
 use Shahzad\AgenticGraph\Middleware\TimingMiddleware;
 use Shahzad\AgenticGraph\Middleware\ValidationMiddleware;
@@ -102,7 +103,8 @@ final class NodeMiddlewarePipeline
                         return $result;
                     } catch (\Throwable $e) {
                         $durationMs = (microtime(true) - $attemptStart) * 1000;
-                        $willRetry = $attempt <= $max && $node->shouldRetry($e);
+                        // An execution that ended elsewhere (expired) is never retried: the worker must stop.
+                        $willRetry = $attempt <= $max && ! $e instanceof ExecutionEndedException && $node->shouldRetry($e);
 
                         if ($this->container->bound(StreamContext::class)) {
                             $streamContext = $this->container->make(StreamContext::class);

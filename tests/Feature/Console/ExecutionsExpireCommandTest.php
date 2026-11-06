@@ -2,6 +2,8 @@
 
 use Illuminate\Bus\PendingBatch;
 use Illuminate\Contracts\Broadcasting\Broadcaster;
+use Illuminate\Queue\Jobs\FakeJob;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
@@ -9,20 +11,24 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Contracts\RouterInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Events\GraphExecutionCompleted;
 use Shahzad\AgenticGraph\Events\GraphExecutionFailed;
 use Shahzad\AgenticGraph\Execution\ExecutionMode;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
 use Shahzad\AgenticGraph\Execution\ExecutionRepository;
+use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
 use Shahzad\AgenticGraph\Facades\AgenticGraph;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
+use Shahzad\AgenticGraph\Jobs\ContinueExecutionJob;
 use Shahzad\AgenticGraph\Jobs\ExecuteGraphJob;
 use Shahzad\AgenticGraph\Jobs\ExecuteNodeJob;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamEvent;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
+use Shahzad\AgenticGraph\Streaming\StreamResumePayload;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
 use Shahzad\AgenticGraph\Tracing\TraceSegmentMerger;
@@ -429,4 +435,221 @@ it('reports progress from a parallel branch job, so a fan-out run is not expired
 
     $updated = DB::table('agenticgraph_executions')->where('id', $executionId)->value('updated_at');
     expect(strtotime((string) $updated))->toBeGreaterThan(now()->subSeconds(60)->getTimestamp());
+});
+
+/**
+ * A worker that is still alive when the expire command fails its execution (for example a long LLM call with
+ * stale_grace set too low). Time passes during the node, as it would on a real worker.
+ */
+class StaleLateWorkerNode extends AbstractNode
+{
+    public static string $mode = 'complete';
+
+    public static ?string $statusAfterExpire = null;
+
+    public static int $eventsAfterExpire = 0;
+
+    public function execute(StateContract $state): StateContract
+    {
+        $old = now()->subSeconds(5000);
+        DB::table('agenticgraph_executions')->update(['started_at' => $old, 'updated_at' => $old]);
+        Carbon::setTestNow(now()->addSeconds(11));
+
+        if (self::$mode === 'beat') {
+            $this->streamEvent('tick', ['n' => 1]);
+        }
+
+        Artisan::call('agenticgraph:executions:expire');
+        self::$statusAfterExpire = DB::table('agenticgraph_executions')->value('status');
+        Carbon::setTestNow(now()->addSeconds(11));
+
+        if (self::$mode === 'throw') {
+            throw new RuntimeException('late failure');
+        }
+        if (self::$mode === 'emit') {
+            $this->streamEvent('tick', ['n' => 2]);
+            self::$eventsAfterExpire++;
+            $this->streamEvent('tick', ['n' => 3]);
+            self::$eventsAfterExpire++;
+        }
+
+        return $state;
+    }
+}
+
+/**
+ * Runs a one-node async graph through its queued job, as a worker would.
+ *
+ * @return array{id: string, stream_id: string|null}
+ */
+function staleLateRun(string $mode, StreamingMode $streaming): array
+{
+    StaleLateWorkerNode::$mode = $mode;
+    StaleLateWorkerNode::$statusAfterExpire = null;
+    StaleLateWorkerNode::$eventsAfterExpire = 0;
+    $name = 'stale-late-'.$mode.'-'.$streaming->value;
+    AgenticGraph::register($name, GraphBuilder::create($name)
+        ->addNode('work', StaleLateWorkerNode::class)
+        ->setEntryPoint('work')
+        ->addExitPoint('work')
+        ->build());
+    Bus::fake();
+    $handle = AgenticGraph::execute($name, new State, new ExecutionOptions(mode: ExecutionMode::ASYNC, streaming: $streaming));
+    $job = Bus::dispatched(ExecuteGraphJob::class)->first(fn (ExecuteGraphJob $j) => $j->executionId === $handle->id());
+
+    app()->call([$job, 'handle']);
+
+    return ['id' => $handle->id(), 'stream_id' => DB::table('agenticgraph_executions')->where('id', $handle->id())->value('stream_id')];
+}
+
+/**
+ * @return list<string>
+ */
+function staleTypesAfterTerminal(?string $streamId): array
+{
+    $types = $streamId === null ? [] : array_map(fn (StreamEvent $e) => $e->type(), staleEvents($streamId));
+    $first = array_search('execution_terminal', $types, true);
+
+    return $first === false ? [] : array_slice($types, $first + 1);
+}
+
+it('keeps an expired execution failed when its surviving worker completes the node', function (StreamingMode $streaming) {
+    Event::fake([GraphExecutionCompleted::class, GraphExecutionFailed::class]);
+
+    $run = staleLateRun('complete', $streaming);
+
+    expect(StaleLateWorkerNode::$statusAfterExpire)->toBe('failed')
+        ->and(staleStatus($run['id']))->toBe('failed')
+        ->and(staleTypesAfterTerminal($run['stream_id']))->toBe([]);
+    Event::assertNotDispatched(GraphExecutionCompleted::class);
+    Event::assertDispatchedTimes(GraphExecutionFailed::class, 1);
+    if ($streaming !== StreamingMode::NONE) {
+        $terminals = array_filter(staleEvents((string) $run['stream_id']), fn (StreamEvent $e) => $e->type() === 'execution_terminal');
+        expect($terminals)->toHaveCount(1)
+            ->and(array_values($terminals)[0]->payload()['status'])->toBe('failed');
+    }
+})->with([
+    'no streaming' => [StreamingMode::NONE],
+    'sse' => [StreamingMode::SSE],
+]);
+
+it('keeps an expired execution as the expiry left it when its surviving worker fails', function (StreamingMode $streaming) {
+    Event::fake([GraphExecutionCompleted::class, GraphExecutionFailed::class]);
+
+    $run = staleLateRun('throw', $streaming);
+
+    expect(staleStatus($run['id']))->toBe('failed')
+        ->and(DB::table('agenticgraph_executions')->where('id', $run['id'])->value('error'))->toContain('stale_running')
+        ->and(staleTypesAfterTerminal($run['stream_id']))->toBe([]);
+    Event::assertDispatchedTimes(GraphExecutionFailed::class, 1);
+    Event::assertDispatched(GraphExecutionFailed::class, fn (GraphExecutionFailed $e) => $e->reason === 'stale_running');
+})->with([
+    'no streaming' => [StreamingMode::NONE],
+    'sse' => [StreamingMode::SSE],
+]);
+
+it('counts streamed events as progress, so a long streaming node is not expired', function () {
+    $run = staleLateRun('beat', StreamingMode::SSE);
+
+    expect(StaleLateWorkerNode::$statusAfterExpire)->toBe('running')
+        ->and(staleStatus($run['id']))->toBe('completed');
+});
+
+it('stops a surviving worker at its next event once its execution has expired, writing nothing more', function () {
+    $run = staleLateRun('emit', StreamingMode::SSE);
+
+    expect(StaleLateWorkerNode::$statusAfterExpire)->toBe('failed')
+        ->and(StaleLateWorkerNode::$eventsAfterExpire)->toBe(0)
+        ->and(staleStatus($run['id']))->toBe('failed')
+        ->and(staleTypesAfterTerminal($run['stream_id']))->toBe([]);
+});
+
+it('skips a retried job whose execution already ended', function () {
+    $run = staleRun('stale-retry-ended', 'running', 400);
+    Artisan::call('agenticgraph:executions:expire');
+    $eventsBefore = count(staleEvents($run['stream_id']));
+    $row = DB::table('agenticgraph_executions')->where('id', $run['id'])->first();
+
+    $job = new ExecuteGraphJob('stale-retry-ended', $run['id'], [], null, 'span_x', ExecutionOptions::fromStored($row->execution_options), $run['stream_id'], $eventsBefore);
+    $fake = new FakeJob;
+    $fake->attempts = 2;
+    $job->setJob($fake);
+    app()->call([$job, 'handle']);
+
+    expect(StaleNoopNode::$ran)->toBe(0)
+        ->and(staleStatus($run['id']))->toBe('failed')
+        ->and(count(staleEvents($run['stream_id'])))->toBe($eventsBefore);
+});
+
+it('runs a retried job normally while its execution is still running', function () {
+    $run = staleRun('stale-retry-running', 'running', 10);
+    $row = DB::table('agenticgraph_executions')->where('id', $run['id'])->first();
+
+    $job = new ExecuteGraphJob('stale-retry-running', $run['id'], [], null, 'span_x', ExecutionOptions::fromStored($row->execution_options), $run['stream_id'], 0);
+    $fake = new FakeJob;
+    $fake->attempts = 2;
+    $job->setJob($fake);
+    app()->call([$job, 'handle']);
+
+    expect(StaleNoopNode::$ran)->toBe(1)
+        ->and(staleStatus($run['id']))->toBe('completed');
+});
+
+it('does not let a late completion overwrite a failed or completed row', function () {
+    $repo = app(ExecutionRepository::class);
+    $repo->queued('exec_late_a', 'g');
+    $repo->started('exec_late_a', 'g');
+    $repo->failed('exec_late_a', 'expired');
+
+    $completed = $repo->completed('exec_late_a', ['x' => 1], 1.0);
+
+    expect($completed)->toBeFalse()
+        ->and(staleStatus('exec_late_a'))->toBe('failed')
+        ->and(DB::table('agenticgraph_executions')->where('id', 'exec_late_a')->value('final_state'))->toBeNull()
+        ->and($repo->started('exec_late_a', 'g'))->toBeFalse()
+        ->and(staleStatus('exec_late_a'))->toBe('failed');
+});
+
+it('lets a deliberate executeFromNode re-run an ended execution from a checkpoint', function () {
+    $run = staleRun('stale-rerun', 'running', 400);
+    Artisan::call('agenticgraph:executions:expire');
+    expect(staleStatus($run['id']))->toBe('failed');
+
+    app(GraphExecutor::class)
+        ->executeFromNode(app(GraphRegistry::class)->get('stale-rerun'), new State, 'a', $run['id']);
+
+    expect(staleStatus($run['id']))->toBe('completed');
+});
+
+it('records that an expiry ended the execution, and clears it when executeFromNode re-runs it', function () {
+    $run = staleRun('stale-record', 'running', 400);
+    Artisan::call('agenticgraph:executions:expire');
+    $options = fn () => json_decode((string) DB::table('agenticgraph_executions')->where('id', $run['id'])->value('execution_options'), true);
+
+    expect($options()['ended_by'])->toBe('expiry')
+        ->and($options()['ended_reason'])->toBe('stale_running')
+        ->and($options()['trace_root_span_id'])->toBeString();
+
+    app(GraphExecutor::class)->executeFromNode(app(GraphRegistry::class)->get('stale-record'), new State, 'a', $run['id']);
+
+    expect(staleStatus($run['id']))->toBe('completed')
+        ->and($options())->not->toHaveKey('ended_by')
+        ->and($options())->toHaveKey('trace_root_span_id');
+});
+
+it('never lets a continue job, even with a resume payload, reopen an expired execution', function () {
+    $run = staleRun('stale-no-reopen', 'running', 400);
+    Artisan::call('agenticgraph:executions:expire');
+    $eventsBefore = count(staleEvents($run['stream_id']));
+    $row = DB::table('agenticgraph_executions')->where('id', $run['id'])->first();
+
+    $job = new ContinueExecutionJob(
+        'stale-no-reopen', $run['id'], [], 'a', null, ExecutionOptions::fromStored($row->execution_options), $run['stream_id'], $eventsBefore,
+        new StreamResumePayload(fromSeq: $eventsBefore, resumedAtSeq: $eventsBefore + 1, gapEvents: [], checkpointId: 'cp'),
+    );
+    app()->call([$job, 'handle']);
+
+    expect(StaleNoopNode::$ran)->toBe(0)
+        ->and(staleStatus($run['id']))->toBe('failed')
+        ->and(count(staleEvents($run['stream_id'])))->toBe($eventsBefore);
 });

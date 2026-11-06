@@ -12,6 +12,7 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
+use Shahzad\AgenticGraph\Exceptions\ExecutionEndedException;
 use Shahzad\AgenticGraph\Execution\ExecutionContext;
 use Shahzad\AgenticGraph\Execution\ExecutionMode;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
@@ -61,9 +62,9 @@ class ExecuteGraphJob implements ShouldBeUnique, ShouldQueue
 
     public function handle(GraphExecutor $executor, GraphRegistry $registry): void
     {
-        // A first attempt on an execution that already ended (expired while this job waited in the queue) must not
-        // run: started() would write running over failed. Retries (attempts > 1) are unchanged.
-        if ($this->attempts() === 1 && app(ExecutionRepository::class)->hasEnded($this->executionId)) {
+        // An execution that already ended (expired while this job waited, or while an earlier attempt ran) must not
+        // run again. A retry while the row is still running proceeds normally.
+        if (app(ExecutionRepository::class)->hasEnded($this->executionId)) {
             Log::info('AgenticGraph: job skipped, execution already ended', ['execution_id' => $this->executionId]);
 
             return;
@@ -122,6 +123,9 @@ class ExecuteGraphJob implements ShouldBeUnique, ShouldQueue
             } else {
                 $executor->execute($graph, $state, $options, useBatch: true, executionId: $this->executionId);
             }
+        } catch (ExecutionEndedException) {
+            // Ended elsewhere (for example expired) while this worker ran it: nothing more to write, not a failure.
+            Log::info('AgenticGraph: worker stopped, execution already ended', ['execution_id' => $this->executionId]);
         } finally {
             // Clean up container instances
             app()->forgetInstance(TraceContext::class);

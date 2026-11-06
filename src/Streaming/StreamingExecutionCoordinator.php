@@ -19,6 +19,7 @@ use Shahzad\AgenticGraph\Events\GraphExecutionFailed;
 use Shahzad\AgenticGraph\Events\GraphExecutionStarted;
 use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
 use Shahzad\AgenticGraph\Events\NodeExecutionStarted;
+use Shahzad\AgenticGraph\Exceptions\ExecutionEndedException;
 use Shahzad\AgenticGraph\Execution\ExecutionContext;
 use Shahzad\AgenticGraph\Execution\ExecutionContextManager;
 use Shahzad\AgenticGraph\Execution\ExecutionLoopDelegate;
@@ -130,7 +131,9 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
             if (! $this->repo->get($executionId)) {
                 $this->repo->queued($executionId, $graph->name, State::toStoragePayload($state), $session->streamId, $executionOptions);
             }
-            $this->repo->started($executionId, $graph->name, State::toStoragePayload($state), $session->streamId, $executionOptions);
+            if (! $this->repo->started($executionId, $graph->name, State::toStoragePayload($state), $session->streamId, $executionOptions)) {
+                throw new ExecutionEndedException($executionId); // Ended elsewhere: write nothing.
+            }
 
             $rootSpanId = $traceContext->getRootSpanId();
             $executionStartDt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $executionStartTime)) ?: new \DateTimeImmutable;
@@ -210,6 +213,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
         ?StreamResumePayload $resumePayload = null
     ): StreamHandle {
         $state->validate();
+        $this->repo->reopen($executionId, includeExpired: true); // An explicit new run, even of an expired execution.
 
         if ($this->container->bound(TraceContext::class)) {
             $traceContext = $this->container->make(TraceContext::class);
@@ -372,8 +376,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                             $this->loopGuard->check($executionContext, $cycle);
                             $this->loopGuard->checkCyclicSafetyNet($executionContext, $graph->hasCycles());
                         } catch (LoopLimitExceededException $e) {
-                            $this->repo->failed($executionId, $e->getMessage());
-                            throw $e;
+                            throw $e; // The catch below marks the execution failed.
                         }
 
                         $executionContext = $executionContext->incrementIteration();
@@ -526,8 +529,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                     }
                     $traceContext->endSpan();
                 } catch (LockTimeoutException $e) {
-                    $this->repo->failed($executionId, 'Lock timeout: '.$e->getMessage());
-                    throw new \RuntimeException('Execution locked by another process', 0, $e);
+                    throw new \RuntimeException('Execution locked by another process: Lock timeout: '.$e->getMessage(), 0, $e);
                 } finally {
                     optional($lock)->release();
                 }
@@ -535,7 +537,10 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
 
             $duration = microtime(true) - $start;
             if (! $interrupted) {
-                $this->repo->completed($executionId, State::toStoragePayload($state), $duration);
+                if (! $this->repo->completed($executionId, State::toStoragePayload($state), $duration)) {
+                    // Ended elsewhere (for example expired): its terminal is already written.
+                    throw new ExecutionEndedException($executionId);
+                }
                 $completedAt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', microtime(true))) ?: new \DateTimeImmutable;
                 $this->events->dispatch(new GraphExecutionCompleted($executionId, $graph->name, $state, $completedAt, $duration, [], $traceContext->getRootSpanId()));
 
@@ -556,12 +561,15 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
 
             return new StreamHandle($session, $baseSink, $state);
         } catch (\Throwable $e) {
+            // An execution that ended elsewhere keeps the status, events and terminal it already has.
+            if ($e instanceof ExecutionEndedException || (! $this->repo->failed($executionId, $e->getMessage()) && $this->repo->hasEnded($executionId))) {
+                throw $e instanceof ExecutionEndedException ? $e : new ExecutionEndedException($executionId, $e);
+            }
+
             $duration = microtime(true) - $start;
             $this->events->dispatch(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000, $traceContext->getRootSpanId()));
 
             $this->endFailedStream($sink, $session, $traceContext, $e, $state);
-
-            $this->repo->failed($executionId, $e->getMessage());
 
             throw $e;
         }
@@ -642,6 +650,10 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
         TraceContext $traceContext,
         float $start
     ): void {
+        if ($e instanceof ExecutionEndedException) {
+            return; // The execution ended elsewhere and already has its terminal.
+        }
+
         $duration = microtime(true) - $start;
         $this->events->dispatch(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000, $traceContext->getRootSpanId()));
 

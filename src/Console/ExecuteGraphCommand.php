@@ -20,7 +20,7 @@ class ExecuteGraphCommand extends Command
         $name = $this->argument('name');
         $graph = $registry->get($name);
         if (! $graph) {
-            $this->error("Graph not found: {$name}");
+            $this->error("Graph not found in registry or config: {$name}");
 
             return self::FAILURE;
         }

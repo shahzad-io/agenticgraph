@@ -58,6 +58,8 @@ php artisan migrate
 | `agenticgraph-migrations` | The migrations for the four tables: executions, checkpoints, interrupts and stream events |
 | `agenticgraph-prompts` (optional) | The packaged prompt files, into `resources/prompts` |
 
+Publishing again skips files that exist; `--force` overwrites `config/agenticgraph.php` and `config/model_pricing.php`. `config/model_pricing_overrides.php` (your hand-set prices) is published once and never overwritten, with or without `--force`.
+
 Prism and Relay are dependencies and work without publishing their configs. Publish `prism-config` or `relay-config` only to change provider settings or MCP servers.
 
 If you run async graphs, schedule `agenticgraph:executions:expire` every minute, next to `agenticgraph:interrupt:expire`, so a run no worker picked up (or whose worker died) ends with a failed stream instead of waiting forever.

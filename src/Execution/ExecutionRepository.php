@@ -16,6 +16,11 @@ class ExecutionRepository implements ExecutionStore
 
     public const ROOT_SPAN_KEY = 'trace_root_span_id';
 
+    /** Kept in execution_options (no migration) when agenticgraph:*:expire ended the execution: that end is final. */
+    public const ENDED_BY_KEY = 'ended_by';
+
+    public const ENDED_REASON_KEY = 'ended_reason';
+
     protected string $table = 'agenticgraph_executions';
 
     /**
@@ -89,8 +94,8 @@ class ExecutionRepository implements ExecutionStore
         array $initialState = [],
         ?string $streamId = null,
         ?ExecutionOptions $executionOptions = null
-    ): void {
-        InstrumentationGate::internal(fn () => $this->db->transaction(function () use ($id, $graphName, $initialState, $streamId, $executionOptions) {
+    ): bool {
+        return InstrumentationGate::internal(fn () => $this->db->transaction(function () use ($id, $graphName, $initialState, $streamId, $executionOptions): bool {
             // Verify the record exists and get current status with lock
             $current = $this->db->table($this->table)
                 ->where('id', $id)
@@ -108,6 +113,19 @@ class ExecutionRepository implements ExecutionStore
                 $this->queued($id, $graphName, $initialState, $streamId, $executionOptions);
                 $current = (object) ['status' => 'queued'];
             } else {
+                // An ended execution stays ended: a retried or late job (for example after
+                // agenticgraph:executions:expire) must not bring it back to running.
+                if (in_array($current->status, ['completed', 'failed'], true)) {
+                    if ((bool) config('agenticgraph.logging.enabled', true)) {
+                        $this->logger->info('Execution already ended, not started again', [
+                            'execution_id' => $id,
+                            'current_status' => $current->status,
+                        ]);
+                    }
+
+                    return false;
+                }
+
                 // Validate state transition
                 if (! $this->canTransitionTo($id, 'running')) {
                     if ((bool) config('agenticgraph.logging.enabled', true)) {
@@ -144,44 +162,40 @@ class ExecutionRepository implements ExecutionStore
                     'previous_status' => $current->status ?? 'new',
                 ]);
             }
-        }));
+
+            return true;
+        })) === true;
     }
 
     /**
+     * Marks a running or interrupted execution completed. Returns false, and changes nothing, when the row is
+     * missing or already ended (for example failed by agenticgraph:executions:expire while its worker still ran).
+     *
      * @param  array<string, mixed>  $finalState
      */
-    public function completed(string $id, array $finalState, float $duration): void
+    public function completed(string $id, array $finalState, float $duration): bool
     {
-        InstrumentationGate::internal(fn () => $this->db->transaction(function () use ($id, $finalState, $duration) {
-            // Verify state transition with lock
-            if (! $this->canTransitionTo($id, 'completed')) {
-                $current = $this->db->table($this->table)
-                    ->where('id', $id)
-                    ->lockForUpdate()
-                    ->value('status');
-                if ((bool) config('agenticgraph.logging.enabled', true)) {
-                    $this->logger->warning('Invalid state transition to completed', [
-                        'execution_id' => $id,
-                        'current_status' => $current,
-                    ]);
-                }
-            }
-
-            $this->db->table($this->table)->where('id', $id)->update([
+        $current = $this->getStatus($id);
+        $updated = InstrumentationGate::internal(fn () => $this->db->table($this->table)
+            ->where('id', $id)
+            ->whereNotIn('status', ['completed', 'failed'])
+            ->update([
                 'status' => 'completed',
                 'final_state' => json_encode($finalState),
                 'duration' => $duration,
                 'completed_at' => now(),
                 'updated_at' => now(),
-            ]);
-        }));
+            ])) > 0;
+        // A row that does not exist has nothing to protect (a handle-only run); only an ended row is refused.
+        $ok = $updated || $current === null;
 
         if ((bool) config('agenticgraph.logging.enabled', true)) {
-            $this->logger->debug('Execution completed', [
-                'execution_id' => $id,
-                'duration' => $duration,
-            ]);
+            $ok
+                ? $this->logger->debug('Execution completed', ['execution_id' => $id, 'duration' => $duration])
+                : $this->logger->warning('Execution not completed: already ended', ['execution_id' => $id, 'current_status' => $current]);
         }
+
+        return $ok;
     }
 
     /**
@@ -258,19 +272,83 @@ class ExecutionRepository implements ExecutionStore
     }
 
     /**
-     * Progress report from a worker: a running execution that completes a node is alive, so
-     * agenticgraph:executions:expire leaves it alone. Only a running row is touched. Never throws.
+     * Progress report from a worker: a running execution that completes a node or streams is alive, so
+     * agenticgraph:executions:expire leaves it alone. Only a running row is touched. Returns false only when the
+     * execution has ended (completed or failed), so the worker can stop. Never throws.
      */
-    public function touch(string $id): void
+    public function touch(string $id): bool
     {
         try {
-            InstrumentationGate::internal(fn () => $this->db->table($this->table)
+            $touched = InstrumentationGate::internal(fn () => $this->db->table($this->table)
                 ->where('id', $id)
                 ->where('status', 'running')
                 ->update(['updated_at' => now()]));
+
+            // MySQL counts only changed rows, so 0 can also mean "same second": read the status to tell.
+            return $touched > 0 || ! $this->hasEnded($id);
         } catch (\Throwable) {
             // Progress is best effort; it must never fail a run.
+            return true;
         }
+    }
+
+    /**
+     * Records that an expiry command ended the execution (reason stale_queued, stale_running or interrupt_expired).
+     * An execution that ended this way is final: only an explicit new run (executeFromNode) reopens it.
+     */
+    public function markEndedByExpiry(string $id, string $reason): void
+    {
+        $this->mergeOptions($id, [self::ENDED_BY_KEY => 'expiry', self::ENDED_REASON_KEY => $reason]);
+    }
+
+    public function endedByExpiry(string $id): bool
+    {
+        return ($this->storedOptions($id)[self::ENDED_BY_KEY] ?? null) === 'expiry';
+    }
+
+    /**
+     * Brings an ended execution back to running. A worker or recovery job passes nothing and cannot reopen an
+     * execution an expiry command ended; executeFromNode() is an explicit new run and passes `$includeExpired`.
+     */
+    public function reopen(string $id, bool $includeExpired = false): bool
+    {
+        if (! $includeExpired && $this->endedByExpiry($id)) {
+            return false;
+        }
+
+        $reopened = InstrumentationGate::internal(fn () => $this->db->table($this->table)
+            ->where('id', $id)
+            ->whereIn('status', ['completed', 'failed'])
+            ->update(['status' => 'running', 'error' => null, 'completed_at' => null, 'updated_at' => now()])) > 0;
+        if ($reopened) {
+            $this->mergeOptions($id, [self::ENDED_BY_KEY => null, self::ENDED_REASON_KEY => null]);
+        }
+
+        return $reopened;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function storedOptions(string $id): array
+    {
+        $json = InstrumentationGate::internal(fn () => $this->db->table($this->table)->where('id', $id)->value('execution_options'));
+        $data = is_string($json) ? json_decode($json, true) : null;
+
+        return is_array($data) ? $data : [];
+    }
+
+    /**
+     * @param  array<string, mixed>  $changes  a null value removes the key
+     */
+    private function mergeOptions(string $id, array $changes): void
+    {
+        $options = $this->storedOptions($id);
+        foreach ($changes as $key => $value) {
+            $value === null ? $options = array_diff_key($options, [$key => true]) : $options[$key] = $value;
+        }
+        InstrumentationGate::internal(fn () => $this->db->table($this->table)->where('id', $id)
+            ->update(['execution_options' => json_encode($options, JSON_UNESCAPED_SLASHES)]));
     }
 
     /**

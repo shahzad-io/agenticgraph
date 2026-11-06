@@ -20,6 +20,7 @@ use Shahzad\AgenticGraph\Events\GraphExecutionFailed;
 use Shahzad\AgenticGraph\Events\GraphExecutionStarted;
 use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
 use Shahzad\AgenticGraph\Events\NodeExecutionStarted;
+use Shahzad\AgenticGraph\Exceptions\ExecutionEndedException;
 use Shahzad\AgenticGraph\Graph\Graph;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Jobs\ExecuteGraphJob;
@@ -140,7 +141,12 @@ class ExecutionCoordinator
         if (! $this->repo->get($executionId)) {
             $this->repo->queued($executionId, $graph->name, State::toStoragePayload($state), null, $options);
         }
-        $this->repo->started($executionId, $graph->name, State::toStoragePayload($state), null, $options);
+        if (! $this->repo->started($executionId, $graph->name, State::toStoragePayload($state), null, $options)) {
+            $e = new ExecutionEndedException($executionId); // Ended elsewhere: write nothing.
+            $this->contextManager->exitWithException($scope, $e);
+
+            throw $e;
+        }
         $rootSpanId = $traceContext->getRootSpanId();
         $executionStartTime = microtime(true);
         $executionStartDt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $executionStartTime)) ?: new \DateTimeImmutable;
@@ -241,8 +247,7 @@ class ExecutionCoordinator
                     }
                     $traceContext->endSpan();
                 } catch (LockTimeoutException $e) {
-                    $this->repo->failed($executionId, 'Lock timeout: '.$e->getMessage());
-                    throw new \RuntimeException('Execution locked by another process', 0, $e);
+                    throw new \RuntimeException('Execution locked by another process: Lock timeout: '.$e->getMessage(), 0, $e);
                 } finally {
                     optional($lock)->release();
                 }
@@ -250,7 +255,9 @@ class ExecutionCoordinator
 
             $duration = microtime(true) - $start;
             if (! $interrupted && ! $state->hasInterrupt()) {
-                $this->repo->completed($executionId, State::toStoragePayload($state), $duration);
+                if (! $this->repo->completed($executionId, State::toStoragePayload($state), $duration)) {
+                    throw new ExecutionEndedException($executionId); // Ended elsewhere, for example expired.
+                }
                 $completedAt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', microtime(true))) ?: new \DateTimeImmutable;
                 $this->events->dispatch(new GraphExecutionCompleted($executionId, $graph->name, $state, $completedAt, $duration, [], $traceContext->getRootSpanId()));
             }
@@ -260,9 +267,14 @@ class ExecutionCoordinator
 
             return $state;
         } catch (\Throwable $e) {
+            // An execution that ended elsewhere keeps the status and events it already has.
+            if ($e instanceof ExecutionEndedException || (! $this->repo->failed($executionId, $e->getMessage()) && $this->repo->hasEnded($executionId))) {
+                $this->contextManager->exitWithException($scope, $e);
+                throw $e instanceof ExecutionEndedException ? $e : new ExecutionEndedException($executionId, $e);
+            }
+
             $duration = microtime(true) - $start;
             $this->events->dispatch(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000, $traceContext->getRootSpanId()));
-            $this->repo->failed($executionId, $e->getMessage());
             $this->contextManager->exitWithException($scope, $e);
             throw $e;
         }
@@ -527,6 +539,7 @@ class ExecutionCoordinator
         ?LoopMetadata $loopMetadata = null,
         bool $skipInterruptGateForEntry = false
     ): StateContract {
+        $this->repo->reopen($executionId, includeExpired: true); // An explicit new run, even of an expired execution.
         $options = new ExecutionOptions;
         $segmentStart = microtime(true);
         $scope = $this->enterScope($executionId, $graph, $options, $loopMetadata);
@@ -637,8 +650,7 @@ class ExecutionCoordinator
                     }
                     $traceContext->endSpan();
                 } catch (LockTimeoutException $e) {
-                    $this->repo->failed($executionId, 'Lock timeout: '.$e->getMessage());
-                    throw new \RuntimeException('Execution locked by another process', 0, $e);
+                    throw new \RuntimeException('Execution locked by another process: Lock timeout: '.$e->getMessage(), 0, $e);
                 } finally {
                     optional($lock)->release();
                 }
@@ -647,7 +659,9 @@ class ExecutionCoordinator
             if (! $interrupted && ! $state->hasInterrupt()) {
                 $segmentEnd = microtime(true);
                 $duration = $segmentEnd - $segmentStart;
-                $this->repo->completed($executionId, State::toStoragePayload($state), $duration);
+                if (! $this->repo->completed($executionId, State::toStoragePayload($state), $duration)) {
+                    throw new ExecutionEndedException($executionId); // Ended elsewhere, for example expired.
+                }
                 $this->events->dispatch(new GraphExecutionCompleted($executionId, $graph->name, $state, TraceTime::fromMicrotime($segmentEnd), $duration, [], $traceContext->getRootSpanId()));
             }
 
@@ -656,9 +670,14 @@ class ExecutionCoordinator
 
             return $state;
         } catch (\Throwable $e) {
+            // An execution that ended elsewhere keeps the status and events it already has.
+            if ($e instanceof ExecutionEndedException || (! $this->repo->failed($executionId, $e->getMessage()) && $this->repo->hasEnded($executionId))) {
+                $this->contextManager->exitWithException($scope, $e);
+                throw $e instanceof ExecutionEndedException ? $e : new ExecutionEndedException($executionId, $e);
+            }
+
             $duration = microtime(true) - $segmentStart;
             $this->events->dispatch(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000, $traceContext->getRootSpanId()));
-            $this->repo->failed($executionId, $e->getMessage());
             $this->contextManager->exitWithException($scope, $e);
             throw $e;
         }

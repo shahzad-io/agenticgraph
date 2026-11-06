@@ -93,7 +93,7 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
          */
         $package
             ->name('agenticgraph')
-            ->hasConfigFile(['agenticgraph', 'model_pricing', 'model_pricing_overrides'])
+            ->hasConfigFile(['agenticgraph', 'model_pricing'])
             ->hasViews()
             ->hasMigration('create_agenticgraph_executions_table')
             ->hasMigration('create_agenticgraph_checkpoints_table')
@@ -119,8 +119,21 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
             ->hasCommand(ListPromptsCommand::class);
     }
 
+    public function packageRegistered(): void
+    {
+        // Hand-set prices: merged over model_pricing, but published separately (see packageBooted) so that
+        // `vendor:publish --force` can never overwrite an app's own file.
+        if (! $this->app->configurationIsCached()) {
+            $this->mergeConfigFrom(__DIR__.'/../config/model_pricing_overrides.php', 'model_pricing_overrides');
+        }
+    }
+
     public function packageBooted(): void
     {
+        if ($this->app->runningInConsole() && ! is_file(config_path('model_pricing_overrides.php'))) {
+            $this->publishes([__DIR__.'/../config/model_pricing_overrides.php' => config_path('model_pricing_overrides.php')], 'agenticgraph-config');
+        }
+
         $this->publishes([__DIR__.'/../resources/prompts' => resource_path('prompts')], 'agenticgraph-prompts');
 
         $this->app->bind(PrismClient::class, PrismFacadeClient::class);

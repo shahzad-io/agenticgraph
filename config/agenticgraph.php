@@ -147,7 +147,7 @@ return [
         'sse' => [
             'enabled' => env('AGENTICGRAPH_STREAM_SSE_ENABLED', true),
             'max_duration_seconds' => env('AGENTICGRAPH_STREAM_SSE_MAX_DURATION', 120),
-            'poll_interval_ms' => env('AGENTICGRAPH_STREAM_SSE_POLL_INTERVAL', 250),
+            'poll_interval_ms' => env('AGENTICGRAPH_STREAM_SSE_POLL_INTERVAL', 100),
             'use_blocking_reads' => env('AGENTICGRAPH_STREAM_SSE_BLOCKING_READS', true),
             'heartbeat_interval' => env('AGENTICGRAPH_STREAM_SSE_HEARTBEAT', 30),
             // SSE `retry:` field and the planned-close `after_ms`.
