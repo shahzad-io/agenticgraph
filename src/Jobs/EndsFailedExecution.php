@@ -49,7 +49,7 @@ trait EndsFailedExecution
         }
 
         if ($changed) {
-            event(new GraphExecutionFailed($executionId, $graphName, State::fromArray($stateData), $e, 0.0, $rootSpanId));
+            event(new GraphExecutionFailed($executionId, $graphName, State::fromArray($stateData), $e, 0.0, $rootSpanId, $reason));
         }
     }
 
@@ -87,7 +87,7 @@ trait EndsFailedExecution
             startedAtUnix: time(),
             seq: $lastSeq ?? $fallbackSeq ?? 0,
         );
-        $error = ['error_type' => $e::class, 'message' => $e->getMessage()];
+        $error = StreamEventEnvelope::clientError($e);
 
         $store->append(new StreamEventImpl(
             $streamId,

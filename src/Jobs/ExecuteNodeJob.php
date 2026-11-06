@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
 use Shahzad\AgenticGraph\Events\NodeExecutionStarted;
 use Shahzad\AgenticGraph\Execution\ExecutionContext;
+use Shahzad\AgenticGraph\Execution\ExecutionRepository;
 use Shahzad\AgenticGraph\Execution\NodeMiddlewarePipeline;
 use Shahzad\AgenticGraph\Graph\Graph;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
@@ -52,6 +53,9 @@ class ExecuteNodeJob implements ShouldQueue
         if ($this->batch()?->cancelled()) {
             return;
         }
+
+        // This branch job is progress: the execution is alive, so the expire command leaves it alone.
+        app(ExecutionRepository::class)->touch($this->executionId);
 
         // Get graph from registry
         $graph = $registry->get($this->graphName);

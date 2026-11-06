@@ -29,7 +29,7 @@ use Shahzad\AgenticGraph\Prompts\PromptTemplate;
  */
 final class LlmRequest
 {
-    private const PROMPT_WITH_MESSAGES = 'prompt() cannot be combined with user(), assistant() or history() (Prism refuses a prompt and messages together); use chat().';
+    private const PROMPT_WITH_MESSAGES = 'prompt() cannot be combined with user() or assistant() (Prism refuses a prompt and messages together); use chat(), or history() for earlier turns.';
 
     private PromptTemplate|ChatPromptTemplate|null $template = null;
 
@@ -89,13 +89,16 @@ final class LlmRequest
     /** @var array{as: string, items: list<array{id: string|int, content: string, metadata: array<string, mixed>, score: float|null}>, format: PromptTemplate|null, separator: string}|null */
     private ?array $context = null;
 
+    /** user() or assistant() was called: they cannot be mixed with prompt() (history() can). */
+    private bool $literalTurns = false;
+
     public function __construct(private readonly LlmExecutor $executor) {}
 
     /** A string is wrapped in a new PromptTemplate. Interpolated with vars(). */
     public function prompt(string|PromptTemplate $prompt): self
     {
         $this->assertNoTemplate();
-        if ($this->inline !== []) {
+        if ($this->literalTurns) {
             throw new \LogicException(self::PROMPT_WITH_MESSAGES);
         }
 
@@ -119,17 +122,18 @@ final class LlmRequest
     /** Literal, appended after the chat() messages. */
     public function user(string $content): self
     {
-        return $this->withInline([['role' => 'user', 'content' => $content]]);
+        return $this->withInline([['role' => 'user', 'content' => $content]], turn: true);
     }
 
     /** Literal, appended after the chat() messages. */
     public function assistant(string $content): self
     {
-        return $this->withInline([['role' => 'assistant', 'content' => $content]]);
+        return $this->withInline([['role' => 'assistant', 'content' => $content]], turn: true);
     }
 
     /**
      * Literal, appended in order. Prism messages, or arrays with role (user, assistant, system) and content.
+     * With prompt() the history comes first and the prompt is the latest user message.
      *
      * @param  array<int, mixed>  $messages
      */
@@ -427,12 +431,14 @@ final class LlmRequest
 
         $prompt = null;
         $messages = [];
-        if ($this->template instanceof PromptTemplate) {
+        if ($this->template instanceof PromptTemplate && $this->inline === []) {
             $prompt = $this->template->format($vars);
         } else {
+            // prompt() after history(): the history first, then the prompt as the latest user message.
             $formatted = [
                 ...($this->template instanceof ChatPromptTemplate ? $this->template->format($vars) : []),
                 ...$this->inline,
+                ...($this->template instanceof PromptTemplate ? [['role' => 'user', 'content' => $this->template->format($vars)]] : []),
             ];
             if ($formatted === []) {
                 throw new \LogicException('An LLM request needs prompt(), chat(), user() or history().');
@@ -482,13 +488,16 @@ final class LlmRequest
     /**
      * @param  list<array{role: string, content: string, message?: Message}>  $messages
      */
-    private function withInline(array $messages): self
+    private function withInline(array $messages, bool $turn = false): self
     {
-        if ($this->template instanceof PromptTemplate) {
+        if ($turn && $this->template instanceof PromptTemplate) {
             throw new \LogicException(self::PROMPT_WITH_MESSAGES);
         }
 
-        return $this->with('inline', [...$this->inline, ...$messages]);
+        $request = $this->with('inline', [...$this->inline, ...$messages]);
+        $request->literalTurns = $this->literalTurns || $turn;
+
+        return $request;
     }
 
     private function with(string $property, mixed $value): self

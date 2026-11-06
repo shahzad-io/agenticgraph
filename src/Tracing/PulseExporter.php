@@ -31,6 +31,29 @@ class PulseExporter extends BufferedTraceExporter
 
         $this->endpoint = config('agenticgraph.tracing.endpoint', 'https://ingest.agenticgraph.dev');
         $this->apiKey = config('agenticgraph.tracing.api_key', null);
+        $this->refuseInsecureEndpoint();
+    }
+
+    /**
+     * An http:// endpoint is redirected to https://, which turns the POST into a GET (405), so every segment would be
+     * lost. Local hosts are allowed. A refused endpoint switches the exporter off and logs the setting to fix.
+     */
+    private function refuseInsecureEndpoint(): void
+    {
+        $endpoint = (string) $this->endpoint;
+        $scheme = strtolower((string) parse_url($endpoint, PHP_URL_SCHEME));
+        $host = strtolower((string) parse_url($endpoint, PHP_URL_HOST));
+        $local = $host === 'localhost' || $host === '127.0.0.1' || str_ends_with($host, '.test');
+        if ($scheme === 'https' || $local) {
+            return;
+        }
+
+        $this->endpoint = null;
+        Log::error(sprintf(
+            'AgenticGraph: Pulse endpoint must use https (agenticgraph.tracing.endpoint / AGENTICPULSE_ENDPOINT = %s://%s); tracing to Pulse is off. Use the base URL, for example https://ingest.agenticgraph.dev, with no path.',
+            $scheme === '' ? '(none)' : $scheme,
+            $host === '' ? '(no host)' : $host,
+        ));
     }
 
     /**
@@ -38,7 +61,7 @@ class PulseExporter extends BufferedTraceExporter
      */
     public function isEnabled(): bool
     {
-        return (bool) config('agenticgraph.tracing.enabled', false) && ! empty($this->apiKey);
+        return (bool) config('agenticgraph.tracing.enabled', false) && ! empty($this->apiKey) && $this->endpoint !== null;
     }
 
     /**

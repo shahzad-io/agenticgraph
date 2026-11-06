@@ -50,6 +50,12 @@ return [
         'timeout' => env('AGENTICGRAPH_EXECUTION_TIMEOUT', 0), // ExecuteGraphJob seconds; 0 = worker default
         'resume_tries' => env('AGENTICGRAPH_RESUME_TRIES', 1), // ResumeExecutionJob attempts
         'resume_timeout' => env('AGENTICGRAPH_RESUME_TIMEOUT', 0), // ResumeExecutionJob seconds; 0 = worker default
+        // agenticgraph:executions:expire (schedule it every minute) fails executions no worker is running:
+        // queued longer than queued_timeout; running longer than max(timeout, resume_timeout) + stale_grace, or,
+        // with timeout 0, longer than stale_running_after. A run that completes nodes counts as alive (updated_at).
+        'queued_timeout' => env('AGENTICGRAPH_EXECUTION_QUEUED_TIMEOUT', 300), // seconds
+        'stale_grace' => env('AGENTICGRAPH_EXECUTION_STALE_GRACE', 60), // seconds
+        'stale_running_after' => env('AGENTICGRAPH_EXECUTION_STALE_RUNNING_AFTER', 900), // seconds, used when timeout is 0
         'max_iterations' => env('AGENTICGRAPH_MAX_ITERATIONS', 1000), // existing - used when loop.enabled = false
 
         // Loop support configuration (opt-in, backward compatible)
@@ -191,6 +197,11 @@ return [
             // 'diff' = attach input→output state diff on node_complete
             // 'full' = attach full output state (toStoragePayload shape) on node_complete
         ],
+        // A failed run sends the browser a generic error (error_type ExecutionFailed, message "Execution failed"),
+        // since exception messages can hold internals. true sends the exception class and message in graph_failed,
+        // node_error, the failed execution_terminal meta and stream_close meta; the message is cut to
+        // tracing.capture.max_length, and tracing.capture.errors = class still removes it.
+        'expose_error_details' => env('AGENTICGRAPH_STREAM_EXPOSE_ERROR_DETAILS', false),
         // final_state in execution_terminal, stream_close meta and stream_replay_unavailable.
         // expose=false sends null. keys = list of top-level state keys to send, null = all.
         // AGENTICGRAPH_STREAM_FINAL_STATE_KEYS: comma-separated, e.g. "response,status"; empty = null.

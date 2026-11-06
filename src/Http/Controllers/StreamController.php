@@ -28,8 +28,9 @@ final class StreamController
         $executionStore ??= app(ExecutionStore::class);
         $cursor = $request->query('cursor', $request->header('Last-Event-ID'));
         $cursor = is_numeric($cursor) ? (int) $cursor : null;
+        $wrapCustom = $request->query('custom_events') === 'wrap';
 
-        return response()->stream(function () use ($streamId, $request, $store, $executionStore, $cursor): void {
+        return response()->stream(function () use ($streamId, $request, $store, $executionStore, $cursor, $wrapCustom): void {
             if (! app()->runningUnitTests()) {
                 @ini_set('output_buffering', 'off');
                 @ini_set('zlib.output_compression', '0');
@@ -69,7 +70,7 @@ final class StreamController
                 foreach ($store->readFrom($streamId, $nextSeq, 200) as $event) {
                     $hasEvents = true;
                     $nextSeq = $event->seq() + 1;
-                    echo $this->formatEvent($event);
+                    echo $this->formatEvent($event, $wrapCustom);
                     if ($this->closesResponse($event)) {
                         $this->flushOutput();
 
@@ -124,11 +125,11 @@ final class StreamController
         return ! is_array($payload) || ($payload['status'] ?? null) !== StreamTerminalStatus::INTERRUPTED->value;
     }
 
-    private function formatEvent(StreamEvent $event): string
+    private function formatEvent(StreamEvent $event, bool $wrapCustom = false): string
     {
         $envelope = StreamEventEnvelope::fromStreamEvent($event);
 
-        return $envelope->formatSse();
+        return $envelope->formatSse(wrapCustom: $wrapCustom);
     }
 
     /**

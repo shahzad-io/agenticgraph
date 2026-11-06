@@ -101,7 +101,8 @@ it('fails the execution and ends the stream once when the graph is missing on th
         ->and(array_map(fn (StreamEvent $event) => $event->seq(), $events))->toBe([1, 2])
         ->and($events[1]->payload()['status'])->toBe('failed')
         ->and($events[1]->payload()['final_state'])->toBeNull()
-        ->and($events[1]->payload()['meta']['error_type'])->toBe(RuntimeException::class);
+        ->and($events[1]->payload()['meta']['error_type'])->toBe('ExecutionFailed')
+        ->and($events[1]->payload()['meta']['message'])->toBe('Execution failed');
 
     Event::assertDispatchedTimes(GraphExecutionFailed::class, 1);
     Event::assertDispatched(GraphExecutionFailed::class, fn (GraphExecutionFailed $event) => $event->executionId === $job->executionId
@@ -166,7 +167,7 @@ it('sends one broadcast stream_close when a broadcast job fails before the graph
     expect($closes)->toHaveCount(1)
         ->and($closes[0]['payload']['status'])->toBe('error')
         ->and($closes[0]['payload']['meta']['final_state'])->toBeNull()
-        ->and($closes[0]['payload']['meta']['error_type'])->toBe(RuntimeException::class);
+        ->and($closes[0]['payload']['meta']['error_type'])->toBe('ExecutionFailed');
 });
 
 it('reads tries and timeout from config with defaults when the keys are missing', function () {

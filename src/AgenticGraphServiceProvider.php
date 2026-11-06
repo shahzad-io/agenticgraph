@@ -19,6 +19,7 @@ use Shahzad\AgenticGraph\Console\CheckpointDeleteCommand;
 use Shahzad\AgenticGraph\Console\CheckpointListCommand;
 use Shahzad\AgenticGraph\Console\CheckpointResumeCommand;
 use Shahzad\AgenticGraph\Console\ExecuteGraphCommand;
+use Shahzad\AgenticGraph\Console\ExecutionsExpireCommand;
 use Shahzad\AgenticGraph\Console\ExecutionsListCommand;
 use Shahzad\AgenticGraph\Console\InterruptExpireCommand;
 use Shahzad\AgenticGraph\Console\ListGraphsCommand;
@@ -113,6 +114,7 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
             ->hasCommand(CheckpointCleanupCommand::class)
             ->hasCommand(ExecutionsListCommand::class)
             ->hasCommand(InterruptExpireCommand::class)
+            ->hasCommand(ExecutionsExpireCommand::class)
             ->hasCommand(SyncModelPricingCommand::class)
             ->hasCommand(ListPromptsCommand::class);
     }

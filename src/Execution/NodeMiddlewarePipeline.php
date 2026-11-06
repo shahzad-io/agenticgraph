@@ -89,7 +89,9 @@ final class NodeMiddlewarePipeline
                         'startedAt' => $attemptStart,
                     ];
                     if ($this->container->bound(StreamContext::class)) {
-                        $this->container->make(StreamContext::class)->resetNodeAttemptEmission();
+                        $streamContext = $this->container->make(StreamContext::class);
+                        $streamContext->resetNodeAttemptEmission();
+                        $streamContext->enterNode($nodeName);
                     }
 
                     try {
@@ -139,7 +141,10 @@ final class NodeMiddlewarePipeline
         );
 
         try {
-            return $pipeline($state);
+            $result = $pipeline($state);
+            $this->reportProgress($executionId);
+
+            return $result;
         } catch (\Throwable $e) {
             // A middleware failed outside the retry loop (before $next, or after it returned):
             // record it as a failed attempt so the node still has a span. When the node's own
@@ -167,6 +172,19 @@ final class NodeMiddlewarePipeline
             }
 
             throw $e;
+        }
+    }
+
+    /**
+     * A node completed: tell the execution row, so a long run that keeps making progress is never expired as stale.
+     * Sequential, streamed, parallel inline and queued branch nodes all pass through here. One update of a running row.
+     */
+    private function reportProgress(string $executionId): void
+    {
+        try {
+            $this->container->make(ExecutionRepository::class)->touch($executionId);
+        } catch (\Throwable) {
+            // Best effort.
         }
     }
 

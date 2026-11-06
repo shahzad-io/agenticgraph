@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.2.1 - Unreleased
+
+### Added
+
+- **`agenticgraph:executions:expire`.** Fails async executions no worker is running, so the visitor's stream gets a terminal event. A `queued` execution older than `AGENTICGRAPH_EXECUTION_QUEUED_TIMEOUT` (default 300 seconds) and a `running` execution with no progress for longer than `max(AGENTICGRAPH_EXECUTION_TIMEOUT, AGENTICGRAPH_RESUME_TIMEOUT)` plus `AGENTICGRAPH_EXECUTION_STALE_GRACE` (default 60 seconds) are failed. When `AGENTICGRAPH_EXECUTION_TIMEOUT` is 0, a running execution is failed after `AGENTICGRAPH_EXECUTION_STALE_RUNNING_AFTER` (default 900 seconds). A running execution that completes nodes counts as alive (`updated_at` is refreshed after each node, sequential, streamed or parallel). Interrupted and sync executions are never touched. It ends the execution like a failed job: status `failed`, `graph_failed` (with `reason` `stale_queued` or `stale_running`) and a failed `execution_terminal`, the `GraphExecutionFailed` event, and a final trace segment on the original root span. Each execution is ended in its own transaction, a broadcast failure is logged, and the trace is sent after the commit. Schedule it every minute, next to `agenticgraph:interrupt:expire`.
+- `GraphExecutionFailed` has an optional `reason` (`interrupt_expired`, `stale_queued`, `stale_running`), and `ExecutionRepository::queued()` an optional `$rootSpanId`, kept in the execution options so a run that never finishes can end its trace on the original root. No migration.
+- **`AGENTICGRAPH_STREAM_EXPOSE_ERROR_DETAILS`** (default `false`). When on, `graph_failed`, `node_error`, the failed `execution_terminal` and broadcast `stream_close` carry the exception class and message, the message cut to `AGENTICGRAPH_CAPTURE_MAX_LENGTH` with the truncation marker; `AGENTICGRAPH_CAPTURE_ERRORS=class` still removes the message. Same keys as before, additive within stream wire v1.1.
+- **Custom events over SSE.** With `?custom_events=wrap` on the stream URL, events from `streamEvent()` arrive as `event: custom_event` with the author's name in `event_type`, so a browser `EventSource` client gets them without listing names. Without the parameter the frames are unchanged. Additive within stream wire v1.1; stream client 0.1.1 asks for it.
+- **`prompt()` with `history()`.** The history messages come first, then the prompt as the latest user message; `system()` stays first and `explain()` shows the final order. History text is never interpolated. `user()` and `assistant()` with `prompt()` still throw (use `chat()`), and `chat()` is unchanged.
+
+### Changed
+
+- **Security fix: stream error details are no longer sent to the browser by default.** `graph_failed`, `node_error`, the failed `execution_terminal` `meta` and broadcast `stream_close` `meta` carry `error_type: ExecutionFailed` and `message: Execution failed`. 0.2.0 sent the raw exception class and message, which can hold hosts, credentials in a DSN or SQL. Set `AGENTICGRAPH_STREAM_EXPOSE_ERROR_DETAILS=true` to send them. The stored execution `error` and the logs keep the full message; `reason` is always sent.
+- **Security fix: `stream_error` and the model `error` event follow the same rule.** `stream_error` carries `error_type: StreamError` and `message: Stream error` (its `stage` and `event_*` fields are unchanged). The Prism `error` event carries a category the package picks, `rate_limited`, `provider_unavailable` or `provider_error`, a fixed message for it and `metadata: null`, never the provider's text, which can hold keys, account ids or internal URLs. `AGENTICGRAPH_STREAM_EXPOSE_ERROR_DETAILS=true` sends the exception or provider type, message (cut to `capture.max_length`, `AGENTICGRAPH_CAPTURE_ERRORS=class` still removes it) and metadata. Logs keep the real error.
+- **Security fix: a failed `tool_result` and a provider failure follow the same rule.** A failed `tool_result` carries `Tool failed` in `error` and in `result` (Prism puts the error text in both); the model still receives the real error. A node failed by a model provider exception (Prism or HTTP client, also wrapped) shows `error_type` `rate_limited`, `provider_unavailable` or `provider_error` with a fixed message in `node_error`, `graph_failed` and the terminal `meta`, chosen from the exception type, never its text. Any other failure stays `ExecutionFailed`. `AGENTICGRAPH_STREAM_EXPOSE_ERROR_DETAILS=true` sends the real values.
+- Custom stream events and model stream events (`text_delta` and the rest) carry the node name registered in the graph (`retrieve`), like lifecycle events, and share its `node_seq`. They carried a name derived from the class (`Retrieve`).
+- A first attempt of an `ExecuteGraphJob` whose execution already ended (for example expired while the job waited in the queue) exits without running. Retries are unchanged.
+- A completed node now updates the execution row's `updated_at` while it is `running`, one small update per node, in every execution mode.
+
+### Fixed
+
+- `agenticgraph:list` no longer prints `()` for a graph without a description.
+- Tests: `TraceSegmentsTest` uses its own unique temporary directory, so a stray file in the shared temp folder no longer fails it.
+- The Pulse exporter refuses a non-`https` endpoint, except `localhost`, `127.0.0.1` and `*.test`, and logs the setting to fix (`AGENTICPULSE_ENDPOINT`; use the base URL with no path). An `http://` endpoint was redirected to `https://`, which turned the POST into a GET and failed every segment with 405. Tracing to Pulse stays off until the endpoint is fixed.
+
 ## 0.2.0 - 2026-11-06
 
 Upgrading from 0.1.0? Follow [Upgrading from 0.1.0](README.md#upgrading-from-010) in the README: it covers every step below, in the order to run them.

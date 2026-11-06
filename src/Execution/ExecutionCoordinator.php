@@ -419,7 +419,7 @@ class ExecutionCoordinator
         $traceContext = $scope->traceContext;
         $rootSpanId = $traceContext->getRootSpanId();
 
-        $this->repo->queued($executionId, $graph->name, State::toStoragePayload($state), null, $options);
+        $this->repo->queued($executionId, $graph->name, State::toStoragePayload($state), null, $options, $rootSpanId);
 
         $this->contextManager->exit($scope);
         if ($this->httpClientInstrumentation) {

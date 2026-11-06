@@ -751,7 +751,7 @@ final class LlmExecutor
         $traceContext = TraceContext::tryGet();
         $adapter = new PrismStreamAdapter(
             session: $context->session(),
-            nodeName: $this->nodeName,
+            nodeName: $context->nodeName() ?? $this->nodeName,
             spanId: $traceContext?->getSpanId(),
             parentSpanId: $traceContext?->getParentSpanId()
         );

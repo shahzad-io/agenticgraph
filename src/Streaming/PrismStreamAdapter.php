@@ -132,10 +132,11 @@ final class PrismStreamAdapter
             $event instanceof ToolResultEvent => [
                 'tool_id' => $event->toolResult->toolCallId,
                 'tool_name' => $event->toolResult->toolName,
-                'result' => $event->toolResult->result,
+                // A failed tool has its error text in both result and error: the wire gets "Tool failed" by default.
+                'result' => $event->success ? $event->toolResult->result : StreamEventEnvelope::clientToolError($event->error ?? (is_string($event->toolResult->result) ? $event->toolResult->result : null)),
                 'message_id' => $event->messageId,
                 'success' => $event->success,
-                'error' => $event->error,
+                'error' => $event->success ? $event->error : StreamEventEnvelope::clientToolError($event->error),
                 'timestamp' => $event->timestamp,
             ],
             $event instanceof ThinkingStartEvent => [
@@ -196,10 +197,8 @@ final class PrismStreamAdapter
                 'timestamp' => $event->timestamp,
             ],
             $event instanceof ErrorEvent => [
-                'error_type' => $event->errorType,
-                'message' => $event->message,
+                ...StreamEventEnvelope::clientProviderError($event->errorType, $event->message, $event->metadata),
                 'recoverable' => $event->recoverable,
-                'metadata' => $event->metadata,
                 'timestamp' => $event->timestamp,
             ],
             default => null,

@@ -119,12 +119,14 @@ abstract class AbstractNode implements NodeInterface
 
         $session = $context->session();
         $seq = ++$session->seq;
-        $nodeSeq = $context->nextNodeSeq($this->getName());
+        // The name the graph registered the node under, as the lifecycle events use; the class-derived name otherwise.
+        $nodeName = $context->nodeName() ?? $this->getName();
+        $nodeSeq = $context->nextNodeSeq($nodeName);
 
         $sink->emit(new StreamEventImpl(
             $session->streamId,
             $session->executionId,
-            $this->getName(),
+            $nodeName,
             $traceContext?->getSpanId(),
             $traceContext?->getParentSpanId(),
             $type,

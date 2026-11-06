@@ -10,9 +10,11 @@ class StreamErrorHandler
 {
     public function decide(\Throwable $error, StreamEvent $event, string $stage): StreamErrorDecision
     {
+        // What the browser sees: generic unless streaming.expose_error_details; the log keeps the real error.
+        $client = StreamEventEnvelope::clientError($error, 'StreamError', 'Stream error', providerCategory: false);
         $payload = new StreamErrorPayload(
-            errorType: $error::class,
-            message: $error->getMessage(),
+            errorType: $client['error_type'],
+            message: $client['message'],
             stage: $stage,
             eventType: $event->type(),
             eventSeq: $event->seq(),

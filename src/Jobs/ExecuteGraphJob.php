@@ -11,9 +11,11 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Execution\ExecutionContext;
 use Shahzad\AgenticGraph\Execution\ExecutionMode;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
+use Shahzad\AgenticGraph\Execution\ExecutionRepository;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
@@ -59,6 +61,14 @@ class ExecuteGraphJob implements ShouldBeUnique, ShouldQueue
 
     public function handle(GraphExecutor $executor, GraphRegistry $registry): void
     {
+        // A first attempt on an execution that already ended (expired while this job waited in the queue) must not
+        // run: started() would write running over failed. Retries (attempts > 1) are unchanged.
+        if ($this->attempts() === 1 && app(ExecutionRepository::class)->hasEnded($this->executionId)) {
+            Log::info('AgenticGraph: job skipped, execution already ended', ['execution_id' => $this->executionId]);
+
+            return;
+        }
+
         // Auto-build graph from config if not cached (supports async workflows)
         $graph = $registry->getOrBuild($this->graphName);
 

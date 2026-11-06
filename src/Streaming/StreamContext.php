@@ -15,6 +15,9 @@ final class StreamContext
     /** @var array<string, int> */
     private array $nodeSeqByName = [];
 
+    /** The node name registered in the graph, set when a node attempt starts. */
+    private ?string $nodeName = null;
+
     public function __construct(
         private readonly StreamSession $session,
         ?StreamSinkInterface $sink = null
@@ -40,6 +43,16 @@ final class StreamContext
     public function isStreamingActive(): bool
     {
         return $this->sink !== null;
+    }
+
+    public function enterNode(string $nodeName): void
+    {
+        $this->nodeName = $nodeName;
+    }
+
+    public function nodeName(): ?string
+    {
+        return $this->nodeName;
     }
 
     public function resetNodeAttemptEmission(): void

@@ -14,6 +14,8 @@ class ExecutionRepository implements ExecutionStore
 
     private LoggerInterface $logger;
 
+    public const ROOT_SPAN_KEY = 'trace_root_span_id';
+
     protected string $table = 'agenticgraph_executions';
 
     /**
@@ -43,9 +45,10 @@ class ExecutionRepository implements ExecutionStore
         string $graphName,
         array $initialState = [],
         ?string $streamId = null,
-        ?ExecutionOptions $executionOptions = null
+        ?ExecutionOptions $executionOptions = null,
+        ?string $rootSpanId = null
     ): void {
-        InstrumentationGate::internal(fn () => $this->db->transaction(function () use ($id, $graphName, $initialState, $streamId, $executionOptions) {
+        InstrumentationGate::internal(fn () => $this->db->transaction(function () use ($id, $graphName, $initialState, $streamId, $executionOptions, $rootSpanId) {
             $payload = [
                 'graph_name' => $graphName,
                 'status' => 'queued',
@@ -59,7 +62,12 @@ class ExecutionRepository implements ExecutionStore
                 'created_at' => now(),
             ];
             if ($executionOptions !== null) {
-                $payload['execution_options'] = json_encode($executionOptions->toArray(), JSON_UNESCAPED_SLASHES);
+                // The trace's root span id rides along in the options JSON, so a run that never finishes can still
+                // end its trace on the original root (agenticgraph:executions:expire). fromStored() ignores it.
+                $payload['execution_options'] = json_encode(
+                    $executionOptions->toArray() + ($rootSpanId !== null ? [self::ROOT_SPAN_KEY => $rootSpanId] : []),
+                    JSON_UNESCAPED_SLASHES
+                );
             }
             $this->db->table($this->table)->updateOrInsert(['id' => $id], $payload);
         }));
@@ -120,7 +128,12 @@ class ExecutionRepository implements ExecutionStore
                 'updated_at' => now(),
             ];
             if ($executionOptions !== null) {
-                $update['execution_options'] = json_encode($executionOptions->toArray(), JSON_UNESCAPED_SLASHES);
+                $stored = is_string($current->execution_options ?? null) ? json_decode($current->execution_options, true) : null;
+                $rootSpanId = is_array($stored) ? ($stored[self::ROOT_SPAN_KEY] ?? null) : null;
+                $update['execution_options'] = json_encode(
+                    $executionOptions->toArray() + (is_string($rootSpanId) ? [self::ROOT_SPAN_KEY => $rootSpanId] : []),
+                    JSON_UNESCAPED_SLASHES
+                );
             }
             $this->db->table($this->table)->where('id', $id)->update($update);
 
@@ -242,6 +255,30 @@ class ExecutionRepository implements ExecutionStore
         $allowedTransitions = $this->validTransitions[$current] ?? [];
 
         return in_array($newStatus, $allowedTransitions);
+    }
+
+    /**
+     * Progress report from a worker: a running execution that completes a node is alive, so
+     * agenticgraph:executions:expire leaves it alone. Only a running row is touched. Never throws.
+     */
+    public function touch(string $id): void
+    {
+        try {
+            InstrumentationGate::internal(fn () => $this->db->table($this->table)
+                ->where('id', $id)
+                ->where('status', 'running')
+                ->update(['updated_at' => now()]));
+        } catch (\Throwable) {
+            // Progress is best effort; it must never fail a run.
+        }
+    }
+
+    /**
+     * True when the execution already completed or failed (for example expired while its job waited in the queue).
+     */
+    public function hasEnded(string $id): bool
+    {
+        return in_array($this->getStatus($id), ['completed', 'failed'], true);
     }
 
     /**

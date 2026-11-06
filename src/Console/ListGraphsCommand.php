@@ -37,7 +37,8 @@ class ListGraphsCommand extends Command
             return self::SUCCESS;
         }
         foreach ($graphs as $name => $graph) {
-            $this->line("- {$name} ({$graph->description}) Nodes: ".count($graph->nodes));
+            $description = $graph->description !== '' ? " ({$graph->description})" : '';
+            $this->line("- {$name}{$description} Nodes: ".count($graph->nodes));
         }
         foreach ($missingGraphs as $name => $class) {
             $this->line("- {$name} (config: {$class}) Nodes: n/a");

@@ -22,5 +22,7 @@ class GraphExecutionFailed implements ShouldQueue
         public readonly \Throwable $exception,
         public readonly float $durationMs,
         public readonly ?string $spanId = null,
+        /** interrupt_expired, stale_queued or stale_running when agenticgraph:*:expire ended the execution; null otherwise. */
+        public readonly ?string $reason = null,
     ) {}
 }

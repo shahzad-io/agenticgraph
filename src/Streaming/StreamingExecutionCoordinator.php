@@ -457,11 +457,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                             $spanId,
                             $parentSpanId,
                             StreamLifecycleEventTypes::NODE_ERROR,
-                            [
-                                'node_name' => $current,
-                                'error_type' => $e::class,
-                                'message' => $e->getMessage(),
-                            ],
+                            ['node_name' => $current] + StreamEventEnvelope::clientError($e),
                             $this->streamContext?->nextNodeSeq($current)
                         );
 
@@ -586,18 +582,13 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                 $traceContext->getSpanId(),
                 $traceContext->getParentSpanId(),
                 StreamLifecycleEventTypes::GRAPH_FAILED,
-                [
-                    'error_type' => $e::class,
-                    'message' => $e->getMessage(),
-                ]
+                StreamEventEnvelope::clientError($e)
             );
         } catch (\Throwable) {
         }
 
         try {
-            $sink->close(StreamStatus::ERROR, [
-                'error_type' => $e::class,
-                'message' => $e->getMessage(),
+            $sink->close(StreamStatus::ERROR, StreamEventEnvelope::clientError($e) + [
                 'final_state' => State::toStoragePayload($state),
             ]);
         } catch (\Throwable) {

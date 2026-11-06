@@ -3,21 +3,19 @@
 declare(strict_types=1);
 
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\File;
 use Shahzad\AgenticGraph\Tracing\Exporters\FileExporter;
 
 beforeEach(function () {
     config(['agenticgraph.tracing.enabled' => true]);
-    $this->traceDir = sys_get_temp_dir().'/ag-segments-'.bin2hex(random_bytes(4));
+    // Its own directory, with the trace dir one level down: a file that escapes the trace dir lands in this base,
+    // never in the shared temp folder, and nothing else in that folder can be mistaken for an escape.
+    $this->baseDir = sys_get_temp_dir().'/ag-segments-'.bin2hex(random_bytes(8));
+    $this->traceDir = $this->baseDir.'/traces';
 });
 
 afterEach(function () {
-    foreach (glob($this->traceDir.'/*/*.json') ?: [] as $file) {
-        unlink($file);
-    }
-    foreach (glob($this->traceDir.'/*') ?: [] as $dir) {
-        rmdir($dir);
-    }
-    @rmdir($this->traceDir);
+    File::deleteDirectory($this->baseDir);
 });
 
 /**

@@ -159,12 +159,11 @@ describe('builder', function () {
         'chat twice' => fn (LlmRequest $llm) => $llm->chat(ChatPromptTemplate::create())->chat(ChatPromptTemplate::create()),
     ]);
 
-    it('throws for user(), assistant() or history() with prompt(), in either order', function (Closure $build) {
-        expect(fn () => (new LlmProbeNode)->call($build))->toThrow(LogicException::class, 'Prism refuses a prompt and messages together');
+    it('throws for user() or assistant() with prompt(), in either order', function (Closure $build) {
+        expect(fn () => (new LlmProbeNode)->call($build))->toThrow(LogicException::class, 'cannot be combined with user() or assistant()');
     })->with([
         'prompt then user' => fn (LlmRequest $llm) => $llm->prompt('a')->user('b'),
         'prompt then assistant' => fn (LlmRequest $llm) => $llm->prompt('a')->assistant('b'),
-        'prompt then history' => fn (LlmRequest $llm) => $llm->prompt('a')->history([new UserMessage('b')]),
         'user then prompt' => fn (LlmRequest $llm) => $llm->user('b')->prompt('a'),
     ]);
 
@@ -730,5 +729,34 @@ describe('explain', function () {
         expect($request->explain()['stream'])->toBeTrue()
             ->and($request->explain()['cache']['reason'])->toBe('streamed')
             ->and($request->tools([llmTool()])->explain()['cache']['reason'])->toBe('tools');
+    });
+    it('sends history() before prompt() as the latest user message, after system()', function () {
+        $requests = llmRecorded([
+            fn (LlmRequest $llm) => $llm->system('Be brief.')
+                ->history([new UserMessage('Earlier {x}'), ['role' => 'assistant', 'content' => 'Reply {x}']])
+                ->prompt('Now {x}')->vars(['x' => 1])->text(),
+        ], [llmText()]);
+
+        $messages = $requests[0]->messages();
+        expect(array_map(fn ($m) => $m->content, $messages))->toBe(['Be brief.', 'Earlier {x}', 'Reply {x}', 'Now 1'])
+            ->and($messages[0])->toBeInstanceOf(SystemMessage::class)
+            ->and($messages[3])->toBeInstanceOf(UserMessage::class)
+            ->and($requests[0]->prompt())->toBeNull();
+    });
+
+    it('accepts prompt() before history() and shows the final order in explain()', function () {
+        $explain = (new LlmProbeNode)->call(fn (LlmRequest $llm) => $llm->prompt('Now')->history([new UserMessage('Earlier')])->explain());
+
+        expect(array_column($explain['messages'], 'content'))->toBe(['Earlier', 'Now'])
+            ->and(array_column($explain['messages'], 'role'))->toBe(['user', 'user']);
+    });
+
+    it('attaches media to the prompt message when history() is used', function () {
+        $image = Image::fromUrl('https://example.test/a.png');
+        $requests = llmRecorded([
+            fn (LlmRequest $llm) => $llm->history([new UserMessage('one'), ['role' => 'assistant', 'content' => 'two']])->prompt('Describe')->attach([$image])->text(),
+        ], [llmText()]);
+
+        expect(array_map(fn (array $m) => $m['media'] ?? null, MessageSerializer::toArray($requests[0]->messages())))->toBe([[], null, ['image']]);
     });
 });

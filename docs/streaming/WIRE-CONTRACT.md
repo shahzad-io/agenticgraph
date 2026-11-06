@@ -76,10 +76,10 @@ Enumeratable constants in `StreamLifecycleEventTypes` and `StreamEventEnvelope`.
 |--------|-------------|------------|-----------------------------------------------|
 | `graph_start` | `null` | `null` | `{ graph_name: string }` |
 | `graph_complete` | `null` | `null` | `{ duration_ms: number }` |
-| `graph_failed` | `null` | `null` | `{ error_type: string, message: string, reason?: string }`. `reason` is optional; `interrupt_expired` when `agenticgraph:interrupt:expire` ended the execution |
+| `graph_failed` | `null` | `null` | `{ error_type: string, message: string, reason?: string }`. `error_type` and `message` are generic (`ExecutionFailed`, `Execution failed`) unless `streaming.expose_error_details` is on, see [error details](#error-details). `reason` is optional: `interrupt_expired` when `agenticgraph:interrupt:expire` ended the execution, `stale_queued` or `stale_running` when `agenticgraph:executions:expire` did |
 | `node_start` | node | `1` | `{ node_name: string }` |
 | `node_complete` | node | increments | `{ node_name: string, duration_ms: number }` + optional state capture |
-| `node_error` | node | increments | `{ node_name: string, error_type: string, message: string }` |
+| `node_error` | node | increments | `{ node_name: string, error_type: string, message: string }`. Generic unless `streaming.expose_error_details` is on, see [error details](#error-details) |
 | `node_interrupt` | node | `null` | `{ node_name: string, reason: string, checkpoint_id: string }` + optional review payload |
 | `stream_resume` | resume node | `null` | `{ from_seq, resumed_at_seq, gap_events, checkpoint_id }` |
 | `execution_terminal` | `null` | `null` | `{ status: 'completed'\|'interrupted'\|'failed', final_state: object \| null, meta?: object }`. See [final_state](#final_state-exposure) |
@@ -148,8 +148,8 @@ When store replay is enabled, each gap item includes `type` inline (exception to
 
 ```json
 {
-  "error_type": "RuntimeException",
-  "message": "string",
+  "error_type": "StreamError",
+  "message": "Stream error",
   "stage": "store|transport|observer",
   "event_type": "text_delta|null",
   "event_seq": 1,
@@ -157,6 +157,8 @@ When store replay is enabled, each gap item includes `type` inline (exception to
   "event_node_seq": 2
 }
 ```
+
+`error_type` and `message` are `StreamError` and `Stream error` unless `streaming.expose_error_details` is on (then the exception class and message), see [error details](#error-details). `stage` and the `event_*` fields are always sent.
 
 ---
 
@@ -172,7 +174,7 @@ Field types below reflect **what the adapter actually emits** (JSON types after 
 | `text_delta` | `{ delta: string, message_id: string, timestamp: integer }` |
 | `text_complete` | `{ message_id: string, timestamp: integer }` |
 | `tool_call` | `{ tool_id: string, tool_name: string, arguments: object, message_id: string, reasoning_id: string \| null, timestamp: integer }` - `arguments` is `Record<string, mixed>` from `ToolCall::arguments()` |
-| `tool_result` | `{ tool_id: string, tool_name: string, result: number \| string \| array \| null, message_id: string, success: boolean, error: string \| null, timestamp: integer }` - `result` matches `ToolResult::$result` (`int\|float\|string\|array\|null`) |
+| `tool_result` | `{ tool_id: string, tool_name: string, result: number \| string \| array \| null, message_id: string, success: boolean, error: string \| null, timestamp: integer }` - `result` matches `ToolResult::$result` (`int\|float\|string\|array\|null`). When `success` is `false`, `error` and `result` are `Tool failed` unless `streaming.expose_error_details` is on (the model always gets the real error), see [error details](#error-details) |
 | `thinking_start` | `{ id: string, timestamp: integer }` |
 | `thinking_delta` | `{ id: string, delta: string, summary: object \| null, timestamp: integer }` - `summary` is `array<string, mixed> \| null` (`ThinkingEvent::$summary`) |
 | `thinking_complete` | `{ id: string, summary: object \| null, timestamp: integer }` - `summary` is `array<string, mixed> \| null` |
@@ -182,7 +184,7 @@ Field types below reflect **what the adapter actually emits** (JSON types after 
 | `stream_end` | `{ id: string, timestamp: integer, finish_reason: string, usage: object \| null, citations: array \| null, additional_content: object }`. From `StreamEndEvent`: once per model request, after the last step, with the request's finish reason and **cumulative** usage (see below) |
 | `provider_tool_event` | `{ event_key: string, tool_type: string, status: string, item_id: string, data: object, timestamp: integer }` - `data` is `array<string, mixed>` |
 | `artifact` | `{ tool_call_id: null, tool_name: null, message_id: string, artifact: object, block_index: integer \| null, metadata: object \| null, timestamp: integer }` - mapped from `CitationEvent` only; adapter hardcodes `tool_call_id`/`tool_name` as `null` (lines 189–190); `artifact` is the `Citation` value object JSON-encoded (camelCase keys, see below) |
-| `error` | `{ error_type: string, message: string, recoverable: boolean, metadata: object \| null, timestamp: integer }` - `metadata` is `array<string, mixed> \| null` |
+| `error` | `{ error_type: string, message: string, recoverable: boolean, metadata: object \| null, timestamp: integer }` - `metadata` is `array<string, mixed> \| null`. By default `error_type` is a category the package picks (`rate_limited`, `provider_unavailable` or `provider_error`), `message` is a fixed sentence for it and `metadata` is `null`; the provider's own type, message and metadata are sent only when `streaming.expose_error_details` is on, see [error details](#error-details) |
 
 #### `artifact.artifact` (Citation object on the wire)
 
@@ -263,7 +265,7 @@ Package tests assert raw event name `'text_delta'` on the broadcaster; confirm d
 | Route | `GET {prefix}/{streamId}` - default `agentic-graph/streams/{streamId}` |
 | Cursor | `?cursor=` query or `Last-Event-ID` header. The query wins when both are sent. The response starts at `cursor + 1`; no cursor starts at seq 1 |
 | Retry | Every response starts with `retry: {streaming.sse.retry_ms}` (default 2000) |
-| Frame | Stored events: `id: {seq}\nevent: {type}\ndata: {json wire body}\n\n`. Control events: no `id:` line (see below) |
+| Frame | Stored events: `id: {seq}\nevent: {type}\ndata: {json wire body}\n\n`. Control events: no `id:` line (see below). With `?custom_events=wrap`, an author-defined type (not in this contract) is framed as `event: custom_event` and its data is the wire body plus `event_type` (the author's type); every enumerated type keeps its own name |
 | Terminal | `execution_terminal` with full 9-field envelope; payload `{ status: 'completed'\|'interrupted'\|'failed', final_state: object \| null, meta? }`. Always emitted, even when `nodeFilter` or `eventTypeFilter` would exclude it (filters apply only to emitted events), because clients need it to end the stream |
 
 #### Connection lifecycle
@@ -284,6 +286,14 @@ Control events are transport messages, not stream events: no `id:` line, no `seq
 | `stream_replay_unavailable` | `{ "control": "replay_unavailable", "cursor": <int>, "final_state"?: object \| null }` | The cursor is gone from the store; the response closes. `final_state` is present only when `execution_id` is passed and the execution has a stored final state; it follows [final_state](#final_state-exposure) and is never more than the terminal event would send |
 
 Do not build graph logic against these.
+
+### Error details
+
+A failed run sends the browser generic error values, since exception messages can hold internals (hosts, credentials in a DSN, SQL). `graph_failed`, `node_error`, the failed `execution_terminal` `meta` and the broadcast `stream_close` `meta` carry `error_type: "ExecutionFailed"` and `message: "Execution failed"`. With `streaming.expose_error_details` (`AGENTICGRAPH_STREAM_EXPOSE_ERROR_DETAILS=true`) they carry the exception class and message, the message cut to `tracing.capture.max_length` with the truncation marker; `tracing.capture.errors = class` still removes the message. A node failed by a model provider exception (a Prism or HTTP client exception, also wrapped) reads `error_type` `rate_limited`, `provider_unavailable` or `provider_error` with a fixed message instead of `ExecutionFailed`, in `graph_failed`, `node_error` and the terminal `meta`; the category comes from the exception type, never its text. A failed `tool_result` carries `Tool failed` in `error` and `result`. `stream_error` follows the same rule with `error_type: "StreamError"` and `message: "Stream error"` (no provider category). The Prism `error` event sends a package-chosen category instead (`rate_limited`, `provider_unavailable`, `provider_error`) with a fixed message and `metadata: null`, never the provider's text. The keys and types do not change. `reason` is always sent. The stored execution `error` and the logs keep the full message.
+
+### Custom events over SSE
+
+A browser `EventSource` delivers a named event only to a listener registered for that name, so an app cannot receive author-defined types without listing them. A client that sends `?custom_events=wrap` gets every author-defined type as `event: custom_event` with the author's type in `event_type` inside the data. The parameter is optional and any other value is ignored; without it the frames are unchanged. Replays on a cursor are wrapped the same way.
 
 ### final_state exposure
 
@@ -415,3 +425,6 @@ export type ExecutionTerminalPayload = {
 | **1.1** | 2026-10 | Additive: `graph_failed` has an optional `reason` string. `agenticgraph:interrupt:expire` sets `interrupt_expired`, then the failed `execution_terminal` follows as for any failure. Clients that ignore unknown payload keys need no change. |
 | **1.1** | 2026-10 | Pre-release amendment (allowed only because the contract was not yet publicly released). SSE control events (`stream_heartbeat`, new `stream_reconnect`, `stream_replay_unavailable`) have no `id:` and no `seq`, and carry a `control` key instead of the 9 wire fields. `stream_replay_unavailable` used to claim the next real seq. Every SSE response starts with `retry:`. An `interrupted` terminal no longer closes the response. Max duration ends with control `reconnect`. Replay-unavailable only when the cursor is below the first stored seq or the stream is empty with `cursor > 0`, never during a wait. Breaking for SSE clients that read heartbeat or replay-unavailable as wire bodies |
 | **1.1** | 2026-10 | Pre-release amendment (allowed only because the contract was not yet publicly released). New Prism content types `stream_start` and `stream_end` (Prism `StreamStartEvent`, `StreamEndEvent`; they were mapped to `step_start` and `step_finish`). `step_start` and `step_finish` are now one pair per step; `step_finish` carries that step's `finish_reason` and `usage`, `stream_end` the request's and the cumulative `usage`. Multi-step tool runs and MCP stream. Breaking for clients that counted step events or read `usage` from `step_finish` |
+| **1.1** | 2026-11 | Additive: `streaming.expose_error_details` (default `false`). The error fields of `graph_failed`, `node_error`, the failed terminal `meta` and `stream_close.meta` keep their keys and types; their values are the generic `ExecutionFailed` / `Execution failed` unless the setting is on (0.2.0 sent the raw exception class and message). `graph_failed.reason` also takes `stale_queued` and `stale_running`. SSE: optional query parameter `custom_events=wrap` frames author-defined types as `event: custom_event` with `event_type` in the data. |
+| **1.1** | 2026-11 | Additive: `stream_error` and the Prism `error` event follow `streaming.expose_error_details`. Defaults: `stream_error` carries `StreamError` / `Stream error`; `error` carries a package-chosen `error_type` category (`rate_limited`, `provider_unavailable`, `provider_error`), a fixed message and `metadata: null` (0.2.0 sent the exception or provider text). Keys and types are unchanged. |
+| **1.1** | 2026-11 | Additive: a failed `tool_result` carries `Tool failed` in `error` and `result` unless `streaming.expose_error_details` is on, and a node failed by a model provider exception carries the fixed category (`rate_limited`, `provider_unavailable`, `provider_error`) with a fixed message in `graph_failed`, `node_error` and the terminal `meta` instead of `ExecutionFailed`. Keys and types are unchanged. |

@@ -11,6 +11,7 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Shahzad\AgenticGraph\Execution\ExecutionMode;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
+use Shahzad\AgenticGraph\Execution\ExecutionRepository;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Execution\LoopMetadata;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
@@ -49,6 +50,10 @@ class ContinueExecutionJob implements ShouldQueue
 
     public function handle(GraphExecutor $executor, GraphRegistry $registry): void
     {
+        // Progress: the execution is alive, so the expire command leaves it alone. No ended-check here: this job also
+        // recovers a run after a crash, when the row is already failed.
+        app(ExecutionRepository::class)->touch($this->executionId);
+
         // Auto-build graph from config if not cached (supports async workflows)
         $graph = $registry->getOrBuild($this->graphName);
 
