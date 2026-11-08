@@ -5,7 +5,7 @@ description: "Stream AgenticGraph output: the stream and broadcast presets, Exec
 
 # AgenticGraph Streaming
 
-docs-sha: 8292430
+docs-sha: 60115fe
 
 Condensed from the AgenticGraph docs (`/docs/...` paths below) at that commit. When a detail here and the package source disagree, the source wins.
 
@@ -19,6 +19,7 @@ Other skills, use them when installed: `agenticgraph-core` for graphs, nodes, in
 4. `resolveUrl` returns a fresh URL, or `null` to end the stream. Return `null` on purpose; throw on a network error.
 5. A signed stream URL must validate while ignoring `cursor`, because the client appends it on every reconnect.
 6. The stream is progress, not the record. The final state arrives on `execution_terminal` over SSE. After a reconnect or a reload, the HTTP status route (`getExecution`) is the authority.
+7. In a Laravel app with Vite (the default), import the package from `resources/js/app.js` and load it with `@vite()`. Use the script-tag build only when there is no bundler. Never copy `dist/index.global.js` into `public/`.
 
 ## Task: choose a delivery
 
@@ -240,19 +241,19 @@ The client owns the connection. Create the transport after the start request, gi
 
 Docs: `/docs/stream-getting-started`, `/docs/stream-core`, `/docs/stream-react`, `/docs/stream-vue`, `/docs/stream-limitations`
 
-### Script-tag build (no bundler)
+### Script-tag build (only when there is no bundler)
 
-`dist/index.global.js` sets `window.AgenticGraphStream`, with the same exports as the module build:
+With Vite, use `import { AgenticStream, SSETransport } from '@agenticgraph/stream-client'` in `resources/js/app.js` and `@vite('resources/js/app.js')` in the Blade view. Without a bundler, load the pinned CDN build, `https://cdn.jsdelivr.net/npm/@agenticgraph/stream-client@<version>/dist/index.global.js`. It sets `window.AgenticGraphStream`, with the same exports as the module build:
 
 ```html
-<script src="/js/agenticgraph/index.global.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@agenticgraph/stream-client@0.1.2/dist/index.global.js"></script>
 <script>
   const { AgenticStream, SSETransport } = window.AgenticGraphStream;
   AgenticStream.connect({ transport: new SSETransport({ url: streamUrl }) });
 </script>
 ```
 
-Copy the file from `node_modules/@agenticgraph/stream-client/dist/index.global.js` to your public assets during the build. It is one file, with no `laravel-echo` inside.
+It is one file, with no `laravel-echo` inside.
 
 ## Task: test streams
 

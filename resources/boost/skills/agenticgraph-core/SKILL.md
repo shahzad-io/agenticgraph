@@ -5,7 +5,7 @@ description: "Build AgenticGraph agent graphs in Laravel: GraphBuilder, nodes (A
 
 # AgenticGraph Core
 
-docs-sha: 8292430
+docs-sha: 60115fe
 
 Condensed from the AgenticGraph docs (`/docs/...` paths below) at that commit. When a detail here and the package source disagree, the source wins.
 
@@ -47,6 +47,7 @@ AGENTICGRAPH_QUEUE_NAME=agenticgraph
 ```
 
 - `AGENTICGRAPH_PRISM_MODEL` has no default. Set it, or `$model` on the node or router, as `provider:model`. A missing model or a model without a provider throws `MissingModelException` on the first Prism call. The provider key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) is Prism's env.
+  Ollama: the model string is `ollama:<tag>`, `OLLAMA_URL=http://localhost:11434` (the server root, no `/v1`), and run `ollama pull <tag>` first. `reasoning()` maps to Ollama's thinking option. On a thinking model set a high `$maxTokens` or `reasoning('off')`, or thinking can use the whole budget and leave an empty answer.
 - `AGENTICGRAPH_STORAGE`: `database` (default), `redis` or `file`. Same value in every environment, or resume cannot find snapshots.
 - `AGENTICGRAPH_QUEUE_CONNECTION` defaults to `redis`. It matters only for async runs, async fan-out and async resume. Run a worker on the graph queue: `php artisan queue:work --queue=agenticgraph`. Schedule `agenticgraph:executions:expire` every minute (0.2.1), so an async run no worker took ends as `failed` instead of staying `queued`; see the `agenticgraph-streaming` skill.
 - `AGENTICGRAPH_MAX_ITERATIONS` (1000) caps a run.
@@ -92,6 +93,7 @@ final class ContentGraph
 - `build()` throws `InvalidGraphException` without an entry point or an exit, when a node is unreachable from the entry, or when no exit is reachable. Reachability follows each router's `getAvailableRoutes()`, so list every node a router can return.
 - `AgenticGraph::register($name, $graph)` registers at runtime (tests, service providers). Config graphs are built on first use by `AgenticGraph::getOrBuild()`.
 - Resume and async jobs rebuild graphs by name. Keep production graphs in config.
+- Labels, descriptions, the run outcome and its headline are declared on the graph. See the Annotations section of the `agenticgraph-tracing` skill.
 
 Docs: `/docs/graph`, `/docs/api/graph`
 

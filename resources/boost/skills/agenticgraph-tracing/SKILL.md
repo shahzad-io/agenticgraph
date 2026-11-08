@@ -5,7 +5,7 @@ description: "Trace AgenticGraph runs: tracing drivers (auto, pulse, file, log, 
 
 # AgenticGraph Tracing
 
-docs-sha: 8292430
+docs-sha: 60115fe
 
 Condensed from the AgenticGraph docs (`/docs/...` paths below) at that commit. When they disagree with the source, the source wins.
 
@@ -175,6 +175,29 @@ if ($context !== null && $context->isEnabled()) {
 - Use `TraceContext::tryGet()`, not `app(TraceContext::class)`. It returns `null` when no run is active.
 
 Docs: `/docs/tracing#tracespan`, `/docs/api/tracing`
+
+## Task: annotate a graph
+
+Annotations say what a run meant, in your words: a label and description per node, an outcome with a headline, human input keys and expectations. All optional; a graph without them sends the trace it always sent.
+
+- Declare a node's text with `#[Annotate('Label', description: '...')]` on the class, or `addNode(..., label:, description:)`. The `addNode()` argument wins.
+- `GraphBuilder::outcome('headline', fields: [...])` (up to 8 state paths) and `->label()` on the graph. Limits throw `InvalidGraphException` at build: label 60 characters, description and headline 200.
+- `{path}` inserts a value from the state (dot path, no expressions). `{{` and `}}` are literal braces. A missing path renders empty and is listed in `missing`. The strings are yours; the package never calls a model.
+- Every placeholder, outcome field and `humanInput` key sends that value, whatever `capture.state` is. `capture.annotations=static` or `none` turns them off.
+- The headline is a short summary (for example `Refund approved for order 3`). Never put free text (an answer, a message, a document) in it; ids, counts and statuses only; long text belongs on the model span.
+
+```php
+GraphBuilder::create('refund')
+    ->label('Refund request')
+    ->addNode('order_lookup', LookupOrderNode::class, label: 'Look up the order')
+    // ...
+    ->outcome('Refund {final_decision} for order {order_lookup.order_id}', fields: [
+        'final_amount' => 'Amount',
+    ])
+    ->build();
+```
+
+Docs: `/docs/tracing#annotations`
 
 ## Task: set capture and PII
 
