@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.4 - 2026-11-11
+
+### Added
+
+- **`TokensUsed::inputTokens()`.** All input tokens of the call: `promptTokens` (uncached) plus `cacheReadTokens` and `cacheWriteTokens`. Full usage is `inputTokens() + completionTokens`. `totalTokens` is unchanged: it is `promptTokens + completionTokens` and leaves out cached input, so with a repeated long prompt it can be a small part of what was sent (an eval run sent about 9,000 input tokens and recorded a total of 2,876). Cost was always priced with the cache tokens, and OTLP `gen_ai.usage.input_tokens` already includes them. The docs, the `agenticgraph-core` skill and the wire format reference now say this plainly.
+
+### Changed
+
+- **`streamUrl` includes `execution_id`.** `ExecutionHandle::stream()->streamUrl` is now `/agentic-graph/streams/{streamId}?execution_id={id}`, so a `stream_replay_unavailable` carries `final_state` (when exposed) with no extra work in the app. Apps that add `execution_id` to the URL by hand keep working (the same value is sent twice and read once) and can remove it. A signed URL you mint yourself should include `execution_id`.
+- Docs: the trace context is bound for every run, sync and queued, with tracing on or off, so a node reads its execution id with `TraceContext::tryGet()?->getExecutionId()`. The snippet is in the node docs and the tracing docs, and no longer checks `isEnabled()`.
+
+### Security
+
+- **The stream route sends `final_state` only to the stream's own execution.** `stream_replay_unavailable` used to load the final state of any `execution_id` in the query string, so a client with one valid stream id and an expired cursor could read another run's exposed final state by passing that run's id. It is now attached only when the execution's stored `stream_id` is the stream being read; otherwise the event carries `cursor` only.
+
+### Later
+
+Planned for 0.3 (breaking): `total_tokens` (`TokensUsed::$totalTokens`, the llm span and the `llm_calls` row) should include cached input, so it equals `inputTokens() + completionTokens`.
+
 ## 0.2.3 - 2026-11-08
 
 ### Changed
