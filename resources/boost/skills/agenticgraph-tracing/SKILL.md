@@ -5,7 +5,7 @@ description: "Trace AgenticGraph runs: tracing drivers (auto, pulse, file, log, 
 
 # AgenticGraph Tracing
 
-docs-sha: 60115fe
+docs-sha: e1cd1f7
 
 Condensed from the AgenticGraph docs (`/docs/...` paths below) at that commit. When they disagree with the source, the source wins.
 
@@ -162,17 +162,14 @@ $result = Trace::span(
     attributes: ['source' => 'crm'],
 );
 
-$context = TraceContext::tryGet();
-if ($context !== null && $context->isEnabled()) {
-    $executionId = $context->getExecutionId();
-    $spanId = $context->getSpanId();
-}
+// Bound for every run, sync and queued, with tracing on or off. Null only outside a run.
+$executionId = TraceContext::tryGet()?->getExecutionId();
 ```
 
 - Inside a running graph, the span is a child of the current span, usually the node. Outside one, the callback just runs.
 - If the callback throws, the span closes as `failed` / `ERROR` and the exception is re-thrown.
 - `$attributes` is taken by reference. Through the facade a literal array works. On `tool` spans the tracer merges the captured result into it.
-- Use `TraceContext::tryGet()`, not `app(TraceContext::class)`. It returns `null` when no run is active.
+- Use `TraceContext::tryGet()`, not `app(TraceContext::class)`. It returns `null` when no run is active. `getExecutionId()` works with tracing off; `isEnabled()` only says whether spans are exported.
 
 Docs: `/docs/tracing#tracespan`, `/docs/api/tracing`
 

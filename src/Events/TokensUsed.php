@@ -27,6 +27,7 @@ class TokensUsed implements ShouldQueue
         public readonly string $node,
         public readonly int $promptTokens,
         public readonly int $completionTokens,
+        /** promptTokens + completionTokens. Leaves out cached input: full usage is inputTokens() + completionTokens. */
         public readonly int $totalTokens,
         public readonly ?string $executionId = null,
         public readonly ?string $parentSpanId = null,
@@ -193,6 +194,14 @@ class TokensUsed implements ShouldQueue
             contextIds: $contextIds,
             promptFile: $promptFile,
         );
+    }
+
+    /**
+     * All input tokens: uncached (promptTokens) plus cache reads and cache writes. Full usage is inputTokens() + completionTokens.
+     */
+    public function inputTokens(): int
+    {
+        return $this->promptTokens + ($this->cacheReadTokens ?? 0) + ($this->cacheWriteTokens ?? 0);
     }
 
     public static function promptForEvent(?string $prompt): ?string

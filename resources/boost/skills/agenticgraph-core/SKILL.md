@@ -5,7 +5,7 @@ description: "Build AgenticGraph agent graphs in Laravel: GraphBuilder, nodes (A
 
 # AgenticGraph Core
 
-docs-sha: 60115fe
+docs-sha: e1cd1f7
 
 Condensed from the AgenticGraph docs (`/docs/...` paths below) at that commit. When a detail here and the package source disagree, the source wins.
 
@@ -123,6 +123,7 @@ final class ValidateOrderNode extends AbstractNode
 - Retries: `getRetryAttempts()` (3), `getRetryDelay()` (1000 ms), `shouldRetry($e)`. Override them on the node.
 - Hooks: `onBefore`, `onAfter`, `onError`. Retries wrap `onBefore → execute → onAfter`.
 - Nodes have no timeout setting. Bound a model call with `->timeout()`, a queued run with `AGENTICGRAPH_EXECUTION_TIMEOUT`.
+- The execution id inside a node: `TraceContext::tryGet()?->getExecutionId()` (`Shahzad\AgenticGraph\Tracing\TraceContext`). The trace context is bound for every run, sync and queued, with tracing on or off, so it is `null` only outside a run (a node called directly in a test).
 
 ### Model calls in a PrismNode
 
@@ -326,8 +327,9 @@ Docs: `/docs/guide-middleware`
 
 Ordinary Laravel events in `Shahzad\AgenticGraph\Events`. Not stream events, not spans.
 
-- The ones to listen for: `GraphExecutionFailed` (`exception`), `TokensUsed` (`model`, `totalTokens`, `callType`), `InterruptPending` (`interruptId`, `checkpointId`, `payload`).
+- The ones to listen for: `GraphExecutionFailed` (`exception`), `TokensUsed` (`model`, `inputTokens()`, `completionTokens`, `callType`), `InterruptPending` (`interruptId`, `checkpointId`, `payload`).
 - Also: `GraphExecutionStarted`, `GraphExecutionCompleted`, `NodeExecutionStarted`, `NodeExecutionCompleted`, `NodeExecutionFailed` (each attempt), `NodeInterrupted`, `NodeResumed`, `CheckpointCreated`, `RouteDecided`, `ToolCallCaptured`, `CycleCompleted`.
+- `TokensUsed::$totalTokens` is `promptTokens + completionTokens` and leaves out cached input. Full usage is `inputTokens() + completionTokens` (`inputTokens()` adds `cacheReadTokens` and `cacheWriteTokens` to `promptTokens`). With a repeated long prompt most input is cached, so `totalTokens` can be a small part of it.
 - Listeners run in the process that dispatched the event. To queue one, put `ShouldQueue` on the listener; on the event class it does nothing.
 - `InterruptPending` needs interrupt persistence. `AGENTICGRAPH_INTERRUPT_BROADCAST` only toggles whether it is dispatched. It is not Echo.
 - Do not add `broadcastOn()` to package events. Broadcast from your listener.

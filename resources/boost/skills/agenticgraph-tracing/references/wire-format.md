@@ -18,7 +18,7 @@ Every span has `id`, `parent_id`, `node_name`, `span_type`, `status`, `status_co
 |---|---|
 | `graph` | the root; `error` on failure |
 | `node` | `attempt`, `state_diff`, `loop_context`, `error` |
-| `llm` | `model`, `prompt_tokens`, `completion_tokens`, `total_tokens`, `cost_usd`, `cached`, `streamed` |
+| `llm` | `model`, `prompt_tokens`, `completion_tokens`, `total_tokens`, `cost_usd`, `cached`, `streamed`; `total_tokens` is `prompt_tokens + completion_tokens` and leaves out cached input (`cache_read_tokens`, `cache_write_tokens`) |
 | `route` | `attributes`: `route.from`, `route.targets`, `route.kind` |
 | `tool` | `attributes`: `tool.type`, sizes, and args or results per capture depth |
 | `http`, `db` | `attributes`: method and status, or statement type, per capture depth |

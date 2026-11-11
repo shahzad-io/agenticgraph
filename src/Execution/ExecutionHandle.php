@@ -173,7 +173,8 @@ final class ExecutionHandle
             return null;
         }
 
-        return route(StreamDescriptor::ROUTE_NAME, ['streamId' => $streamId]);
+        // execution_id lets the route send final_state on replay_unavailable.
+        return route(StreamDescriptor::ROUTE_NAME, ['streamId' => $streamId, 'execution_id' => $this->id()]);
     }
 
     public function getFinalState(): StateContract

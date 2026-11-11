@@ -117,18 +117,22 @@ function finalStateBroadcastClose(FinalStateRecordingBroadcaster $broadcaster): 
 }
 
 /**
- * Requests the SSE route with a cursor past the end of an empty stream, so the
- * controller answers with stream_replay_unavailable for the given execution.
+ * Requests the SSE route with the run's execution_id and a cursor the store no longer has, so the controller
+ * answers with stream_replay_unavailable. $streamId defaults to the run's own stream; another id is a stream the
+ * run does not own.
  */
-function finalStateReplayUnavailablePayload(string $executionId): array
+function finalStateReplayUnavailablePayload(ExecutionHandle $handle, ?string $streamId = null): array
 {
     config()->set('agenticgraph.streaming.sse.max_duration_seconds', 2);
     config()->set('agenticgraph.streaming.sse.poll_interval_ms', 50);
     config()->set('agenticgraph.streaming.sse.heartbeat_interval', 0);
 
-    $streamId = (string) Str::uuid();
-    $request = Request::create('/streams/'.$streamId, 'GET', ['cursor' => 10, 'execution_id' => $executionId]);
-    $response = (new StreamController)->stream($streamId, $request, app(StreamStoreInterface::class));
+    $streamId ??= (string) $handle->streamId();
+    $store = app(StreamStoreInterface::class);
+    // Retention trimmed every event, so cursor 10 is gone.
+    $store->truncate($streamId, (int) $store->lastSeq($streamId) + 1);
+    $request = Request::create('/streams/'.$streamId, 'GET', ['cursor' => 10, 'execution_id' => $handle->id()]);
+    $response = (new StreamController)->stream($streamId, $request, $store);
 
     ob_start();
     $response->sendContent();
@@ -154,8 +158,8 @@ it('sends null final_state in all three client paths when expose is false', func
         ->and(finalStateTerminalPayload($handle)['final_state'])->toBeNull()
         ->and(finalStateBroadcastClose(new FinalStateRecordingBroadcaster)['meta'])->toHaveKey('final_state')
         ->and(finalStateBroadcastClose(new FinalStateRecordingBroadcaster)['meta']['final_state'])->toBeNull()
-        ->and(finalStateReplayUnavailablePayload($handle->id()))->toHaveKey('final_state')
-        ->and(finalStateReplayUnavailablePayload($handle->id())['final_state'])->toBeNull();
+        ->and(finalStateReplayUnavailablePayload($handle))->toHaveKey('final_state')
+        ->and(finalStateReplayUnavailablePayload($handle)['final_state'])->toBeNull();
 });
 
 it('defaults to null final_state when the config key is missing', function () {
@@ -168,7 +172,7 @@ it('defaults to null final_state when the config key is missing', function () {
     expect(config()->has('agenticgraph.streaming.final_state'))->toBeFalse()
         ->and(finalStateTerminalPayload($handle)['final_state'])->toBeNull()
         ->and(finalStateBroadcastClose(new FinalStateRecordingBroadcaster)['meta']['final_state'])->toBeNull()
-        ->and(finalStateReplayUnavailablePayload($handle->id())['final_state'])->toBeNull();
+        ->and(finalStateReplayUnavailablePayload($handle)['final_state'])->toBeNull();
 });
 
 it('sends only allowlisted top-level keys when expose is true with keys', function () {
@@ -179,7 +183,7 @@ it('sends only allowlisted top-level keys when expose is true with keys', functi
 
     expect(finalStateTerminalPayload($handle)['final_state'])->toBe($expected)
         ->and(finalStateBroadcastClose(new FinalStateRecordingBroadcaster)['meta']['final_state'])->toBe($expected)
-        ->and(finalStateReplayUnavailablePayload($handle->id())['final_state'])->toBe($expected);
+        ->and(finalStateReplayUnavailablePayload($handle)['final_state'])->toBe($expected);
 });
 
 it('sends the full plain state when expose is true and keys is null', function () {
@@ -194,7 +198,17 @@ it('sends the full plain state when expose is true and keys is null', function (
 
     expect(finalStateTerminalPayload($handle)['final_state'])->toBe($expected)
         ->and(finalStateBroadcastClose(new FinalStateRecordingBroadcaster)['meta']['final_state'])->toBe($expected)
-        ->and(finalStateReplayUnavailablePayload($handle->id())['final_state'])->toBe($expected);
+        ->and(finalStateReplayUnavailablePayload($handle)['final_state'])->toBe($expected);
+});
+
+it('sends final_state on replay_unavailable only when the execution belongs to the stream', function () {
+    config()->set('agenticgraph.streaming.final_state', ['expose' => true, 'keys' => null]);
+    $handle = finalStateRunIterator();
+    $other = finalStateRunIterator();
+
+    expect(finalStateReplayUnavailablePayload($handle, (string) $other->streamId()))->toBe(['control' => 'replay_unavailable', 'cursor' => 10])
+        ->and(finalStateReplayUnavailablePayload($handle, (string) Str::uuid()))->toBe(['control' => 'replay_unavailable', 'cursor' => 10])
+        ->and(finalStateReplayUnavailablePayload($handle)['final_state']['secret_system_prompt'])->toBe(FINAL_STATE_SENTINEL);
 });
 
 it('keeps other stream_close meta keys unchanged', function () {
@@ -233,7 +247,7 @@ it('puts no state value into any stored or broadcast client payload by default',
         ->and($broadcaster->sent)->not->toBeEmpty()
         ->and(json_encode($stored))->not->toContain(FINAL_STATE_SENTINEL)
         ->and(json_encode($broadcaster->sent))->not->toContain(FINAL_STATE_SENTINEL)
-        ->and(json_encode(finalStateReplayUnavailablePayload($handle->id())))->not->toContain(FINAL_STATE_SENTINEL);
+        ->and(json_encode(finalStateReplayUnavailablePayload($handle)))->not->toContain(FINAL_STATE_SENTINEL);
 });
 
 it('reads the keys allowlist from AGENTICGRAPH_STREAM_FINAL_STATE_KEYS', function (?string $env, ?array $expected) {

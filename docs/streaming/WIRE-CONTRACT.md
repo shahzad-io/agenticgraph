@@ -283,7 +283,7 @@ Control events are transport messages, not stream events: no `id:` line, no `seq
 |--------|------|---------|
 | `stream_heartbeat` | `{ "control": "heartbeat", "timestamp": "<ISO 8601>" }` | Keep-alive every `streaming.sse.heartbeat_interval` seconds without events |
 | `stream_reconnect` | `{ "control": "reconnect", "after_ms": <retry_ms> }` | Planned close at max duration. Reconnect after `after_ms` with the last seq as cursor |
-| `stream_replay_unavailable` | `{ "control": "replay_unavailable", "cursor": <int>, "final_state"?: object \| null }` | The cursor is gone from the store; the response closes. `final_state` is present only when `execution_id` is passed and the execution has a stored final state; it follows [final_state](#final_state-exposure) and is never more than the terminal event would send |
+| `stream_replay_unavailable` | `{ "control": "replay_unavailable", "cursor": <int>, "final_state"?: object \| null }` | The cursor is gone from the store; the response closes. `final_state` is present only when `execution_id` is passed, that execution owns the stream, and it has a stored final state (`streamUrl` carries `execution_id`); it follows [final_state](#final_state-exposure) and is never more than the terminal event would send |
 
 Do not build graph logic against these.
 

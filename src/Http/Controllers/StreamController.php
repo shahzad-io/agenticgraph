@@ -55,7 +55,8 @@ final class StreamController
                 $executionId = (string) $request->query('execution_id', '');
                 if ($executionId !== '') {
                     $record = $executionStore->get($executionId);
-                    if ($record?->finalState !== null) {
+                    // Only the execution that owns this stream: another run's id must not read its state.
+                    if ($record?->finalState !== null && $record->streamId === $streamId) {
                         $payload['final_state'] = StreamEventEnvelope::clientFinalState($record->finalState);
                     }
                 }

@@ -81,3 +81,20 @@ it('emits TokensUsed with cached marker on prism cache hit', function () {
             && $event->totalTokens === 0;
     });
 });
+
+it('counts cached input in inputTokens() and leaves it out of totalTokens', function (?int $read, ?int $write, int $input) {
+    // A repeated long prompt: most of the input is served from the provider's cache (Prism maps it out of promptTokens).
+    $event = TokensUsed::fromLlmCall('answer', microtime(true), 5.0, 936, 1940, 'text', cacheReadTokens: $read, cacheWriteTokens: $write);
+
+    expect($event->inputTokens())->toBe($input)
+        ->and($event->totalTokens)->toBe(936 + 1940)
+        ->and($event->inputTokens() + $event->completionTokens)->toBe($input + 1940);
+})->with([
+    'cache read' => [8064, null, 9000],
+    'cache read and write' => [8000, 64, 9000],
+    'not reported' => [null, null, 936],
+]);
+
+it('has inputTokens() equal to 0 on a cache hit', function () {
+    expect(TokensUsed::fromCacheHit('answer', microtime(true), 1.0)->inputTokens())->toBe(0);
+});

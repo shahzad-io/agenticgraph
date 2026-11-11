@@ -251,7 +251,7 @@ it('locks async sse as a store-served read shape via controller and replayFrom',
     $storedTerminals = executionTerminalEventsFrom($stored);
 
     expect($descriptor->hasUrl())->toBeTrue()
-        ->and($descriptor->streamUrl)->toBe(route(StreamDescriptor::ROUTE_NAME, ['streamId' => $streamId]))
+        ->and($descriptor->streamUrl)->toBe(route(StreamDescriptor::ROUTE_NAME, ['streamId' => $streamId, 'execution_id' => $handle->id()]))
         ->and($descriptor->isInline())->toBeFalse()
         ->and($storedTerminals)->toHaveCount(1)
         ->and($storedTerminals[0]->payload()['status'])->toBe('completed');

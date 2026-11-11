@@ -5,7 +5,7 @@ description: "Stream AgenticGraph output: the stream and broadcast presets, Exec
 
 # AgenticGraph Streaming
 
-docs-sha: 60115fe
+docs-sha: e1cd1f7
 
 Condensed from the AgenticGraph docs (`/docs/...` paths below) at that commit. When a detail here and the package source disagree, the source wins.
 
@@ -87,7 +87,7 @@ public function start(Request $request): JsonResponse
 
 - For SSE, return `$handle->stream()->streamUrl`. For broadcast, return the channel.
 - Status and interrupt payloads still come from HTTP (`getExecution`, `interruptDetails`). The stream is progress, not the whole handle.
-- Send `execution_id` back with the stream URL: the client needs it to resume, and it is what makes `final_state` arrive on `replay_unavailable` (see the SSE task).
+- `streamUrl` already carries `execution_id`, so `replay_unavailable` brings `final_state` (see the SSE task). Send `execution_id` back as well: the client needs it to resume.
 
 Docs: `/docs/streaming#from-a-controller`
 
@@ -157,7 +157,7 @@ Docs: `/docs/streaming`
 - The route is `GET /agentic-graph/streams/{streamId}`, named `agenticgraph.streams.show`. It needs `AGENTICGRAPH_STREAMING_ROUTES` on (default). Its middleware is `config('agenticgraph.streaming.routes.middleware')`, default `['api']`.
 - The controller sends `retry: 2000` (`agenticgraph.streaming.sse.retry_ms`), so a client waits 2 s before it reconnects. It polls the store until `execution_terminal` or `AGENTICGRAPH_STREAM_SSE_MAX_DURATION` (120 s). At the limit it sends control `reconnect` with `after_ms` and closes.
 - Reconnect from a point with `?cursor=` or `Last-Event-ID`. Control events (`heartbeat`, `reconnect`, `replay_unavailable`) carry no `id` and are never stored.
-- `replay_unavailable` is sent when the cursor is older than the store keeps. It carries `cursor`. It carries `final_state` only when the request has `execution_id` (the query string). Put `execution_id` in the stream URL.
+- `replay_unavailable` is sent when the cursor is older than the store keeps. It carries `cursor`. It carries `final_state` only when the request has `execution_id` (the query string) and that execution owns the stream. `streamUrl` includes it.
 - `$handle->replayFrom($cursor)` reads the store again from PHP.
 
 **Signed URLs.** The route has no signature check of its own. To require one, add Laravel's `signed` middleware and ignore `cursor`, because clients append it:
@@ -171,7 +171,7 @@ Docs: `/docs/streaming`
 ],
 ```
 
-Mint the URL with `URL::temporarySignedRoute('agenticgraph.streams.show', now()->addMinutes(10), ['streamId' => $streamId])`, from an endpoint the frontend calls. A signature that covers `cursor` fails on the first reconnect.
+Mint the URL with `URL::temporarySignedRoute('agenticgraph.streams.show', now()->addMinutes(10), ['streamId' => $streamId, 'execution_id' => $executionId])`, from an endpoint the frontend calls. A signature that covers `cursor` fails on the first reconnect.
 
 ```dotenv
 STREAM_STORE_DRIVER=redis
@@ -272,9 +272,8 @@ Docs: `/docs/guide-testing`
 5. Two `connect()` calls on one transport, or a retry loop around `SSETransport`.
 6. `streamEvent()` in a graph started with `run()`; nothing is emitted.
 7. A signed URL that covers `cursor`, so every reconnect gets a 403.
-8. No `execution_id` in the stream URL, so `replay_unavailable` arrives without `final_state`.
-9. Expecting the exception message in the browser. It is generic unless `AGENTICGRAPH_STREAM_EXPOSE_ERROR_DETAILS=true`; read the stored execution `error` or the logs.
-10. `agenticgraph:executions:expire` not scheduled, so a run without a worker never ends and the stream stays quiet.
-11. Custom events with a raw `EventSource` and no `?custom_events=wrap`: they arrive under your own event names, which `onmessage` never sees.
+8. Expecting the exception message in the browser. It is generic unless `AGENTICGRAPH_STREAM_EXPOSE_ERROR_DETAILS=true`; read the stored execution `error` or the logs.
+9. `agenticgraph:executions:expire` not scheduled, so a run without a worker never ends and the stream stays quiet.
+10. Custom events with a raw `EventSource` and no `?custom_events=wrap`: they arrive under your own event names, which `onmessage` never sees.
 
 Docs: `/docs/streaming`, `/docs/stream-limitations`

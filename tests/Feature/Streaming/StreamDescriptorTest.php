@@ -106,7 +106,8 @@ it('returns async stream descriptor with route-generated streamUrl', function ()
     expect($descriptor->streamId)->not->toBeNull()
         ->and($descriptor->inline)->toBeNull()
         ->and($descriptor->mode)->toBe(StreamingMode::SSE)
-        ->and($descriptor->streamUrl)->toBe(route(StreamDescriptor::ROUTE_NAME, ['streamId' => $descriptor->streamId]))
+        ->and($descriptor->streamUrl)->toBe(route(StreamDescriptor::ROUTE_NAME, ['streamId' => $descriptor->streamId, 'execution_id' => $handle->id()]))
+        ->and($descriptor->streamUrl)->toContain('execution_id='.urlencode($handle->id()))
         ->and($descriptor->hasUrl())->toBeTrue()
         ->and($descriptor->isInline())->toBeFalse();
 });
@@ -156,7 +157,7 @@ it('reconstructed async handle exposes consumable streamUrl from persisted strea
 
     expect($reconstructed->isAsync())->toBeTrue()
         ->and($descriptor->streamId)->not->toBeNull()
-        ->and($descriptor->streamUrl)->toBe(route(StreamDescriptor::ROUTE_NAME, ['streamId' => $descriptor->streamId]))
+        ->and($descriptor->streamUrl)->toBe(route(StreamDescriptor::ROUTE_NAME, ['streamId' => $descriptor->streamId, 'execution_id' => $handle->id()]))
         ->and($descriptor->inline)->toBeNull()
         ->and($descriptor->hasUrl())->toBeTrue();
 });
