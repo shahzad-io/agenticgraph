@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.2.5 - 2026-11-14
+
+### Added
+
+- **Terminal tools.** `->terminalTools(['name'])` on `llm()` ends a tool run when that tool returns without an error: no further model call is made, and the reply is the tool's text, word for word (`run()->text`, and `text_delta` in a streamed run, followed by `stream_end`). The steps keep the call and the result, and `LlmResponse::$terminalTool` names the tool. A handler can return `TerminalResult::reply($text, $data)` (`Shahzad\AgenticGraph\Tools`) to add data, read from `LlmResponse::$terminalData`; a plain string also works. Every tool the model called in that step runs and is recorded. A terminal tool that fails does not end the run. When `maxSteps` is reached first, the run ends as before. A name that is not a tool of the request throws.
+- **`holdStepText`.** `->terminalTools(['name'], holdStepText: true)` holds the text of each step until the step ends. When the step called a terminal tool, the held text is not streamed (it stays in `steps[n]->text`); when it did not, the text is sent as normal `text_delta` events before the step's `step_finish`. The streamed text of a run that a terminal tool ends is then exactly the tool's text. Default `false`: model text before the call is streamed as it arrives.
+- **Provider guard for terminal tools.** A run with terminal tools reads the provider's stream, also when the app does not stream, and stops reading after the tool step. This is verified, with a fixture test each, for `openai`, `anthropic`, `deepseek`, `gemini`, `groq`, `mistral`, `ollama`, `openrouter`, `xai` and `z`. Any other provider (`perplexity`, which has no tool loop) throws a `LogicException` that names it, before a request is sent.
+- Tracing: the llm span of a run that a terminal tool ended has the attributes `llm.end_reason` (`terminal_tool`) and `llm.terminal_tool` (the tool's name), and `TokensUsed` has `endReason` and `terminalTool`. Both attributes are always sent, as other identifiers are. A trace consumer that validates span attributes with a schema from before this release reports them as unknown keys.
+- `explain()['tools']` has `terminal` and `hold_step_text`. `LlmResponse::toArray()` has `terminal_tool` and `terminal_data`.
+
+### Fixed
+
+- **Branch results of an async fan-out no longer expire.** Each branch job cached its result for 300 seconds. When a batch took longer than that after its first branch finished (a slow branch, or fewer workers than branches), the result was gone at the join: the "Missing batch results" exception was only logged, and the execution stayed `running`. Results are now rows in the new `agenticgraph_batch_results` table, kept until the batch ends and then deleted. **Publish and run the new migration** (`php artisan vendor:publish --tag=agenticgraph-migrations`, then `php artisan migrate`); without the table every branch job of an async fan-out fails. A batch that was in flight during the upgrade still completes: for this release a result is also read from the old cache key.
+- **A missing branch result fails the execution.** The join no longer waits 1.5 seconds per missing result and no longer throws inside the batch callback. It marks the execution `failed` and dispatches `GraphExecutionFailed`.
+
+### Changed
+
+- Docs and skills: sync mode (`run()`, `stream(inline: true)`) runs fan-out branches one after another, in the order the router returned them. Async mode (`dispatch()`) runs them at the same time only when the graph queue has one worker for each branch. A streamed async run (`stream()`, `broadcast()`) runs the branches one after another in one worker. Measured with three 2-second branches: 6.1 s sync, 6.2 s with one worker, 2.3 s with three workers, 6.2 s streamed with three workers. No behaviour changed.
+- `ExecutionRepository::cleanup()` also deletes batch result rows older than its threshold (rows of a batch whose worker died before the batch ended).
+
 ## 0.2.4 - 2026-11-11
 
 ### Added

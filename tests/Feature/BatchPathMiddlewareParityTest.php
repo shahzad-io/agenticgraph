@@ -2,7 +2,6 @@
 
 declare(strict_types=1);
 
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
 use Shahzad\AgenticGraph\Contracts\NodeInterface;
 use Shahzad\AgenticGraph\Contracts\RouterInterface;
@@ -12,6 +11,7 @@ use Shahzad\AgenticGraph\Events\GraphExecutionStarted;
 use Shahzad\AgenticGraph\Events\NodeExecutionTimed;
 use Shahzad\AgenticGraph\Execution\ExecutionMode;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
+use Shahzad\AgenticGraph\Execution\ExecutionRepository;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Execution\NodeMiddlewarePipeline;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
@@ -170,7 +170,7 @@ it('runs global middleware inside ExecuteNodeJob', function (): void {
 
     $job->handle(app(GraphRegistry::class), app(NodeMiddlewarePipeline::class));
 
-    $cached = Cache::get('agenticgraph:batch:exec-batch-job-mw:branch_one');
+    $cached = app(ExecutionRepository::class)->batchResults('exec-batch-job-mw')['branch_one'] ?? null;
     expect($cached)->toBeArray()
         ->and($cached['batch_middleware_ran'] ?? null)->toBeTrue()
         ->and($cached['branch_one_ran'] ?? null)->toBeTrue();

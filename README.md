@@ -8,7 +8,7 @@ AgenticGraph is the first open-source Laravel AI orchestration package, bringing
 
 - Graph-based orchestration with nodes, edges, routers and joins
 - PrismPHP integration for text, structured outputs and tool-calling
-- Sync and async execution, parallel fan-out with queue batches
+- Sync and async execution, fan-out with queue batches (concurrent with one worker per branch)
 - Checkpoints and resume, distributed locks, retries and middleware
 - Events for observability and token usage tracking
 - Storage drivers: database, Redis, file
@@ -55,7 +55,7 @@ php artisan migrate
 | Tag | What it publishes |
 |---|---|
 | `agenticgraph-config` | `config/agenticgraph.php`, `config/model_pricing.php` and `config/model_pricing_overrides.php` |
-| `agenticgraph-migrations` | The migrations for the four tables: executions, checkpoints, interrupts and stream events |
+| `agenticgraph-migrations` | The migrations for the five tables: executions, checkpoints, interrupts, stream events and batch results |
 | `agenticgraph-prompts` (optional) | The packaged prompt files, into `resources/prompts` |
 
 Publishing again skips files that exist; `--force` overwrites `config/agenticgraph.php` and `config/model_pricing.php`. `config/model_pricing_overrides.php` (your hand-set prices) is published once and never overwritten, with or without `--force`.

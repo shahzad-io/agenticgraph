@@ -548,7 +548,7 @@ it('an ExecuteNodeJob serialized before loopMetadata existed runs without a loop
 
     expect(rsSpans($exporter->sent[0], 'node')[0]['loop_context'])->toBeNull()
         ->and(app()->bound(ExecutionContext::class))->toBeFalse()
-        ->and(Cache::get('agenticgraph:batch:exec_rs_old_node:a'))->toBeArray();
+        ->and(app(ExecutionRepository::class)->batchResults('exec_rs_old_node')['a'] ?? null)->toBeArray();
 });
 
 it('an ExecuteNodeJob run inline restores the loop context bound around it', function () {

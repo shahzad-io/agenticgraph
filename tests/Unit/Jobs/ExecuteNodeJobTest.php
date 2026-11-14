@@ -1,7 +1,7 @@
 <?php
 
-use Illuminate\Support\Facades\Cache;
 use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Execution\ExecutionRepository;
 use Shahzad\AgenticGraph\Execution\NodeMiddlewarePipeline;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
@@ -17,7 +17,7 @@ class ENNode extends AbstractNode
     }
 }
 
-it('caches node job output', function () {
+it('stores node job output', function () {
     $graph = GraphBuilder::create('job-graph')
         ->addNode('n', ENNode::class)
         ->setEntryPoint('n')
@@ -26,6 +26,6 @@ it('caches node job output', function () {
     app(GraphRegistry::class)->register('test-graph', $graph);
     $job = new ExecuteNodeJob('exec-1', 'n', (new State)->toArray(), 'test-graph');
     $job->handle(app(GraphRegistry::class), app(NodeMiddlewarePipeline::class));
-    $cached = Cache::get('agenticgraph:batch:exec-1:n');
+    $cached = app(ExecutionRepository::class)->batchResults('exec-1')['n'] ?? null;
     expect($cached)->toBeArray()->and($cached['ok'])->toBeTrue();
 });

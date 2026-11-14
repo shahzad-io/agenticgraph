@@ -5,7 +5,7 @@ description: "Stream AgenticGraph output: the stream and broadcast presets, Exec
 
 # AgenticGraph Streaming
 
-docs-sha: e1cd1f7
+docs-sha: 068bc93
 
 Condensed from the AgenticGraph docs (`/docs/...` paths below) at that commit. When a detail here and the package source disagree, the source wins.
 
@@ -110,7 +110,7 @@ $this->whenStreaming(function () use ($items): void {
 
 - **Lifecycle**, from the coordinator: `graph_start`, `graph_complete`, `graph_failed`, `node_start`, `node_complete`, `node_error`, `node_interrupt`, `stream_resume`.
 - **Terminal**: `execution_terminal` (SSE; `status` is `completed`, `interrupted` or `failed`, plus `final_state`), `stream_close` (broadcast; `{status, meta}`), `stream_error`.
-- **Prism**, from `$this->llm()`: `text_start`, `text_delta`, `text_complete`, `tool_call`, `tool_result`, `thinking_*`, `stream_start`, `step_start`, `step_finish`, `stream_end`, `provider_tool_event`, `artifact`, `error`. One `stream_start` and one `stream_end` per model request (end: cumulative `usage` and `finish_reason`); one `step_start` and `step_finish` per step (finish: that step's `usage` and `finish_reason`). Each step has its own `message_id`.
+- **Prism**, from `$this->llm()`: `text_start`, `text_delta`, `text_complete`, `tool_call`, `tool_result`, `thinking_*`, `stream_start`, `step_start`, `step_finish`, `stream_end`, `provider_tool_event`, `artifact`, `error`. One `stream_start` and one `stream_end` per model request (end: cumulative `usage` and `finish_reason`); one `step_start` and `step_finish` per step (finish: that step's `usage` and `finish_reason`). Each step has its own `message_id`. A run that a terminal tool ends (`terminalTools()`) sends `tool_result`, `step_finish`, then the tool's text as `text_start`, `text_delta`, `text_complete` (its own `message_id`), then `stream_end`; no `step_start` follows the tool result. With `holdStepText: true` a step's text events are sent when the step ends, before its `step_finish`, or not at all when the step called a terminal tool.
 - **Yours**: any string through `streamEvent($type, $payload)`. Over SSE, add `?custom_events=wrap` to the stream URL (core 0.2.1) and they arrive as `event: custom_event` with your name in `event_type`, so a browser `EventSource` needs no list of names. Without the parameter the frames are unchanged. Stream client 0.1.1 sends it by itself and delivers them under your type; against core 0.2.0 the parameter is ignored and custom events are not delivered over SSE.
 - `stream_heartbeat` and `stream_replay_unavailable` are SSE only and may change.
 - The type is the SSE `event:` line or the broadcast event name. It is not in the JSON body.

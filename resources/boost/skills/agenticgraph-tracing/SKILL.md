@@ -5,7 +5,7 @@ description: "Trace AgenticGraph runs: tracing drivers (auto, pulse, file, log, 
 
 # AgenticGraph Tracing
 
-docs-sha: e1cd1f7
+docs-sha: 068bc93
 
 Condensed from the AgenticGraph docs (`/docs/...` paths below) at that commit. When they disagree with the source, the source wins.
 
@@ -212,7 +212,7 @@ Docs: `/docs/tracing#annotations`
 | `AGENTICGRAPH_DB_SLOW_THRESHOLD_MS` | `1000` |
 
 - Summary modes keep structure, not content (rule 5).
-- Always sent, whatever the capture: state key names, node and graph names, router class names (`route.router`), exception classes, `context.ids` (first 20), `prompt.name` / `prompt.version` / `prompt.hash`, `cache_key`, `interrupt.reason`, `Trace::span()` attributes, service name and version, `APP_ENV`.
+- Always sent, whatever the capture: state key names, node and graph names, router class names (`route.router`), exception classes, `context.ids` (first 20), `prompt.name` / `prompt.version` / `prompt.hash`, `llm.end_reason` / `llm.terminal_tool` (the name of the terminal tool that ended a run), `cache_key`, `interrupt.reason`, `Trace::span()` attributes, service name and version, `APP_ENV`.
 - Every driver gets the same content: `file` writes it to disk, `log` to your log channel (what `auto` does with no API key), `pulse` to AgenticPulse. `otlp` gets the spans, `state_diff` included (so `diff` values become vendor attributes), but no prompts, responses, initial or final state.
 - With `http_urls=full`, userinfo and known secret query parameters are replaced with `REDACTED`. Nothing else is scanned.
 - HTTP and DB inside a tool call nest under the tool span even with broad capture off.
