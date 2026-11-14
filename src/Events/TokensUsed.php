@@ -54,6 +54,10 @@ class TokensUsed implements ShouldQueue
         public readonly ?array $contextIds = null,
         /** @var array{name: string, version: string, hash: string}|null The prompt file chat() got. Null: none. */
         public readonly ?array $promptFile = null,
+        /** terminal_tool when a terminal tool ended the run (terminalTools()). Null: the model or the step limit did. */
+        public readonly ?string $endReason = null,
+        /** The terminal tool that ended the run. */
+        public readonly ?string $terminalTool = null,
     ) {}
 
     /**
@@ -77,6 +81,7 @@ class TokensUsed implements ShouldQueue
         ?int $contextCount = null,
         ?array $contextIds = null,
         ?array $promptFile = null,
+        ?string $terminalTool = null,
     ): self {
         $clock = ExecutionClock::tryGet();
         $traceContext = TraceContext::tryGet();
@@ -129,6 +134,8 @@ class TokensUsed implements ShouldQueue
             contextCount: $contextCount,
             contextIds: $contextIds,
             promptFile: $promptFile,
+            endReason: $terminalTool !== null ? 'terminal_tool' : null,
+            terminalTool: $terminalTool,
         );
     }
 

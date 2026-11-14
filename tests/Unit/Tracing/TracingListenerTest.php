@@ -227,6 +227,27 @@ it('adds prompt.name, prompt.version and prompt.hash to the llm span attributes 
     ]);
 })->with([true, false]);
 
+it('adds llm.end_reason and llm.terminal_tool to the llm span attributes only when a terminal tool ended the run', function (?string $tool) {
+    $exporter = new MockPulseExporter;
+    (new TracingListener($exporter))->onTokensUsed(new TokensUsed(
+        node: 'node-a',
+        promptTokens: 1,
+        completionTokens: 1,
+        totalTokens: 2,
+        executionId: 'exec_terminal',
+        spanId: 'span_t',
+        callType: 'tools',
+        model: 'openai:o3',
+        durationMs: 1.0,
+        startedAt: new \DateTimeImmutable('2024-01-01 10:00:00'),
+        endedAt: new \DateTimeImmutable('2024-01-01 10:00:00.001'),
+        endReason: $tool !== null ? 'terminal_tool' : null,
+        terminalTool: $tool,
+    ));
+
+    expect($exporter->spans[0]['attributes'] ?? null)->toBe($tool !== null ? ['llm.end_reason' => 'terminal_tool', 'llm.terminal_tool' => 'order_status'] : null);
+})->with(['order_status', null]);
+
 it('puts interrupt and resume fields in attributes, keeping state_snapshot nested', function (): void {
     $exporter = new MockPulseExporter;
     $listener = new TracingListener($exporter);

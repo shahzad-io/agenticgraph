@@ -330,7 +330,10 @@ class TracingListener
         $this->calculateSpanTimestamps($eventStartedAt, $eventEndedAt, $durationMs, $traceStartDt, $startedAt, $endedAt);
 
         $parentId = $event->parentSpanId;
-        $attributes = $this->llmAttributes($event->contextCount, $event->contextIds, $event->promptFile);
+        $attributes = [
+            ...$this->llmAttributes($event->contextCount, $event->contextIds, $event->promptFile),
+            ...($event->endReason !== null ? ['llm.end_reason' => $event->endReason, 'llm.terminal_tool' => $event->terminalTool] : []),
+        ];
 
         $this->exporter()->addSpan([
             'id' => $spanId ?? uniqid('span_', true),

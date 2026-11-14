@@ -84,7 +84,7 @@ GraphBuilder::create('self-improving-writer')
 
 ## Fan-out
 
-Return an array to run branches in parallel, then join.
+Return an array to fan out, then join. Sync mode runs the branches one after another, in this order. Async mode (`dispatch()`) runs them at the same time when the graph queue has one worker per branch.
 
 ```php
 final class FanOutRouter extends AbstractRouter

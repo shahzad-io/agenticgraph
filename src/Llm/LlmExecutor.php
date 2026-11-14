@@ -13,11 +13,16 @@ use Prism\Prism\Enums\FinishReason;
 use Prism\Prism\Enums\StructuredMode;
 use Prism\Prism\Exceptions\PrismException;
 use Prism\Prism\Exceptions\PrismStructuredDecodingException;
+use Prism\Prism\Streaming\EventID;
 use Prism\Prism\Streaming\Events\ErrorEvent;
 use Prism\Prism\Streaming\Events\StepFinishEvent;
 use Prism\Prism\Streaming\Events\StepStartEvent;
 use Prism\Prism\Streaming\Events\StreamEndEvent;
+use Prism\Prism\Streaming\Events\StreamEvent as PrismStreamEvent;
 use Prism\Prism\Streaming\Events\StreamStartEvent;
+use Prism\Prism\Streaming\Events\TextCompleteEvent;
+use Prism\Prism\Streaming\Events\TextDeltaEvent;
+use Prism\Prism\Streaming\Events\TextStartEvent;
 use Prism\Prism\Streaming\Events\ToolCallEvent;
 use Prism\Prism\Streaming\Events\ToolResultEvent;
 use Prism\Prism\Structured\PendingRequest as PendingStructuredRequest;
@@ -46,6 +51,7 @@ use Shahzad\AgenticGraph\Prompts\MessageSerializer;
 use Shahzad\AgenticGraph\Streaming\PrismStreamAdapter;
 use Shahzad\AgenticGraph\Streaming\StreamContext;
 use Shahzad\AgenticGraph\Testing\LlmFake;
+use Shahzad\AgenticGraph\Tools\TerminalResult;
 use Shahzad\AgenticGraph\Tools\ToolRunResult;
 use Shahzad\AgenticGraph\Tracing\CaptureDepth;
 use Shahzad\AgenticGraph\Tracing\TraceContext;
@@ -73,6 +79,26 @@ final class LlmExecutor
 
     /** True once the current request wrapped a tool: its calls are then traced by the wrapper, not after the call. */
     private bool $toolsWrapped = false;
+
+    /**
+     * Providers whose Prism stream handler yields StepFinishEvent before it sends the next request, so a run can end
+     * after a tool step with no further model call. Each one has a fixture test (PrismNodeTerminalToolTest).
+     */
+    private const TERMINAL_TOOL_PROVIDERS = ['openai', 'anthropic', 'deepseek', 'gemini', 'groq', 'mistral', 'ollama', 'openrouter', 'xai', 'z'];
+
+    /**
+     * The terminal tools of the current request.
+     *
+     * @var list<string>
+     */
+    private array $terminalTools = [];
+
+    /**
+     * The data of each TerminalResult the tool wrapper saw in the current request, keyed by tool name and arguments.
+     *
+     * @var array<string, array<string, mixed>>
+     */
+    private array $terminalData = [];
 
     /**
      * @param  array<string, mixed>  $providerOptions  the node's
@@ -280,6 +306,8 @@ final class LlmExecutor
                 'mcp' => array_column($call->mcp, 'server'),
                 'choice' => $call->toolChoice instanceof \UnitEnum ? $call->toolChoice->name : $call->toolChoice,
                 'max_steps' => $call->maxSteps ?? 1,
+                'terminal' => $call->terminalTools,
+                'hold_step_text' => $call->holdStepText,
             ],
             'schema' => $call->schema instanceof Schema ? $call->schema->toArray() : $call->schema,
             'context' => $call->context !== null ? ['var' => $call->context['as'], 'count' => count($call->context['items']), 'text' => $call->context['text']] : null,
@@ -294,6 +322,8 @@ final class LlmExecutor
     {
         $this->toolErrors = [];
         $this->toolsWrapped = false;
+        $this->terminalTools = $call->terminalTools;
+        $this->terminalData = [];
         $startTime = microtime(true);
         $settings = $this->settings($call);
         $model = implode(':', self::parseModel($settings['model']['value']));
@@ -666,6 +696,11 @@ final class LlmExecutor
      */
     private function runTools(LlmCall $call, array $settings, string $model, float $startTime): LlmResponse
     {
+        $provider = self::parseModel($settings['model']['value'])[0];
+        if ($call->terminalTools !== [] && ! in_array($provider, self::TERMINAL_TOOL_PROVIDERS, true)) {
+            throw new \LogicException("terminalTools() is not supported for the [{$provider}] provider: its Prism stream handler is not verified to stop before the next model call. Supported: ".implode(', ', self::TERMINAL_TOOL_PROVIDERS).'.');
+        }
+
         $tools = $this->wrapTools($call->tools, 'prism');
         foreach ($call->mcp as ['server' => $server, 'options' => $options]) {
             $serverTools = $options['tools'] ?? Relay::tools($server);
@@ -682,9 +717,11 @@ final class LlmExecutor
         }
 
         $streamed = $this->streams($call);
-        if ($streamed) {
-            $stream = $this->stream($request);
-            [$text, $usage, $finishReason, $raw] = [$stream['text'], $stream['usage'], $stream['finishReason'], $stream['steps']];
+        $terminal = null;
+        // Terminal tools always run on Prism's stream: it is the one place a run can stop between two model calls.
+        if ($streamed || $call->terminalTools !== []) {
+            $stream = $this->stream($request, $streamed, $call->terminalTools, $call->holdStepText);
+            [$text, $usage, $finishReason, $raw, $terminal] = [$stream['text'], $stream['usage'], $stream['finishReason'], $stream['steps'], $stream['terminal']];
             $traceUsage = $usage;
         } else {
             $response = $request->asText();
@@ -698,7 +735,7 @@ final class LlmExecutor
         $steps = array_map(fn (array $step): LlmStep => new LlmStep($step['text'], array_values($step['toolCalls']), $this->toolRunResults(array_values($step['toolResults'])), $step['usage'], $step['finishReason']), array_values($raw));
         $toolCalls = array_merge(...array_map(fn (LlmStep $step): array => $step->toolCalls, $steps));
         $this->dispatchToolCalls($toolCalls, $toolType);
-        $this->dispatchUsage($startTime, $model, $callType, $traceUsage, $call->promptForTrace(), $text, streamed: $streamed, call: $call);
+        $this->dispatchUsage($startTime, $model, $callType, $traceUsage, $call->promptForTrace(), $text, streamed: $streamed, call: $call, terminalTool: $terminal?->toolName);
 
         return new LlmResponse(
             text: $text,
@@ -707,6 +744,8 @@ final class LlmExecutor
             usage: $usage,
             finishReason: $finishReason,
             steps: $steps,
+            terminalTool: $terminal?->toolName,
+            terminalData: $terminal !== null ? $this->terminalData[$this->toolOutcomeKey($terminal->toolName, $terminal->args)] ?? [] : [],
         );
     }
 
@@ -738,27 +777,41 @@ final class LlmExecutor
     }
 
     /**
-     * Emits every adapted event to the sink, in order, through one adapter for the request (the stream wire contract).
-     * Text is the final step's, as non-streamed; usage and finish reason are the request's (StreamEnd), each step keeps its own.
+     * Reads the Prism stream of one request. With $emit, every adapted event goes to the sink, in order, through one
+     * adapter (the stream wire contract). Text is the final step's, as non-streamed; usage and finish reason are the
+     * request's (StreamEnd), each step keeps its own.
      *
-     * @return array{text: string, usage: Usage|null, finishReason: FinishReason|null, steps: list<array{text: string, toolCalls: list<ToolCall>, toolResults: list<ToolResult>, usage: Usage|null, finishReason: FinishReason|null}>}
+     * Terminal tools: after the step in which one returned without an error, the stream is not read further, so Prism
+     * sends no next request. The reply is that tool's text, sent as its own text block and then stream_end; usage is
+     * the sum of the steps. With $holdStepText a step's text events wait for the end of the step: they are sent
+     * before its step_finish, or dropped when the step called a terminal tool.
+     *
+     * @param  list<string>  $terminalTools
+     * @return array{text: string, usage: Usage|null, finishReason: FinishReason|null, steps: list<array{text: string, toolCalls: list<ToolCall>, toolResults: list<ToolResult>, usage: Usage|null, finishReason: FinishReason|null}>, terminal: ToolResult|null}
      */
-    private function stream(PendingTextRequest $request): array
+    private function stream(PendingTextRequest $request, bool $emit = true, array $terminalTools = [], bool $holdStepText = false): array
     {
-        $context = $this->streamContext();
+        $context = $emit ? $this->streamContext() : null;
         $sink = $context?->sink();
-        assert($context !== null && $sink !== null);
+        assert(! $emit || ($context !== null && $sink !== null));
         $traceContext = TraceContext::tryGet();
-        $adapter = new PrismStreamAdapter(
+        $adapter = $context !== null ? new PrismStreamAdapter(
             session: $context->session(),
             nodeName: $context->nodeName() ?? $this->nodeName,
             spanId: $traceContext?->getSpanId(),
             parentSpanId: $traceContext?->getParentSpanId()
-        );
-        $result = ['text' => '', 'usage' => null, 'finishReason' => null, 'steps' => []];
+        ) : null;
+        $send = function (PrismStreamEvent $event) use ($adapter, $sink): void {
+            $streamEvent = $adapter?->adapt($event);
+            if ($streamEvent !== null) {
+                $sink?->emit($streamEvent);
+            }
+        };
+        $result = ['text' => '', 'usage' => null, 'finishReason' => null, 'steps' => [], 'terminal' => null];
         $blank = ['text' => '', 'toolCalls' => [], 'toolResults' => [], 'usage' => null, 'finishReason' => null];
         $step = $blank;
         $error = null;
+        $held = [];
 
         foreach ($request->asStream() as $event) {
             if ($event instanceof StepStartEvent || ($result['steps'] === [] && ! $event instanceof StreamStartEvent)) {
@@ -781,21 +834,49 @@ final class LlmExecutor
             }
             if ($event instanceof ToolResultEvent) {
                 $step['toolResults'][] = $event->toolResult;
+                if ($result['terminal'] === null && $this->endsRun($event, $terminalTools)) {
+                    $result['terminal'] = $event->toolResult;
+                }
             }
-            $streamEvent = $adapter->adapt($event);
-            if ($streamEvent === null) {
-                continue;
-            }
-            $sink->emit($streamEvent);
             if ($event instanceof ToolCallEvent) {
                 $step['toolCalls'][] = $event->toolCall;
             }
-            if ($streamEvent->type() === 'text_delta' && is_string($delta = $streamEvent->payload()['delta'] ?? null)) {
-                $step['text'] .= $delta;
+            if ($event instanceof TextDeltaEvent) {
+                $step['text'] .= $event->delta;
+            }
+
+            if ($holdStepText && ($event instanceof TextStartEvent || $event instanceof TextDeltaEvent || $event instanceof TextCompleteEvent)) {
+                $held[] = $event;
+
+                continue;
+            }
+            if ($event instanceof StepFinishEvent || $event instanceof StreamEndEvent) {
+                array_map($send, $result['terminal'] === null ? $held : []);
+                $held = [];
+            }
+            $send($event);
+            if ($event instanceof StepFinishEvent && $result['terminal'] !== null) {
+                break;
             }
         }
         unset($step);
+        array_map($send, $held);
         $result['text'] = $result['steps'] === [] ? '' : $result['steps'][array_key_last($result['steps'])]['text'];
+
+        if ($result['terminal'] !== null) {
+            $reply = $result['terminal']->result;
+            $result['text'] = is_string($reply) ? $reply : (string) json_encode($reply, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            $usages = array_column($result['steps'], 'usage');
+            $result['usage'] = in_array(null, $usages, true) ? null : $this->sumUsage($usages);
+            $result['finishReason'] = $result['steps'][array_key_last($result['steps'])]['finishReason'] ?? FinishReason::ToolCalls;
+            $messageId = EventID::generate();
+            if ($result['text'] !== '') {
+                $send(new TextStartEvent(EventID::generate(), time(), $messageId));
+                $send(new TextDeltaEvent(EventID::generate(), time(), $result['text'], $messageId));
+                $send(new TextCompleteEvent(EventID::generate(), time(), $messageId));
+            }
+            $send(new StreamEndEvent(EventID::generate(), time(), $result['finishReason'], $result['usage']));
+        }
 
         // Prism 0.102 ends an in-stream error as a normal stream with finish reason Error; a non-streamed call throws.
         if ($result['finishReason'] === FinishReason::Error) {
@@ -803,6 +884,20 @@ final class LlmExecutor
         }
 
         return $result;
+    }
+
+    /**
+     * A terminal tool that returned without an error. A failed one does not end the run: the model sees the error.
+     *
+     * @param  list<string>  $terminalTools
+     */
+    private function endsRun(ToolResultEvent $event, array $terminalTools): bool
+    {
+        $result = $event->toolResult->result;
+
+        return $event->success
+            && in_array($event->toolResult->toolName, $terminalTools, true)
+            && ! (is_string($result) && $this->detectToolError($result)[0] === 'failed');
     }
 
     private function streamContext(): ?StreamContext
@@ -846,7 +941,7 @@ final class LlmExecutor
     /**
      * @param  array{promptTokens: int, completionTokens: int, thoughtTokens: int|null, cacheReadTokens: int|null, cacheWriteTokens: int|null}|Usage|null  $usage
      */
-    private function dispatchUsage(float $startTime, string $model, string $callType, array|Usage|null $usage, ?string $prompt, ?string $response, bool $streamed = false, ?LlmCall $call = null): void
+    private function dispatchUsage(float $startTime, string $model, string $callType, array|Usage|null $usage, ?string $prompt, ?string $response, bool $streamed = false, ?LlmCall $call = null, ?string $terminalTool = null): void
     {
         if (! $this->trackTokens || $usage === null) {
             return;
@@ -869,6 +964,7 @@ final class LlmExecutor
             contextCount: $call?->context !== null ? count($call->context['items']) : null,
             contextIds: $call?->context !== null ? self::contextIds($call->context) : null,
             promptFile: $call?->promptFile,
+            terminalTool: $terminalTool,
         ));
     }
 
@@ -1080,6 +1176,13 @@ final class LlmExecutor
         }
         $this->toolErrors[$this->toolOutcomeKey($toolName, $args)][] = $status === 'failed' ? $errorMessage : null;
         $this->dispatchWrappedToolCallEvent($toolName, $toolType, $args, $result, $durationMs, $startedAt, $status, $errorType, $errorMessage, $toolSpanId);
+
+        if ($output instanceof TerminalResult) {
+            $this->terminalData[$this->toolOutcomeKey($toolName, $args)] = $output->data;
+            if (! in_array($toolName, $this->terminalTools, true)) {
+                Log::warning("Tool [{$toolName}] returned a TerminalResult but is not in terminalTools(): the run continues.", ['node' => $this->nodeName]);
+            }
+        }
 
         if ($output instanceof ToolError) {
             // The wrapped tool's failed handler turns this back into a ToolError with the same message.

@@ -8,6 +8,7 @@ use Prism\Prism\Contracts\Message;
 use Prism\Prism\Enums\StructuredMode;
 use Prism\Prism\Enums\ToolChoice;
 use Prism\Prism\Exceptions\PrismStructuredDecodingException;
+use Prism\Prism\Tool;
 use Prism\Prism\ValueObjects\Media\Media;
 use Prism\Prism\ValueObjects\Media\Text;
 use Shahzad\AgenticGraph\Prompts\ChatPromptMessages;
@@ -55,6 +56,11 @@ final class LlmRequest
     private string|ToolChoice|null $toolChoice = null;
 
     private ?int $maxSteps = null;
+
+    /** @var list<string> */
+    private array $terminalTools = [];
+
+    private bool $holdStepText = false;
 
     private mixed $schema = null;
 
@@ -228,6 +234,23 @@ final class LlmRequest
     public function maxSteps(int $steps): self
     {
         return $this->with('maxSteps', $steps);
+    }
+
+    /**
+     * Ends the run when one of these tools returns: no further model call, and the reply is the tool's text (run()->text,
+     * and text_delta in a streamed run). The steps keep the call and the result. A failed terminal tool does not end the
+     * run. Model text before the call in the same step stays in steps[n]->text; in a streamed run it has already been
+     * sent, unless holdStepText is true: then the text of each step is held until the step ends, and dropped when the
+     * step calls a terminal tool.
+     *
+     * @param  list<string>  $names
+     */
+    public function terminalTools(array $names, bool $holdStepText = false): self
+    {
+        $request = $this->with('terminalTools', array_values(array_unique($names)));
+        $request->holdStepText = $holdStepText;
+
+        return $request;
     }
 
     public function schema(mixed $schema): self
@@ -415,6 +438,18 @@ final class LlmRequest
             throw new \LogicException('schema() cannot be combined with tools() or mcp().');
         }
 
+        if ($this->terminalTools !== []) {
+            if (! $this->toolRequest) {
+                throw new \LogicException('terminalTools() needs tools() or mcp().');
+            }
+            // The tools of an MCP server are not known before the request, so their names are not checked.
+            $known = array_map(fn (mixed $tool): ?string => $tool instanceof Tool ? $tool->name() : null, $this->tools);
+            $unknown = $this->mcp === [] ? array_diff($this->terminalTools, $known) : [];
+            if ($unknown !== []) {
+                throw new \LogicException('terminalTools(): ['.implode(', ', $unknown).'] is not a tool of this request.');
+            }
+        }
+
         $vars = $this->vars;
         $context = null;
         if ($this->context !== null) {
@@ -475,6 +510,8 @@ final class LlmRequest
             promptFile: $this->template instanceof PromptFile ? $this->template->meta() : null,
             timeout: $this->timeout,
             connectTimeout: $this->connectTimeout,
+            terminalTools: $this->terminalTools,
+            holdStepText: $this->holdStepText,
         );
     }
 

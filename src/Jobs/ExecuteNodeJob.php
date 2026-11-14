@@ -10,7 +10,6 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
@@ -141,8 +140,8 @@ class ExecuteNodeJob implements ShouldQueue
                 $this->parentSpanId
             ));
 
-            $cacheKey = 'agenticgraph:batch:'.$this->executionId.':'.$this->nodeName;
-            Cache::put($cacheKey, $result->toArray(), 300);
+            // Kept until the batch ends, however long the sibling branches take (a cache TTL would lose it).
+            app(ExecutionRepository::class)->putBatchResult($this->executionId, $this->nodeName, $result->toArray());
 
             $endMicrotime = microtime(true);
             Log::debug('ExecuteNodeJob completed', [

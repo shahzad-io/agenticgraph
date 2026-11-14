@@ -104,6 +104,7 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
             ->hasMigration('zzzz_add_execution_options_to_agenticgraph_executions_table')
             ->hasMigration('zzzz_drop_checkpoint_tree_columns_from_agenticgraph_checkpoints_table')
             ->hasMigration('zzzz_add_stream_columns_to_agenticgraph_executions_table')
+            ->hasMigration('zzzz_create_agenticgraph_batch_results_table')
             ->hasCommand(AgenticGraphCommand::class)
             ->hasCommand(ListGraphsCommand::class)
             ->hasCommand(VisualizeGraphCommand::class)

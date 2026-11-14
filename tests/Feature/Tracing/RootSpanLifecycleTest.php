@@ -542,7 +542,7 @@ it('ExecuteNodeJob queued before C1 still runs and nests under its old parent', 
 
     $node = array_values(array_filter($exporter->sent[0]['spans'], fn (array $span): bool => $span['span_type'] === 'node'))[0];
     expect($node['parent_id'])->toBe('span_old_orchestrator')
-        ->and(Cache::get('agenticgraph:batch:exec_rl_old_node:a'))->toBeArray();
+        ->and(app(ExecutionRepository::class)->batchResults('exec_rl_old_node')['a'] ?? null)->toBeArray();
 });
 
 /**

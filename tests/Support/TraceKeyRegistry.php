@@ -48,7 +48,7 @@ return [
         'llm' => [
             'node_type' => 'llm',
             'top' => ['model', 'prompt_tokens', 'completion_tokens', 'total_tokens', 'cost_usd', 'cached', 'streamed', 'thought_tokens', 'cache_read_tokens', 'cache_write_tokens', 'error'],
-            'attributes' => ['context.count', 'context.ids', 'prompt.name', 'prompt.version', 'prompt.hash'],
+            'attributes' => ['context.count', 'context.ids', 'prompt.name', 'prompt.version', 'prompt.hash', 'llm.end_reason', 'llm.terminal_tool'],
         ],
         'route' => [
             'node_type' => 'route',

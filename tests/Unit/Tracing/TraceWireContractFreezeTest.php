@@ -68,7 +68,7 @@ class FzWorkNode extends PrismNode
         $this->wrapToolsForTracing([$tool], 'prism')[0]->handle('Lisbon');
 
         $start = microtime(true);
-        event(TokensUsed::fromLlmCall('work', $start, 1.0, 3, 5, 'text', 'test:model', 'prompt', 'response', streamed: true, thoughtTokens: 4, cacheReadTokens: 6, cacheWriteTokens: 2, contextCount: 2, contextIds: ['doc-1', '7'], promptFile: ['name' => 'support.reply', 'version' => '2', 'hash' => 'a1b2c3d4e5f6']));
+        event(TokensUsed::fromLlmCall('work', $start, 1.0, 3, 5, 'text', 'test:model', 'prompt', 'response', streamed: true, thoughtTokens: 4, cacheReadTokens: 6, cacheWriteTokens: 2, contextCount: 2, contextIds: ['doc-1', '7'], promptFile: ['name' => 'support.reply', 'version' => '2', 'hash' => 'a1b2c3d4e5f6'], terminalTool: 'order_status'));
         event(TokensUsed::fromCacheHit('work', $start, 0.5, 'test:model', 'prompt', 'response', 'cache:key'));
         event(LlmCallFailed::fromException('work', $start, 'structured', 'test:model', new PrismException('provider down'), promptFile: ['name' => 'support.reply', 'version' => '2', 'hash' => 'a1b2c3d4e5f6']));
         event(new ToolCallCaptured(

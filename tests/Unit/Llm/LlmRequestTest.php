@@ -712,7 +712,7 @@ describe('explain', function () {
             ->and($explained['stream'])->toBeFalse()
             ->and($explained['cache'])->toMatchArray(['enabled' => false, 'reason' => 'off', 'source' => 'config'])
             ->and($explained['cache']['key'])->toStartWith('agenticgraph:prism:')
-            ->and($explained['tools'])->toBe(['names' => ['lookup'], 'mcp' => [], 'choice' => 'lookup', 'max_steps' => 4]);
+            ->and($explained['tools'])->toBe(['names' => ['lookup'], 'mcp' => [], 'choice' => 'lookup', 'max_steps' => 4, 'terminal' => [], 'hold_step_text' => false]);
     });
 
     it('reports the stream decision, the cache decision and the key the call uses', function () {

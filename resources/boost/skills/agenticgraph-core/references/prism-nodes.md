@@ -206,6 +206,41 @@ final class CurrencyNode extends PrismNode
 
 **Finish reasons.** `LlmResponse::$finishReason` (`toArray()['finish_reason']`) is Prism's: `stop`, `length`, `tool-calls`, `content-filter`, `refusal`, `pause`, `error`, `other`, `unknown`. A streamed call that is cut by `$maxTokens` returns `length` with the real usage and the text so far. A non-streamed OpenAI call cut by `$maxTokens` still throws `max tokens exceeded`. A streamed call that ends in an error (a provider error event, `response.failed`) throws a `PrismException` after its events were sent to the stream; a refusal is a normal `refusal` response.
 
+## A terminal tool
+
+Use it when the user must get a tool's output word for word (an order status, a policy text). The model does not write the reply:
+
+```php
+use Shahzad\AgenticGraph\Tools\TerminalResult;
+
+$status = (new Tool)->as('order_status')->for('The status of an order')
+    ->withStringParameter('order_id', 'The order id')
+    ->using(fn (string $order_id): TerminalResult => TerminalResult::reply(
+        "Order {$order_id} ships on 14 November.",
+        ['order_id' => $order_id],
+    ));
+
+$run = $this->llm()
+    ->prompt('{question}')
+    ->vars(['question' => $state->get('question')])
+    ->tools([$status, $search])
+    ->terminalTools(['order_status'], holdStepText: true)
+    ->maxSteps(5)
+    ->run();
+
+$run->text;          // "Order A1 ships on 14 November.", the tool's text
+$run->terminalTool;  // 'order_status', or null when the model answered
+$run->terminalData;  // ['order_id' => 'A1']
+```
+
+- The run ends after the step in which the terminal tool returned. No further model call is made. Every tool the model called in that step runs and is recorded.
+- A terminal tool that fails (throws, returns a `ToolError` or an `ERROR:` string) does not end the run: the model sees the error.
+- The handler can return a plain string. `TerminalResult` only adds the data. From a tool that is not in `terminalTools()` it is a normal result, with a logged warning.
+- Model text before the call in the same step stays in `steps[n]->text` and is not in `text`. In a streamed run it has already been sent as `text_delta`. With `holdStepText: true` the text of each step is held until the step ends, then sent, or dropped when the step called a terminal tool. The cost: text reaches the client one step at a time, not token by token.
+- When `maxSteps` is reached first, the run ends as before and `terminalTool` is null.
+- A non-streamed run with terminal tools uses the provider's stream endpoint internally. Providers: openai, anthropic, deepseek, gemini, groq, mistral, ollama, openrouter, xai, z. Any other throws a `LogicException`.
+- The llm span gets `llm.end_reason` (`terminal_tool`) and `llm.terminal_tool`.
+
 ## MCP tools
 
 `mcp($server)` adds the server's tools through Relay into the same path as `tools()`. MCP requests never stream and never cache.

@@ -32,6 +32,8 @@ final readonly class LlmCall
      * @param  class-string|null  $dto  hydrate the structured reply into this class
      * @param  int|null  $structuredRetries  overrides config agenticgraph.prism.structured.retries (PrismRouter pins 0)
      * @param  float|null  $temperature  0 to 2; this call's, wins over the node's and config agenticgraph.prism.temperature
+     * @param  list<string>  $terminalTools  tools that end the run when they return
+     * @param  bool  $holdStepText  hold a step's text until the step ends; drop it when the step calls a terminal tool
      * @param  int|null  $timeout  seconds per provider request; overrides config agenticgraph.api.timeout
      * @param  int|null  $connectTimeout  overrides config agenticgraph.api.connect_timeout
      * @param  bool  $structuredTraceAsJson  TokensUsed response is the JSON of the structured data (PrismRouter parity)
@@ -66,6 +68,8 @@ final readonly class LlmCall
         public ?array $promptFile = null,
         public ?int $timeout = null,
         public ?int $connectTimeout = null,
+        public array $terminalTools = [],
+        public bool $holdStepText = false,
     ) {}
 
     /**

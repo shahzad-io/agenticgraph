@@ -36,6 +36,9 @@ use Shahzad\AgenticGraph\Tracing\TraceTime;
 
 final class ParallelExecutionCoordinator implements ParallelExecutorInterface
 {
+    /** The row of agenticgraph_batch_results that holds the state at fan-out; not a node name. */
+    private const BATCH_INPUT = '__input__';
+
     /**
      * @var array<int, class-string|object>
      */
@@ -192,11 +195,7 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
         ]);
 
         $sourceNode = $this->resolveSourceNode($graph, $parallelNodes);
-        $this->cache->put(
-            $this->batchInputCacheKey($executionId),
-            $state->toArray(),
-            300
-        );
+        $this->repo->putBatchResult($executionId, self::BATCH_INPUT, $state->toArray());
         $callbacks = $this->buildBatchCallbacks(
             $graph->name,
             $executionId,
@@ -288,37 +287,10 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
             throw new \RuntimeException("Graph not found: {$graphName}");
         }
 
-        $results = [];
-        $missing = [];
+        $stored = $this->storedBatchResults($executionId, $targets);
+        $missing = array_values(array_diff($targets, array_keys($stored)));
 
-        foreach ($targets as $nodeName) {
-            $key = $this->batchResultCacheKey($executionId, $nodeName);
-            $resultData = null;
-            $maxAttempts = 5;
-
-            for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
-                $resultData = $this->cache->get($key);
-
-                if ($resultData !== null) {
-                    break;
-                }
-
-                if ($attempt < $maxAttempts) {
-                    $delayMs = 100 * pow(2, $attempt - 1);
-                    usleep($delayMs * 1000);
-                }
-            }
-
-            if ($resultData === null) {
-                $missing[] = $nodeName;
-
-                continue;
-            }
-
-            $results[] = State::fromArray($resultData);
-        }
-
-        if (! empty($missing)) {
+        if ($missing !== []) {
             $errorMsg = sprintf(
                 'Missing batch results for nodes: %s. Batch ID: %s, Execution: %s',
                 implode(', ', $missing),
@@ -335,10 +307,14 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
                 ]);
             }
 
-            throw new \RuntimeException($errorMsg);
+            // Laravel only reports an exception thrown from a batch callback, so the execution is ended here.
+            $this->handleBatchFailure($batch, $executionId, new \RuntimeException($errorMsg), $graphName, $rootSpanId);
+
+            return;
         }
 
-        $inputData = $this->cache->get($this->batchInputCacheKey($executionId));
+        $results = array_map(fn (string $nodeName): State => State::fromArray($stored[$nodeName]), $targets);
+        $inputData = $stored[self::BATCH_INPUT] ?? null;
         $baseState = is_array($inputData) ? State::fromArray($inputData) : new State;
         $this->stateManager->warnParallelMergeCollisions($this->logger, $baseState, $targets, $results);
         $merged = $this->stateManager->mergeAll($results);
@@ -413,7 +389,7 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
             if ($this->container->bound(TracerExporter::class)) {
                 $this->container->make(TracerExporter::class)->resumeTrace($executionId, $graphName, 'continued');
             }
-            $inputData = $this->cache->get($this->batchInputCacheKey($executionId));
+            $inputData = $this->storedBatchResults($executionId, [])[self::BATCH_INPUT] ?? null;
             $this->events->dispatch(new GraphExecutionFailed(
                 $executionId,
                 $graphName,
@@ -441,12 +417,37 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
      */
     public function cleanupBatchResults(string $executionId, array $targets): void
     {
+        $this->repo->deleteBatchResults($executionId);
         $this->cache->forget($this->batchInputCacheKey($executionId));
 
         foreach ($targets as $nodeName) {
             $key = $this->batchResultCacheKey($executionId, $nodeName);
             $this->cache->forget($key);
         }
+    }
+
+    /**
+     * The stored results by node name, with the fan-out input under BATCH_INPUT. A job or a fan-out from before
+     * 0.2.5 left its result under the cache key: that is still read, for batches in flight during the upgrade.
+     *
+     * @param  array<int, string>  $targets
+     * @return array<string, array<string, mixed>>
+     */
+    private function storedBatchResults(string $executionId, array $targets): array
+    {
+        $stored = $this->repo->batchResults($executionId);
+        foreach ($targets as $nodeName) {
+            $cached = isset($stored[$nodeName]) ? null : $this->cache->get($this->batchResultCacheKey($executionId, $nodeName));
+            if (is_array($cached)) {
+                $stored[$nodeName] = $cached;
+            }
+        }
+        $cachedInput = isset($stored[self::BATCH_INPUT]) ? null : $this->cache->get($this->batchInputCacheKey($executionId));
+        if (is_array($cachedInput)) {
+            $stored[self::BATCH_INPUT] = $cachedInput;
+        }
+
+        return $stored;
     }
 
     private function batchInputCacheKey(string $executionId): string

@@ -23,6 +23,8 @@ class ExecutionRepository implements ExecutionStore
 
     protected string $table = 'agenticgraph_executions';
 
+    private const BATCH_RESULTS_TABLE = 'agenticgraph_batch_results';
+
     /**
      * Valid state transitions for execution lifecycle
      *
@@ -546,6 +548,36 @@ class ExecutionRepository implements ExecutionStore
     }
 
     /**
+     * Stores one branch result of an async fan-out until the batch ends. A branch that runs again in the same
+     * execution (a loop, a retried job) replaces its row.
+     *
+     * @param  array<string, mixed>  $state
+     */
+    public function putBatchResult(string $executionId, string $nodeName, array $state): void
+    {
+        InstrumentationGate::internal(fn () => $this->db->table(self::BATCH_RESULTS_TABLE)->upsert(
+            [['execution_id' => $executionId, 'node_name' => $nodeName, 'state' => json_encode($state, JSON_THROW_ON_ERROR), 'created_at' => now()]],
+            ['execution_id', 'node_name'],
+            ['state', 'created_at'],
+        ));
+    }
+
+    /**
+     * @return array<string, array<string, mixed>> the stored results of the execution, by node name
+     */
+    public function batchResults(string $executionId): array
+    {
+        $rows = InstrumentationGate::internal(fn () => $this->db->table(self::BATCH_RESULTS_TABLE)->where('execution_id', $executionId)->pluck('state', 'node_name')->all());
+
+        return array_map(fn (string $state): array => (array) json_decode($state, true, flags: JSON_THROW_ON_ERROR), $rows);
+    }
+
+    public function deleteBatchResults(string $executionId): void
+    {
+        InstrumentationGate::internal(fn () => $this->db->table(self::BATCH_RESULTS_TABLE)->where('execution_id', $executionId)->delete());
+    }
+
+    /**
      * Clean up old completed/failed executions
      */
     public function cleanup(int $olderThanDays = 30, ?string $status = null): int
@@ -553,6 +585,9 @@ class ExecutionRepository implements ExecutionStore
         $threshold = now()->subDays($olderThanDays);
 
         return $this->db->transaction(function () use ($threshold, $status) {
+            // Rows of a batch that never ended (its worker died); a batch that ends deletes its own.
+            $this->db->table(self::BATCH_RESULTS_TABLE)->where('created_at', '<', $threshold)->delete();
+
             $query = $this->db->table($this->table)
                 ->where('completed_at', '<', $threshold);
 
