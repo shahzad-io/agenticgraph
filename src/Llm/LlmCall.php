@@ -73,6 +73,14 @@ final readonly class LlmCall
     ) {}
 
     /**
+     * @param  array<int, Message>  $messages
+     */
+    public function withMessages(array $messages): self
+    {
+        return new self(...[...get_object_vars($this), 'messages' => $messages]);
+    }
+
+    /**
      * The items context() used, without their content.
      *
      * @return list<array{id: string|int, metadata: array<string, mixed>, score: float|null}>

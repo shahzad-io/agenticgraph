@@ -379,10 +379,28 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
         ?string $graphName = null,
         ?string $rootSpanId = null,
     ): void {
-        $this->repo->failed(
-            $executionId,
-            "Batch execution failed: {$e->getMessage()}"
-        );
+        $this->failExecution($executionId, "Batch execution failed: {$e->getMessage()}", $e, $graphName, $rootSpanId, $batch->id);
+    }
+
+    /**
+     * A branch job failed for good (Laravel's JobFailed). The batch catch callback ends the execution first when the
+     * batch records the failure; when its job_batches update throws (SQLite "database is locked"), no batch callback
+     * runs and this ends it.
+     */
+    public function handleBranchJobFailure(ExecuteNodeJob $job, \Throwable $e): void
+    {
+        $this->failExecution($job->executionId, "Branch [{$job->nodeName}] failed: {$e->getMessage()}", $e, $job->graphName, $job->parentSpanId, $job->batchId);
+    }
+
+    /**
+     * Only the call that moves the execution to failed closes the trace, dispatches GraphExecutionFailed and logs, so
+     * the batch callback and the branch job failure cannot both fail it.
+     */
+    private function failExecution(string $executionId, string $error, \Throwable $e, ?string $graphName, ?string $rootSpanId, ?string $batchId): void
+    {
+        if (! $this->repo->failed($executionId, $error)) {
+            return;
+        }
 
         // Close the trace: the failed segment carries the root span and the error.
         if ($graphName !== null) {
@@ -403,7 +421,7 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
         if ((bool) config('agenticgraph.logging.enabled', true)) {
             $this->logger->error('Batch execution failed', [
                 'execution_id' => $executionId,
-                'batch_id' => $batch->id,
+                'batch_id' => $batchId,
                 'exception_class' => $e::class,
                 'error' => $e->getMessage(),
                 'file' => $e->getFile(),

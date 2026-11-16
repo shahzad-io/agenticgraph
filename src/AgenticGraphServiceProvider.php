@@ -9,6 +9,7 @@ use Illuminate\Contracts\Broadcasting\Broadcaster;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\DatabaseManager;
+use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Route;
 use Psr\Log\LoggerInterface;
@@ -52,6 +53,7 @@ use Shahzad\AgenticGraph\Execution\TraceContextProvider;
 use Shahzad\AgenticGraph\Graph\Graph;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Http\Controllers\StreamController;
+use Shahzad\AgenticGraph\Jobs\ExecuteNodeJob;
 use Shahzad\AgenticGraph\State\StateManager;
 use Shahzad\AgenticGraph\Storage\DatabaseStorage;
 use Shahzad\AgenticGraph\Storage\FileStorage;
@@ -368,6 +370,20 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
 
         // Always registered: each handler checks tracing.enabled when its event fires, so a runtime change applies.
         $this->registerTracing();
+
+        // A branch job that fails for good ends its execution, also when the batch could not record the failure.
+        // A failure here is reported, not thrown: it would replace the job's own exception.
+        Event::listen(JobFailed::class, static function (JobFailed $event): void {
+            $data = $event->job->payload()['data'] ?? [];
+            if (($data['commandName'] ?? null) !== ExecuteNodeJob::class) {
+                return;
+            }
+            try {
+                app(ParallelExecutionCoordinator::class)->handleBranchJobFailure(unserialize($data['command']), $event->exception);
+            } catch (\Throwable $e) {
+                report($e);
+            }
+        });
 
         if (config('agenticgraph.streaming.routes.enabled', true)) {
             Route::middleware(config('agenticgraph.streaming.routes.middleware', ['api']))

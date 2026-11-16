@@ -9,6 +9,7 @@ use Prism\Prism\ValueObjects\Messages\AssistantMessage as PrismAssistantMessage;
 use Prism\Prism\ValueObjects\Messages\SystemMessage as PrismSystemMessage;
 use Prism\Prism\ValueObjects\Messages\ToolResultMessage as PrismToolResultMessage;
 use Prism\Prism\ValueObjects\Messages\UserMessage as PrismUserMessage;
+use Shahzad\AgenticGraph\Llm\Replay;
 use Shahzad\AgenticGraph\Prompts\Exceptions\TemplateException;
 use Shahzad\AgenticGraph\Prompts\Messages\AssistantMessage;
 use Shahzad\AgenticGraph\Prompts\Messages\Message;
@@ -129,12 +130,25 @@ class ChatPromptTemplate
         }
 
         $items = $variables[$variable];
+        if (is_array($items) && Replay::is($items)) {
+            $items = [$items];
+        }
         if (! is_array($items) || ! array_is_list($items)) {
             throw new TemplateException("Messages placeholder '{$variable}' must be a list of messages");
         }
 
         $messages = [];
         foreach ($items as $index => $item) {
+            // A replay (LlmResponse::toReplay()) expands to its assistant and tool messages.
+            if (is_array($item) && Replay::is($item)) {
+                foreach (Replay::toMessages($item) as $message) {
+                    $messages[] = $message instanceof PrismAssistantMessage
+                        ? ['role' => 'assistant', 'content' => $message->content, 'message' => $message]
+                        : ['role' => 'tool', 'content' => '', 'message' => $message];
+                }
+
+                continue;
+            }
             $messages[] = match (true) {
                 $item instanceof PrismUserMessage => ['role' => 'user', 'content' => $item->text(), 'message' => $item],
                 $item instanceof PrismAssistantMessage => ['role' => 'assistant', 'content' => $item->content, 'message' => $item],

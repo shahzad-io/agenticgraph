@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.6 - 2026-11-16
+
+### Added
+
+- **A tool run can be replayed as history on a later turn.** `LlmResponse::toReplay()` returns plain, JSON-safe data (`version` 1, `provider`, `model`, `messages`) with each step's assistant and tool messages and what the provider needs to accept them again: OpenAI reasoning items (`output_items`), Anthropic signed thinking blocks (`content_blocks`), Gemini thought signatures (on the tool calls), OpenRouter `reasoning_details`, and the call id of each tool result. Send it back with `->replay($data)` on `llm()`, or as an item of `history()` or a `## messages:` placeholder. It is captured the same way on streamed and non-streamed runs. Before, an app that rebuilt the history from `toArray()` lost this data: OpenAI reasoning models rejected a replayed non-streamed tool run with 400 "function_call was provided without its required 'reasoning' item", and Anthropic thinking was dropped.
+- A replay goes to any model of the same provider unchanged. Removing the reasoning for another model is not safe: OpenAI rejects the function calls of a reasoning model without their reasoning items on any reasoning model (live, `gpt-5-mini` to `gpt-5-nano`), and Anthropic leaves out the thinking a model cannot read. A replay to another provider throws an `InvalidArgumentException` before the request is sent.
+- `ToolRunResult::$callId` (the OpenAI `call_id`). `LlmStep::$providerContent`. `LlmResponse::$provider` and `$model`, also in `toArray()`.
+- OpenAI with `store: false` cannot replay reasoning: that needs `encrypted_content`, and Prism 0.102 does not send `include`. Documented.
+
+### Fixed
+
+- **A provider 4xx that is not about the reasoning setting is no longer reported as `ReasoningException`.** Only an error that names a reasoning or temperature setting (`reasoning.effort`, `thinking.type`, a budget, `temperature`, a model that does not support thinking) is wrapped. Any other 4xx stays the provider's `PrismException`. Before, a replay error read "The provider rejected the request with reasoning level [low] set".
+- **A branch job that fails for good ends the execution as failed, also when the batch cannot record it.** Laravel records a failed batch job (the `job_batches` update) before it calls the job's `failed()` and the batch `catch` callback. When that update threw (SQLite "database is locked"), no callback ran and the execution stayed `running`. Laravel's `JobFailed` event now ends it as `failed` with `GraphExecutionFailed`. Only the call that moves the execution to `failed` dispatches the event, so the batch callback and this path cannot both fail it.
+
+### Changed
+
+- Docs: an async fan-out with more than one worker is not supported on SQLite. Laravel's batch repository reads and then updates `job_batches` in one transaction, and SQLite returns "database is locked" at once when two workers do this (`busy_timeout` and WAL do not help). Use MySQL or PostgreSQL for the queue and `job_batches`. Measured on 0.2.4 and 0.2.5 with three branches and three workers: the same failure rate, so 0.2.5 did not cause it.
+
 ## 0.2.5 - 2026-11-14
 
 ### Added

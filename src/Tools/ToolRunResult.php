@@ -8,7 +8,8 @@ use JsonSerializable;
 
 /**
  * What one tool call returned. $error is set when the handler failed (it threw, returned a ToolError, or returned an
- * "ERROR:" / "Tool execution error:" string); $result then holds the text the model received.
+ * "ERROR:" / "Tool execution error:" string); $result then holds the text the model received. $callId is the provider's
+ * id for the result where it has one (OpenAI call_id).
  */
 final class ToolRunResult implements JsonSerializable
 {
@@ -22,10 +23,11 @@ final class ToolRunResult implements JsonSerializable
         public readonly array $arguments,
         public readonly int|float|string|array|null $result,
         public readonly ?string $error = null,
+        public readonly ?string $callId = null,
     ) {}
 
     /**
-     * @return array{tool_call_id: string, tool_name: string, arguments: array<string, mixed>, result: int|float|string|array<mixed>|null, error: string|null}
+     * @return array{tool_call_id: string, tool_name: string, arguments: array<string, mixed>, result: int|float|string|array<mixed>|null, error: string|null, call_id: string|null}
      */
     public function toArray(): array
     {
@@ -35,6 +37,7 @@ final class ToolRunResult implements JsonSerializable
             'arguments' => $this->arguments,
             'result' => $this->result,
             'error' => $this->error,
+            'call_id' => $this->callId,
         ];
     }
 

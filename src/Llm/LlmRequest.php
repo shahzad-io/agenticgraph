@@ -149,6 +149,18 @@ final class LlmRequest
     }
 
     /**
+     * A reply of an earlier turn, as LlmResponse::toReplay() returned it (stored as JSON or not), appended in order
+     * with history(). It sends back the provider content the provider needs, such as OpenAI reasoning items and
+     * Anthropic signed thinking blocks. A replay from another provider throws when the request runs.
+     *
+     * @param  array<string, mixed>  $replay
+     */
+    public function replay(array $replay): self
+    {
+        return $this->history([$replay]);
+    }
+
+    /**
      * Merged into the variables the templates are formatted with. Templates are never mutated.
      *
      * @param  array<string, mixed>  $vars
