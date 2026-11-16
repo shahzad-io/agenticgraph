@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.8 - 2026-11-16
+
+### Fixed
+
+- **A streamed run that completes or fails always writes its end events.** On a queued streamed run, when the completion listeners (for example a trace export that timed out and retried) took more than 10 s after the last heartbeat, the heartbeat on `graph_complete` called `touch()`. The run was already marked `completed`, so `touch()` returned false, the sink took it as "ended elsewhere" and threw. `graph_complete` and `execution_terminal` were never written, the client kept the stream open until it timed out, and the log showed "worker stopped, execution already ended". The failed path had the same problem with `graph_failed`. The heartbeat now skips `graph_complete` and `graph_failed`: the coordinator emits them only after its own conditional status write (`completed()` or `failed()`) ended the run, and that write is the check that this worker owns the end. A `touch()` before it is not needed, and after it, it is always false.
+- **The end event is no longer delayed by the completion listeners.** On a streamed run, `GraphExecutionCompleted` and `GraphExecutionFailed` are now dispatched after the end events and the close. The tracing listener sends the final segment inline (a plain HTTP post with `transport.timeout` and 2 retries), so a slow trace endpoint added its timeout and retries to every reply. Measured live with a trace endpoint that holds each request 8 s: the client got `execution_terminal` 8.1 s after the last node completed, now under 1 s. The worker still sends the trace in full after the terminal. An interrupted run (`stream_close` `cancelled`) was not affected: its terminal is written before the trace export.
+
 ## 0.2.7 - 2026-11-16
 
 ### Fixed

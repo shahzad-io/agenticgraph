@@ -139,6 +139,7 @@ Docs: `/docs/streaming`, `/docs/stream-limitations`
 ## Task: expire stale executions
 
 - An async execution no worker picks up would leave the visitor's stream silent. `php artisan agenticgraph:executions:expire` fails it: status `failed`, `graph_failed` with `reason` `stale_queued` or `stale_running`, and a failed `execution_terminal`, so the client ends in `error`.
+- Since 0.2.8 the end events (`graph_complete` or `graph_failed`, then `execution_terminal`) are written before the `GraphExecutionCompleted` and `GraphExecutionFailed` listeners run, so a slow listener or trace export does not delay the client, and the end events are always written.
 - A `queued` execution older than `AGENTICGRAPH_EXECUTION_QUEUED_TIMEOUT` (300 s) is failed. A `running` one with no progress for longer than `max(AGENTICGRAPH_EXECUTION_TIMEOUT, AGENTICGRAPH_RESUME_TIMEOUT)` plus `AGENTICGRAPH_EXECUTION_STALE_GRACE` (60 s) is failed; with `AGENTICGRAPH_EXECUTION_TIMEOUT` at 0 the limit is `AGENTICGRAPH_EXECUTION_STALE_RUNNING_AFTER` (900 s). Each finished node counts as progress. Interrupted and sync executions are never touched.
 - Schedule it every minute, next to `agenticgraph:interrupt:expire`:
 

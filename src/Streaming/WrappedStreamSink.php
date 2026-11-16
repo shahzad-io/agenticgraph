@@ -70,10 +70,17 @@ final class WrappedStreamSink implements StreamSinkInterface
      * agenticgraph:executions:expire leaves it alone. The first event after a quiet gap always checks, so once the
      * execution has ended elsewhere, nothing more is written and the worker stops.
      *
+     * graph_complete and graph_failed are not checked. The coordinator emits them only after its own conditional
+     * status write (completed() or failed()) made this worker the owner of the end, so the row is already ended and
+     * touch() would return false. Their terminal must always be written.
+     *
      * ponytail: fixed 10 s beat; a running limit (timeout + stale_grace) under 10 s can still expire a streaming run.
      */
     private function heartbeat(StreamEvent $event): void
     {
+        if (in_array($event->type(), [StreamLifecycleEventTypes::GRAPH_COMPLETE, StreamLifecycleEventTypes::GRAPH_FAILED], true)) {
+            return;
+        }
         $now = now()->getTimestamp();
         if ($this->lastHeartbeat !== null && $now - $this->lastHeartbeat < self::HEARTBEAT_SECONDS) {
             return;
