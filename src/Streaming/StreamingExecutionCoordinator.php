@@ -542,7 +542,6 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                     throw new ExecutionEndedException($executionId);
                 }
                 $completedAt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', microtime(true))) ?: new \DateTimeImmutable;
-                $this->events->dispatch(new GraphExecutionCompleted($executionId, $graph->name, $state, $completedAt, $duration, [], $traceContext->getRootSpanId()));
 
                 $this->emitLifecycleEvent(
                     $sink,
@@ -557,6 +556,9 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                 $sink->close(StreamStatus::SUCCESS, [
                     'final_state' => State::toStoragePayload($state),
                 ]);
+
+                // After the terminal: a slow listener (for example a trace export) must not delay the client's end event.
+                $this->events->dispatch(new GraphExecutionCompleted($executionId, $graph->name, $state, $completedAt, $duration, [], $traceContext->getRootSpanId()));
             }
 
             return new StreamHandle($session, $baseSink, $state);
@@ -567,9 +569,8 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
             }
 
             $duration = microtime(true) - $start;
-            $this->events->dispatch(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000, $traceContext->getRootSpanId()));
-
             $this->endFailedStream($sink, $session, $traceContext, $e, $state);
+            $this->events->dispatch(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000, $traceContext->getRootSpanId()));
 
             throw $e;
         }
@@ -655,11 +656,10 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
         }
 
         $duration = microtime(true) - $start;
-        $this->events->dispatch(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000, $traceContext->getRootSpanId()));
-
         if ($sink !== null && $session !== null) {
             $this->endFailedStream($sink, $session, $traceContext, $e, $state);
         }
+        $this->events->dispatch(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000, $traceContext->getRootSpanId()));
 
         $this->repo->failed($executionId, $e->getMessage());
     }
