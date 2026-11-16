@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Shahzad\AgenticGraph\Http\Controllers;
 
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Shahzad\AgenticGraph\Execution\ExecutionStore;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamEvent;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
@@ -66,6 +67,8 @@ final class StreamController
                 return;
             }
 
+            $this->releaseDatabaseConnections();
+
             while (microtime(true) - $start < $maxDuration) {
                 $hasEvents = false;
                 foreach ($store->readFrom($streamId, $nextSeq, 200) as $event) {
@@ -103,6 +106,20 @@ final class StreamController
             'X-Accel-Buffering' => 'no',
             'Content-Encoding' => 'none',
         ]);
+    }
+
+    /**
+     * The connect-time checks (route middleware, the execution lookup) are done, and the loop can wait for minutes.
+     * Close every open connection so an idle stream does not hold a database slot. A later query reconnects (the
+     * database stream store does on its first read). An in-memory SQLite connection is kept: closing it erases it.
+     */
+    private function releaseDatabaseConnections(): void
+    {
+        foreach (DB::getConnections() as $name => $connection) {
+            if ($connection->getConfig('database') !== ':memory:') {
+                DB::disconnect($name);
+            }
+        }
     }
 
     /**

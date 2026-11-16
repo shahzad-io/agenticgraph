@@ -70,11 +70,14 @@ class PulseExporter extends BufferedTraceExporter
     protected function send(array $payload): void
     {
         try {
-            $this->sendBody(
-                TracePayloadBuilder::encode($payload),
-                (string) ($payload['trace']['id'] ?? ''),
-                (string) ($payload['segment']['id'] ?? ''),
-            );
+            $body = TracePayloadBuilder::encode($payload);
+            $traceId = (string) ($payload['trace']['id'] ?? '');
+            $segmentId = (string) ($payload['segment']['id'] ?? '');
+            // A real queue takes the segment, so a slow endpoint never holds the worker that ran the graph.
+            if ($this->hasRealQueue() && $this->queueSegment($body, $traceId, $segmentId)) {
+                return;
+            }
+            $this->sendBody($body, $traceId, $segmentId);
         } catch (\Throwable $e) {
             // Silent fail - don't break the user's application
             if ((bool) config('agenticgraph.logging.enabled', true)) {
@@ -153,6 +156,22 @@ class PulseExporter extends BufferedTraceExporter
         Sleep::for(min($wait, $cap))->seconds();
 
         return $this->post($body);
+    }
+
+    /**
+     * False when the dispatch fails (for example an SQS message over 256 KB): the caller posts inline instead.
+     */
+    private function queueSegment(string $body, string $traceId, string $segmentId): bool
+    {
+        try {
+            app(Dispatcher::class)->dispatch(new SendPulseSegmentJob($body, $traceId, $segmentId));
+
+            return true;
+        } catch (\Throwable $e) {
+            $this->logFailure(['code' => 'dispatch_failed', 'error' => $e->getMessage(), 'trace_id' => $traceId, 'segment_id' => $segmentId]);
+
+            return false;
+        }
     }
 
     private function hasRealQueue(): bool

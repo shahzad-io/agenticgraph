@@ -13,8 +13,9 @@ use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
 
 /**
- * Re-sends one trace segment that Pulse refused with a 429 and a long Retry-After.
- * Holds the exact encoded body only; the endpoint and API key are read from config when it runs.
+ * Sends one trace segment. With a real queue every segment goes this way, so the worker that ran the graph does not
+ * wait for the endpoint. Holds the exact encoded body (captured state, prompts and responses included), the trace id
+ * and the segment id; the endpoint and API key are read from config when it runs.
  */
 class SendPulseSegmentJob implements ShouldQueue
 {
