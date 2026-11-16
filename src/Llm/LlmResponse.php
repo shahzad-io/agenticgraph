@@ -29,6 +29,7 @@ final class LlmResponse implements JsonSerializable
      * @param  string|null  $terminalTool  the terminal tool that ended the run (terminalTools()); null when none did
      * @param  array<string, mixed>  $terminalData  the data of its TerminalResult
      * @param  string|null  $provider  the provider that answered (null on a response not built by a request)
+     * @param  bool  $heldText  the text of the last step was held (holdStepText) and never sent: the terminal tool's reply replaced it
      */
     public function __construct(
         public readonly string $text = '',
@@ -47,6 +48,7 @@ final class LlmResponse implements JsonSerializable
         public readonly array $terminalData = [],
         public readonly ?string $provider = null,
         public readonly ?string $model = null,
+        public readonly bool $heldText = false,
     ) {}
 
     /**
@@ -85,6 +87,11 @@ final class LlmResponse implements JsonSerializable
      * assistant and tool messages (a tool run's steps, or the one reply), the provider content each provider needs to
      * accept them again, and the provider and model. The user message that started the turn is not in it.
      *
+     * A run that a terminal tool ended ends with the reply the user got, as an assistant message after the tool
+     * message. The held text of its last step (holdStepText), which the user never saw, is left out: the step text,
+     * the OpenAI message items, and the Anthropic text blocks that no thinking block follows (a later thinking block
+     * is bound to the blocks before it). The reasoning items and signed thinking blocks stay.
+     *
      * @return array{version: int, provider: string, model: string, messages: list<array<string, mixed>>}
      */
     public function toReplay(): array
@@ -95,8 +102,10 @@ final class LlmResponse implements JsonSerializable
 
         $steps = $this->steps !== [] ? $this->steps : [new LlmStep($this->text)];
         $messages = [];
-        foreach ($steps as $step) {
-            $messages[] = ['role' => 'assistant', 'content' => $step->text, 'tool_calls' => $step->toArray()['tool_calls'], 'provider_content' => $step->providerContent];
+        foreach ($steps as $i => $step) {
+            $held = $this->heldText && $this->terminalTool !== null && $i === array_key_last($steps);
+            [$text, $content] = $held ? self::withoutText($step->providerContent) : [$step->text, $step->providerContent];
+            $messages[] = ['role' => 'assistant', 'content' => $text, 'tool_calls' => $step->toArray()['tool_calls'], 'provider_content' => $content];
             if ($step->toolResults !== []) {
                 $messages[] = ['role' => 'tool', 'tool_results' => array_map(fn (ToolRunResult $result): array => [
                     'tool_call_id' => $result->toolCallId,
@@ -107,8 +116,38 @@ final class LlmResponse implements JsonSerializable
                 ], $step->toolResults)];
             }
         }
+        // A terminal tool's reply is set outside the steps: it is what the user got, so the next turn must see it.
+        if ($this->terminalTool !== null && $this->text !== '') {
+            $messages[] = ['role' => 'assistant', 'content' => $this->text, 'tool_calls' => [], 'provider_content' => []];
+        }
 
         return ['version' => Replay::VERSION, 'provider' => $this->provider, 'model' => $this->model, 'messages' => $messages];
+    }
+
+    /**
+     * The provider content of a step without its text, and the text that has to stay.
+     *
+     * @param  array<string, mixed>  $content
+     * @return array{0: string, 1: array<string, mixed>}
+     */
+    private static function withoutText(array $content): array
+    {
+        if (is_array($content['output_items'] ?? null)) {
+            $content['output_items'] = array_values(array_filter($content['output_items'], fn (mixed $item): bool => ! is_array($item) || ($item['type'] ?? null) !== 'message'));
+        }
+        $kept = '';
+        if (is_array($content['content_blocks'] ?? null)) {
+            $blocks = $content['content_blocks'];
+            $lastThinking = -1;
+            foreach ($blocks as $i => $block) {
+                $lastThinking = in_array($block['type'] ?? null, ['thinking', 'redacted_thinking'], true) ? $i : $lastThinking;
+            }
+            $blocks = array_filter($blocks, fn (mixed $block, int $i): bool => $i < $lastThinking || ($block['type'] ?? null) !== 'text', ARRAY_FILTER_USE_BOTH);
+            $content['content_blocks'] = array_values($blocks);
+            $kept = implode('', array_map(fn (array $block): string => $block['type'] === 'text' ? (string) $block['text'] : '', $content['content_blocks']));
+        }
+
+        return [$kept, $content];
     }
 
     /**
