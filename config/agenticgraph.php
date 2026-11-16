@@ -246,13 +246,18 @@ return [
         // Ingest transport. connect_timeout and timeout are seconds per attempt; a connection error or a
         // 5xx is tried twice, a 4xx never. Every request sends User-Agent: agenticgraph/{version}.
         //
-        // A 429 with Retry-After (seconds or an HTTP date) is honored: a wait up to retry_after_wait seconds
-        // happens in the request or job and the segment is posted once more. A longer wait is handed to a
-        // delayed SendPulseSegmentJob when the app has a real queue (not sync), else the exporter waits
-        // retry_after_wait seconds, posts once more and logs a failure. A 429 without Retry-After, a 413
+        // With a real queue (not sync) every segment goes to a SendPulseSegmentJob, so a slow endpoint never
+        // holds the worker or request that ran the graph. The job holds the encoded segment, with any captured
+        // prompts, responses and state, in the queue until it runs. On the sync queue the segment is posted
+        // in process, after the end event.
+        //
+        // A 429 with Retry-After (seconds or an HTTP date) is honored: the job is released for that many
+        // seconds (at most max_delay). In process, a wait up to retry_after_wait seconds happens and the
+        // segment is posted once more; a longer wait waits retry_after_wait seconds, posts once more and
+        // logs a failure. A 429 without Retry-After, a 413
         // (Pulse enforces plan limits by truncation) and any other 4xx are logged, not retried.
         // The job holds the encoded segment (up to about 1 MiB, 10 MiB at most). SQS refuses a message over
-        // 256 KB: that dispatch fails and the exporter falls back to waiting and posting once. Use a queue
+        // 256 KB: that dispatch fails and the exporter posts the segment in process instead. Use a queue
         // without that limit (database, redis) to keep large segments from being lost.
         'transport' => [
             'connect_timeout' => env('AGENTICGRAPH_TRACING_CONNECT_TIMEOUT', 1),

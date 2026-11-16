@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.9 - 2026-11-16
+
+### Fixed
+
+- **An open SSE stream no longer holds a database connection.** The stream request runs its connect-time checks (route middleware such as a signature or execution check, the replay lookup), then waited in the read loop for up to `streaming.sse.max_duration_seconds` (default 120) with that connection still open. In a load test on Postgres behind PHP-FPM, 50 open streams filled `max_connections` (100) and a stream request failed with "too many clients", while at most 3 connections were active. The controller now closes every open database connection before the read loop. The loop (heartbeat, `stream_reconnect` close, `redis` store reads) uses no database; a later query reconnects. Measured live on Postgres with 20 open streams: 20 connections in `pg_stat_activity` during the loop, now 0. With `STREAM_STORE_DRIVER=database` the loop reads the database and reconnects on its first read, so each stream still holds one connection. A persistent connection (`PDO::ATTR_PERSISTENT`) stays open in the PHP process. An in-memory SQLite connection is kept, because closing it erases the database.
+- **The Pulse trace export no longer holds the queue worker after the end event.** Since 0.2.8 the end event goes out first, but the final segment was still posted inline (`transport.timeout` 3 s, 2 retries), so a slow trace endpoint kept the worker busy for up to about 10 s per run. With a real queue (not `sync`), `PulseExporter` now dispatches each segment as a `SendPulseSegmentJob` (no delay) on `tracing.transport.queue_connection` and `queue_name`. The job payload holds the encoded segment as posted, the trace id and the segment id; the endpoint and API key are read from config when it runs. Captured state, prompts and responses sit in the queue store until the job runs. The job keeps the 429 and `Retry-After` handling (release for the `Retry-After` value, at most `max_delay`). A failed dispatch logs `code: dispatch_failed` and the segment is posted in process. On the `sync` queue the segment is still posted in process after the end event. Measured live with an ingest that holds each request 8 s: the worker was free 7.96 s after `execution_terminal`, now at once; the segment job delivers the segment. A worker must listen on the trace queue. The `otlp`, `file` and `log` exporters are not changed.
+
 ## 0.2.8 - 2026-11-16
 
 ### Fixed

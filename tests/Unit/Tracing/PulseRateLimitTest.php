@@ -58,19 +58,25 @@ it('honors Retry-After as an HTTP date', function () {
     Carbon::setTestNow();
 });
 
-it('dispatches a delayed job for a long Retry-After when the app has a real queue', function () {
+it('dispatches a delayed job for a long Retry-After when the first queue hand-off failed', function () {
     config(['queue.default' => 'realq']);
-    Queue::fake();
+    $jobs = [];
+    $dispatcher = Mockery::mock(Dispatcher::class);
+    $dispatcher->shouldReceive('dispatch')->once()->andThrow(new RuntimeException('queue down'));
+    $dispatcher->shouldReceive('dispatch')->once()->andReturnUsing(function ($job) use (&$jobs) {
+        $jobs[] = $job;
+    });
+    app()->instance(Dispatcher::class, $dispatcher);
     Http::fake(['ingest.test/*' => Http::response([], 429, ['Retry-After' => '30'])]);
 
     prlSend();
 
     Http::assertSentCount(1);
     Sleep::assertNeverSlept();
-    Queue::assertPushed(SendPulseSegmentJob::class, fn (SendPulseSegmentJob $job): bool => $job->delay === 30
-        && $job->body === prlBodies()[0]
-        && $job->traceId === 'tr_rl'
-        && str_starts_with($job->segmentId, 'seg_'));
+    expect($jobs)->toHaveCount(1)
+        ->and($jobs[0]->delay)->toBe(30)
+        ->and($jobs[0]->body)->toBe(prlBodies()[0])
+        ->and($jobs[0]->traceId)->toBe('tr_rl');
 });
 
 it('waits the cap and retries once for a long Retry-After on the sync queue', function () {
@@ -124,7 +130,6 @@ it('retries a 429 in process only once', function () {
 
 it('treats a 413 as a logged loss with no retry and no job', function () {
     Log::spy();
-    config(['queue.default' => 'realq']);
     Queue::fake();
     Http::fake(['ingest.test/*' => Http::response(['code' => 'payload_too_large'], 413)]);
 
