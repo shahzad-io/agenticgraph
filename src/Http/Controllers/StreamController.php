@@ -6,6 +6,7 @@ namespace Shahzad\AgenticGraph\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Execution\ExecutionStore;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamEvent;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
@@ -112,13 +113,20 @@ final class StreamController
      * The connect-time checks (route middleware, the execution lookup) are done, and the loop can wait for minutes.
      * Close every open connection so an idle stream does not hold a database slot. A later query reconnects (the
      * database stream store does on its first read). An in-memory SQLite connection is kept: closing it erases it.
+     * A connection with an open transaction is kept: closing it rolls the transaction back.
      */
     private function releaseDatabaseConnections(): void
     {
         foreach (DB::getConnections() as $name => $connection) {
-            if ($connection->getConfig('database') !== ':memory:') {
-                DB::disconnect($name);
+            if ($connection->getConfig('database') === ':memory:') {
+                continue;
             }
+            if ($connection->transactionLevel() > 0) {
+                Log::debug('agenticgraph.stream.connection_kept', ['connection' => $name, 'reason' => 'open_transaction']);
+
+                continue;
+            }
+            DB::disconnect($name);
         }
     }
 
