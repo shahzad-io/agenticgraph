@@ -7,6 +7,7 @@ namespace Shahzad\AgenticGraph\Llm;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Container\BindingResolutionException;
 use Illuminate\Contracts\Events\Dispatcher;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Log;
 use Prism\Prism\Contracts\Schema;
 use Prism\Prism\Enums\FinishReason;
@@ -85,6 +86,12 @@ final class LlmExecutor
      * after a tool step with no further model call. Each one has a fixture test (PrismNodeTerminalToolTest).
      */
     private const TERMINAL_TOOL_PROVIDERS = ['openai', 'anthropic', 'deepseek', 'gemini', 'groq', 'mistral', 'ollama', 'openrouter', 'xai', 'z'];
+
+    /**
+     * A provider error about a reasoning or temperature setting (reasoning.effort, reasoning_effort, thinking.type,
+     * thinking.budget_tokens, thinkingConfig, budgets, temperature, a model that does not support thinking).
+     */
+    private const REASONING_SETTING_ERROR = '/reasoning[._ ]?(effort|max_tokens|enabled|exclude)|reasoning_effort|\beffort\b|budget|thinking[._ ]?(type|budget|config|level)|thinkingConfig|thinkingLevel|support(s)? (thinking|reasoning)|temperature/i';
 
     /**
      * The terminal tools of the current request.
@@ -292,6 +299,7 @@ final class LlmExecutor
     public function explain(LlmCall $call): array
     {
         $settings = $this->settings($call);
+        $call = $this->forProvider($call, self::parseModel($settings['model']['value'])[0]);
         $messages = $call->prompt !== null
             ? [...($call->system !== null ? [new SystemMessage($call->system)] : []), new UserMessage($call->prompt, $call->media)]
             : $call->messages;
@@ -326,13 +334,15 @@ final class LlmExecutor
         $this->terminalData = [];
         $startTime = microtime(true);
         $settings = $this->settings($call);
-        $model = implode(':', self::parseModel($settings['model']['value']));
+        [$provider, $modelName] = self::parseModel($settings['model']['value']);
+        $model = "{$provider}:{$modelName}";
+        $call = $this->forProvider($call, $provider);
         if (app()->bound(LlmFake::class)) {
             app(LlmFake::class)->record(['node' => $this->nodeName, 'vars' => [], 'template_vars' => [], 'history' => [], ...$builder, ...$this->explain($call), 'context' => $call->context]);
         }
 
         try {
-            $response = $this->perform($call, $settings, $model, $startTime);
+            $response = $this->perform($call, $settings, $model, $startTime)->withModel($provider, $modelName);
             if ($call->context !== null) {
                 $response = $response->withSources($call->sources());
             }
@@ -344,6 +354,14 @@ final class LlmExecutor
         }
 
         return $this->flagUndisabled($settings, $model, $response);
+    }
+
+    /**
+     * Replayed messages are checked against the provider of this request (Replay::forProvider).
+     */
+    private function forProvider(LlmCall $call, string $provider): LlmCall
+    {
+        return $call->messages === [] ? $call : $call->withMessages(Replay::forProvider($call->messages, $provider));
     }
 
     /**
@@ -383,6 +401,10 @@ final class LlmExecutor
         $reasoning = $settings['reasoning']['value'];
         $code = $e->getCode();
         if ($e::class !== PrismException::class || ($reasoning['level'] === null && $reasoning['budget'] === null) || $code < 400 || $code > 499 || $code === 429) {
+            return null;
+        }
+        // Only an error that names a reasoning or temperature setting; a replayed reasoning item is not the setting.
+        if (preg_match(self::REASONING_SETTING_ERROR, $e->getMessage()) !== 1) {
             return null;
         }
 
@@ -727,12 +749,12 @@ final class LlmExecutor
             $response = $request->asText();
             [$text, $usage, $finishReason, $traceUsage] = [$response->text, $response->usage, $response->finishReason, $this->resolveUsage($response)];
             $raw = $response->steps->isEmpty()
-                ? [['text' => $response->text, 'toolCalls' => $response->toolCalls, 'toolResults' => $response->toolResults, 'usage' => $response->usage, 'finishReason' => $response->finishReason]]
-                : $response->steps->map(fn (Step $step): array => ['text' => $step->text, 'toolCalls' => $step->toolCalls, 'toolResults' => $step->toolResults, 'usage' => $step->usage, 'finishReason' => $step->finishReason])->all();
+                ? [['text' => $response->text, 'toolCalls' => $response->toolCalls, 'toolResults' => $response->toolResults, 'usage' => $response->usage, 'finishReason' => $response->finishReason, 'providerContent' => Arr::only($response->additionalContent, Replay::PROVIDER_KEYS)]]
+                : $response->steps->map(fn (Step $step): array => ['text' => $step->text, 'toolCalls' => $step->toolCalls, 'toolResults' => $step->toolResults, 'usage' => $step->usage, 'finishReason' => $step->finishReason, 'providerContent' => Arr::only($step->additionalContent, Replay::PROVIDER_KEYS)])->all();
         }
 
         // Pairs results with wrapper errors step by step, in call order (toolRunResults consumes them).
-        $steps = array_map(fn (array $step): LlmStep => new LlmStep($step['text'], array_values($step['toolCalls']), $this->toolRunResults(array_values($step['toolResults'])), $step['usage'], $step['finishReason']), array_values($raw));
+        $steps = array_map(fn (array $step): LlmStep => new LlmStep($step['text'], array_values($step['toolCalls']), $this->toolRunResults(array_values($step['toolResults'])), $step['usage'], $step['finishReason'], $step['providerContent']), array_values($raw));
         $toolCalls = array_merge(...array_map(fn (LlmStep $step): array => $step->toolCalls, $steps));
         $this->dispatchToolCalls($toolCalls, $toolType);
         $this->dispatchUsage($startTime, $model, $callType, $traceUsage, $call->promptForTrace(), $text, streamed: $streamed, call: $call, terminalTool: $terminal?->toolName);
@@ -787,7 +809,7 @@ final class LlmExecutor
      * before its step_finish, or dropped when the step called a terminal tool.
      *
      * @param  list<string>  $terminalTools
-     * @return array{text: string, usage: Usage|null, finishReason: FinishReason|null, steps: list<array{text: string, toolCalls: list<ToolCall>, toolResults: list<ToolResult>, usage: Usage|null, finishReason: FinishReason|null}>, terminal: ToolResult|null}
+     * @return array{text: string, usage: Usage|null, finishReason: FinishReason|null, steps: list<array{text: string, toolCalls: list<ToolCall>, toolResults: list<ToolResult>, usage: Usage|null, finishReason: FinishReason|null, providerContent: array<string, mixed>}>, terminal: ToolResult|null}
      */
     private function stream(PendingTextRequest $request, bool $emit = true, array $terminalTools = [], bool $holdStepText = false): array
     {
@@ -808,7 +830,7 @@ final class LlmExecutor
             }
         };
         $result = ['text' => '', 'usage' => null, 'finishReason' => null, 'steps' => [], 'terminal' => null];
-        $blank = ['text' => '', 'toolCalls' => [], 'toolResults' => [], 'usage' => null, 'finishReason' => null];
+        $blank = ['text' => '', 'toolCalls' => [], 'toolResults' => [], 'usage' => null, 'finishReason' => null, 'providerContent' => []];
         $step = $blank;
         $error = null;
         $held = [];
@@ -824,7 +846,7 @@ final class LlmExecutor
                 $error = $event;
             }
             if ($event instanceof StepFinishEvent) {
-                [$step['usage'], $step['finishReason']] = [$event->usage, $event->finishReason];
+                [$step['usage'], $step['finishReason'], $step['providerContent']] = [$event->usage, $event->finishReason, Arr::only($event->additionalContent, Replay::PROVIDER_KEYS)];
             }
             if ($event instanceof StreamEndEvent) {
                 $result['finishReason'] = $event->finishReason;
@@ -1060,7 +1082,7 @@ final class LlmExecutor
         foreach ($toolResults as $toolResult) {
             $key = $this->toolOutcomeKey($toolResult->toolName, $toolResult->args);
             $error = isset($this->toolErrors[$key]) && $this->toolErrors[$key] !== [] ? array_shift($this->toolErrors[$key]) : null;
-            $runResults[] = new ToolRunResult($toolResult->toolCallId, $toolResult->toolName, $toolResult->args, $toolResult->result, $error);
+            $runResults[] = new ToolRunResult($toolResult->toolCallId, $toolResult->toolName, $toolResult->args, $toolResult->result, $error, $toolResult->toolCallResultId);
         }
 
         return $runResults;

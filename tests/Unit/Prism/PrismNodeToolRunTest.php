@@ -120,10 +120,10 @@ function expectFourResults(LlmResponse $run): void
     expect($run->toolCalls)->toHaveCount(4)
         ->and(array_map(fn ($call) => $call->id, $run->toolCalls))->toBe(['fc_1', 'fc_2', 'fc_3', 'fc_4'])
         ->and(array_map(fn ($result) => $result->toArray(), $run->toolResults))->toBe([
-            ['tool_call_id' => 'fc_1', 'tool_name' => 'lookup', 'arguments' => ['q' => 'A1'], 'result' => 'found A1', 'error' => null],
-            ['tool_call_id' => 'fc_2', 'tool_name' => 'explode', 'arguments' => ['q' => 'A2'], 'result' => 'Tool execution error: boom A2. This error occurred during tool execution, not due to invalid parameters.', 'error' => 'Tool execution error: boom A2. This error occurred during tool execution, not due to invalid parameters.'],
-            ['tool_call_id' => 'fc_3', 'tool_name' => 'remote', 'arguments' => ['q' => 'A3'], 'result' => 'ERROR: upstream down', 'error' => 'ERROR: upstream down'],
-            ['tool_call_id' => 'fc_4', 'tool_name' => 'structured', 'arguments' => ['q' => 'A4'], 'result' => 'out A4', 'error' => null],
+            ['tool_call_id' => 'fc_1', 'tool_name' => 'lookup', 'arguments' => ['q' => 'A1'], 'result' => 'found A1', 'error' => null, 'call_id' => 'cfc_1'],
+            ['tool_call_id' => 'fc_2', 'tool_name' => 'explode', 'arguments' => ['q' => 'A2'], 'result' => 'Tool execution error: boom A2. This error occurred during tool execution, not due to invalid parameters.', 'error' => 'Tool execution error: boom A2. This error occurred during tool execution, not due to invalid parameters.', 'call_id' => 'cfc_2'],
+            ['tool_call_id' => 'fc_3', 'tool_name' => 'remote', 'arguments' => ['q' => 'A3'], 'result' => 'ERROR: upstream down', 'error' => 'ERROR: upstream down', 'call_id' => 'cfc_3'],
+            ['tool_call_id' => 'fc_4', 'tool_name' => 'structured', 'arguments' => ['q' => 'A4'], 'result' => 'out A4', 'error' => null, 'call_id' => 'cfc_4'],
         ]);
 }
 

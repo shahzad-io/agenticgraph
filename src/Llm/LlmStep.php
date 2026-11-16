@@ -18,6 +18,7 @@ final class LlmStep implements JsonSerializable
     /**
      * @param  list<ToolCall>  $toolCalls
      * @param  list<ToolRunResult>  $toolResults
+     * @param  array<string, mixed>  $providerContent  what the provider needs to accept this step again as history (Replay::PROVIDER_KEYS)
      */
     public function __construct(
         public readonly string $text = '',
@@ -25,10 +26,11 @@ final class LlmStep implements JsonSerializable
         public readonly array $toolResults = [],
         public readonly ?Usage $usage = null,
         public readonly ?FinishReason $finishReason = null,
+        public readonly array $providerContent = [],
     ) {}
 
     /**
-     * @return array{text: string, tool_calls: list<array<string, mixed>>, tool_results: list<array<string, mixed>>, usage: array{prompt_tokens: int, completion_tokens: int, thought_tokens: int|null, cache_read_tokens: int|null, cache_write_tokens: int|null}|null, finish_reason: string|null}
+     * @return array{text: string, tool_calls: list<array<string, mixed>>, tool_results: list<array<string, mixed>>, usage: array{prompt_tokens: int, completion_tokens: int, thought_tokens: int|null, cache_read_tokens: int|null, cache_write_tokens: int|null}|null, finish_reason: string|null, provider_content: array<string, mixed>}
      */
     public function toArray(): array
     {
@@ -38,6 +40,7 @@ final class LlmStep implements JsonSerializable
             'tool_results' => array_map(fn (ToolRunResult $result): array => $result->toArray(), $this->toolResults),
             'usage' => LlmResponse::usageArray($this->usage),
             'finish_reason' => $this->finishReason?->value,
+            'provider_content' => $this->providerContent,
         ];
     }
 

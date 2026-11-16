@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Prism\Prism\Enums\ToolChoice;
+use Prism\Prism\Exceptions\PrismException;
 use Prism\Prism\Facades\Prism;
 use Prism\Prism\Testing\TextResponseFake;
 use Prism\Prism\Tool;
@@ -231,6 +232,25 @@ describe('after the call', function () {
         }
         Http::assertSent(fn ($request) => ($request->data()['reasoning'] ?? null) === ['effort' => 'high']);
     })->with([[400, true], [429, false], [500, false]]);
+
+    it('leaves a vendor 400 that is not about the reasoning setting as the provider error', function (string $message) {
+        config()->set('prism.providers.openai.api_key', 'test-key');
+        Http::fake(['api.openai.com/*' => Http::response(['error' => ['type' => 'invalid_request_error', 'message' => $message]], 400)]);
+        $node = new ReasoningProbeNode('openai:gpt-5-mini', 'low');
+
+        try {
+            $node->call(fn (LlmRequest $llm) => $llm->prompt('hi')->run());
+            $thrown = null;
+        } catch (Throwable $e) {
+            $thrown = $e;
+        }
+
+        expect($thrown)->toBeInstanceOf(PrismException::class)->not->toBeInstanceOf(ReasoningException::class)
+            ->and($thrown->getMessage())->toContain($message);
+    })->with([
+        'replayed function_call without its reasoning item' => ["Item 'fc_1' of type 'function_call' was provided without its required 'reasoning' item: 'rs_1'."],
+        'unrelated' => ["Invalid type for 'input[0].content': expected one of a string or array of objects."],
+    ]);
 
     it('names the temperature too when a vendor 400 rejects a call with reasoning and temperature', function () {
         config()->set('prism.providers.openai.api_key', 'test-key');
