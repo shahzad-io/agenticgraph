@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.7 - 2026-11-16
+
+### Fixed
+
+- **`toReplay()` of a run that a terminal tool ended now ends with the reply the user got.** With `terminalTools()`, `run()->text` is the terminal tool's text, set outside the steps. The replay ended with the tool message, so a later turn never saw that reply. It now ends with an assistant message that holds the reply, after the tool message. An empty reply adds no message. Tested live on `gpt-5-mini` (OpenAI accepts it, streamed and non-streamed) and with faked HTTP for Anthropic.
+- **`toReplay()` leaves out text held with `holdStepText` that the user never saw.** With `->terminalTools([...], holdStepText: true)`, the text that the model wrote before the terminal call was not streamed and not in `run()->text`, but it stayed in the replay. The terminal step of the replay now has an empty `content`, no OpenAI `message` item and no Anthropic `text` block after its last `thinking` block. The reasoning item and the signed thinking block stay. OpenAI accepts this (live on `gpt-5-mini`, streamed and non-streamed: `reasoning` then `function_call`). Anthropic binds a signed thinking block to what comes before it, not after it, so the block stays valid; a `text` block that another `thinking` block follows is kept, because removing it makes the API reject that block (tested with faked HTTP that applies this rule). `steps[n]->text` and `providerContent` are not changed. Without `holdStepText` the text was shown, and the replay keeps it.
+
+### Added
+
+- `LlmResponse::$heldText`: true when a terminal tool ended the run and `holdStepText` held the text of its last step.
+
 ## 0.2.6 - 2026-11-16
 
 ### Added

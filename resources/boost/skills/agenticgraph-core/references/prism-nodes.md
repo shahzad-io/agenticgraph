@@ -237,6 +237,7 @@ $run->terminalData;  // ['order_id' => 'A1']
 - A terminal tool that fails (throws, returns a `ToolError` or an `ERROR:` string) does not end the run: the model sees the error.
 - The handler can return a plain string. `TerminalResult` only adds the data. From a tool that is not in `terminalTools()` it is a normal result, with a logged warning.
 - Model text before the call in the same step stays in `steps[n]->text` and is not in `text`. In a streamed run it has already been sent as `text_delta`. With `holdStepText: true` the text of each step is held until the step ends, then sent, or dropped when the step called a terminal tool. The cost: text reaches the client one step at a time, not token by token.
+- `toReplay()` of a terminal run ends with an assistant message that holds the reply (`text`), when it is not empty. With `holdStepText: true` it leaves out the held text of the terminal step (the step text, the OpenAI `message` item, an Anthropic `text` block that no `thinking` block follows). The reasoning item and the signed thinking block stay.
 - When `maxSteps` is reached first, the run ends as before and `terminalTool` is null.
 - A non-streamed run with terminal tools uses the provider's stream endpoint internally. Providers: openai, anthropic, deepseek, gemini, groq, mistral, ollama, openrouter, xai, z. Any other throws a `LogicException`.
 - The llm span gets `llm.end_reason` (`terminal_tool`) and `llm.terminal_tool`.

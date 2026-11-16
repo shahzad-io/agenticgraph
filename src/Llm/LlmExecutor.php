@@ -768,6 +768,7 @@ final class LlmExecutor
             steps: $steps,
             terminalTool: $terminal?->toolName,
             terminalData: $terminal !== null ? $this->terminalData[$this->toolOutcomeKey($terminal->toolName, $terminal->args)] ?? [] : [],
+            heldText: $terminal !== null && $call->holdStepText,
         );
     }
 

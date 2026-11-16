@@ -273,3 +273,168 @@ describe('other providers', function () {
         expect($assistant['reasoning_details'] ?? null)->toBe($details);
     });
 });
+
+/** An Anthropic stream of one step: a signed thinking block, an optional text block (and a second thinking block), then a weather tool call. */
+function replayAnthropicToolStream(string $text = '', bool $thinkingAfterText = false): string
+{
+    $blocks = [
+        [['type' => 'thinking', 'thinking' => ''], [['type' => 'thinking_delta', 'thinking' => 'Need the weather tool.'], ['type' => 'signature_delta', 'signature' => 'sig_1']]],
+        ...($text !== '' ? [[['type' => 'text', 'text' => ''], [['type' => 'text_delta', 'text' => $text]]]] : []),
+        ...($thinkingAfterText ? [[['type' => 'thinking', 'thinking' => ''], [['type' => 'thinking_delta', 'thinking' => 'Now call it.'], ['type' => 'signature_delta', 'signature' => 'sig_2']]]] : []),
+        [['type' => 'tool_use', 'id' => 'toolu_1', 'name' => 'weather', 'input' => new stdClass], [['type' => 'input_json_delta', 'partial_json' => '{"city":"Paris"}']]],
+    ];
+    $events = [['type' => 'message_start', 'message' => ['id' => 'msg_a1', 'type' => 'message', 'role' => 'assistant', 'model' => 'claude-sonnet-4-5', 'content' => [], 'usage' => ['input_tokens' => 10, 'output_tokens' => 1]]]];
+    foreach ($blocks as $index => [$start, $deltas]) {
+        $events[] = ['type' => 'content_block_start', 'index' => $index, 'content_block' => $start];
+        foreach ($deltas as $delta) {
+            $events[] = ['type' => 'content_block_delta', 'index' => $index, 'delta' => $delta];
+        }
+        $events[] = ['type' => 'content_block_stop', 'index' => $index];
+    }
+    $events[] = ['type' => 'message_delta', 'delta' => ['stop_reason' => 'tool_use', 'stop_sequence' => null], 'usage' => ['output_tokens' => 5]];
+    $events[] = ['type' => 'message_stop'];
+
+    return implode('', array_map(fn (array $event): string => "event: {$event['type']}\ndata: ".json_encode($event)."\n\n", $events));
+}
+
+function replayAnthropicText(string $text): array
+{
+    return ['id' => 'msg_a2', 'type' => 'message', 'role' => 'assistant', 'model' => 'claude-sonnet-4-5', 'stop_reason' => 'end_turn', 'usage' => REPLAY_USAGE, 'content' => [['type' => 'text', 'text' => $text]]];
+}
+
+/** A reasoning call that also wrote text before the tool call (a message item between the reasoning and the call). */
+function replayOpenAiCallWithText(string $text): array
+{
+    $call = replayOpenAiCall();
+    array_splice($call['output'], 1, 0, [['type' => 'message', 'id' => 'msg_0', 'status' => 'completed', 'role' => 'assistant', 'content' => [['type' => 'output_text', 'text' => $text, 'annotations' => []]]]]);
+
+    return $call;
+}
+
+describe('a run that a terminal tool ended', function () {
+    it('ends the OpenAI replay with the reply the user got, after the tool message', function () {
+        $log = replayFake('api.openai.com/*', [replayOpenAiStream(replayOpenAiCall())], replayOpenAiText('Rainy.'), replayOpenAiRule(...));
+        $node = new ReplayProbeNode('n');
+
+        $r1 = $node->req('openai:gpt-5-mini')->prompt('Weather in Paris?')->tools([replayWeather()])->terminalTools(['weather'])->maxSteps(3)->run();
+        $replay = replayStored($r1);
+        $node->req('openai:gpt-5-mini')->replay($replay)->prompt('And in Rome?')->run();
+
+        expect($r1->text)->toBe('Sunny, 21C in Paris')
+            ->and(array_column($replay['messages'], 'role'))->toBe(['assistant', 'tool', 'assistant'])
+            ->and(end($replay['messages']))->toBe(['role' => 'assistant', 'content' => 'Sunny, 21C in Paris', 'tool_calls' => [], 'provider_content' => []]);
+        $input = $log['requests'][0]['input'];
+        $output = collect($input)->search(fn (array $item): bool => ($item['type'] ?? null) === 'function_call_output');
+        expect($input[$output + 1])->toBe(['role' => 'assistant', 'content' => [['type' => 'output_text', 'text' => 'Sunny, 21C in Paris']]]);
+    });
+
+    it('ends the Anthropic replay with the reply the user got, after the tool result', function () {
+        $log = replayFake('api.anthropic.com/*', [replayAnthropicToolStream()], replayAnthropicText('Rainy.'));
+        $node = new ReplayProbeNode('n');
+
+        $r1 = $node->req('anthropic:claude-sonnet-4-5')->prompt('Weather in Paris?')->tools([replayWeather()])->terminalTools(['weather'])->maxSteps(3)->run();
+        $node->req('anthropic:claude-sonnet-4-5')->replay(replayStored($r1))->prompt('And in Rome?')->run();
+
+        $messages = $log['requests'][0]['messages'];
+        expect(array_column($messages, 'role'))->toBe(['assistant', 'user', 'assistant', 'user'])
+            ->and($messages[0]['content'][0])->toBe(['type' => 'thinking', 'thinking' => 'Need the weather tool.', 'signature' => 'sig_1'])
+            ->and($messages[2]['content'])->toBe([['type' => 'text', 'text' => 'Sunny, 21C in Paris']]);
+    });
+
+    it('adds no message when the reply is empty, and none without a terminal tool', function () {
+        replayFake('api.openai.com/*', [replayOpenAiStream(replayOpenAiCall())], replayOpenAiText());
+        $empty = (new ReplayProbeNode('n'))->req('openai:gpt-5-mini')->prompt('Weather?')
+            ->tools([(new Tool)->as('weather')->for('Weather')->withStringParameter('city', 'City')->using(fn (string $city): string => '')])
+            ->terminalTools(['weather'])->maxSteps(3)->run();
+
+        expect($empty->terminalTool)->toBe('weather')
+            ->and(array_column($empty->toReplay()['messages'], 'role'))->toBe(['assistant', 'tool']);
+    });
+});
+
+/**
+ * Anthropic binds a signed thinking block to the conversation before it: the system prompt, the tools, the earlier
+ * messages and the blocks before it in its own message. A replay that changed any of these is rejected (400).
+ * $before maps each signature to the blocks before it in its message, as the model wrote them.
+ *
+ * @param  array<string, list<array<string, mixed>>>  $before
+ */
+function replayAnthropicBindingRule(array $turn1Messages, array $before): Closure
+{
+    return function (array $data) use ($turn1Messages, $before): ?array {
+        foreach ($data['messages'] as $m => $message) {
+            foreach (is_array($message['content']) ? $message['content'] : [] as $b => $block) {
+                $signature = $block['signature'] ?? null;
+                if (($block['type'] ?? null) === 'thinking' && isset($before[$signature])
+                    && (array_slice($data['messages'], 0, $m) !== $turn1Messages || array_slice($message['content'], 0, $b) !== $before[$signature])) {
+                    return ['type' => 'error', 'error' => ['type' => 'invalid_request_error', 'message' => "messages.{$m}.content.{$b}: Invalid `signature` in `thinking` block. The block is bound to a different conversation."]];
+                }
+            }
+        }
+
+        return null;
+    };
+}
+
+describe('the held text of a terminal step (holdStepText)', function () {
+    it('leaves the OpenAI message item and the step text out of the replay, and keeps the reasoning item', function () {
+        // Live on 2026-11-16 (gpt-5-mini, streamed and non-streamed): OpenAI accepts the replay without the message item.
+        $log = replayFake('api.openai.com/*', [replayOpenAiStream(replayOpenAiCallWithText('One moment.'))], replayOpenAiText('Rainy.'), replayOpenAiRule(...));
+        $node = new ReplayProbeNode('n');
+
+        $r1 = $node->req('openai:gpt-5-mini')->prompt('Weather in Paris?')->tools([replayWeather()])->terminalTools(['weather'], holdStepText: true)->maxSteps(3)->run();
+        $replay = replayStored($r1);
+        $node->req('openai:gpt-5-mini')->replay($replay)->prompt('And in Rome?')->run();
+
+        expect($r1->steps[0]->text)->toBe('One moment.')
+            ->and($replay['messages'][0]['content'])->toBe('')
+            ->and(array_column($replay['messages'][0]['provider_content']['output_items'], 'type'))->toBe(['reasoning', 'function_call'])
+            ->and(array_column($replay['messages'], 'content'))->toBe(['', 'Sunny, 21C in Paris'])
+            ->and(array_column($log['requests'][0]['input'], 'type'))->not->toContain('message');
+    });
+
+    it('keeps the text that was streamed: without holdStepText, and without a terminal tool', function () {
+        replayFake('api.openai.com/*', [replayOpenAiStream(replayOpenAiCallWithText('One moment.'))], replayOpenAiText());
+        $r1 = (new ReplayProbeNode('n'))->req('openai:gpt-5-mini')->prompt('Weather in Paris?')->tools([replayWeather()])->terminalTools(['weather'])->maxSteps(3)->run();
+
+        expect($r1->toReplay()['messages'][0]['content'])->toBe('One moment.')
+            ->and(array_column($r1->toReplay()['messages'][0]['provider_content']['output_items'], 'type'))->toBe(['reasoning', 'message', 'function_call']);
+    });
+
+    it('leaves the Anthropic text block out and keeps the signed thinking block, which stays bound to the same conversation', function () {
+        $log = replayFake('api.anthropic.com/*', [replayAnthropicToolStream('One moment.')], replayAnthropicText('Rainy.'),
+            replayAnthropicBindingRule([['role' => 'user', 'content' => [['type' => 'text', 'text' => 'Weather in Paris?']]]], ['sig_1' => []]));
+        $node = new ReplayProbeNode('n');
+
+        $r1 = $node->req('anthropic:claude-sonnet-4-5')->prompt('Weather in Paris?')->tools([replayWeather()])->terminalTools(['weather'], holdStepText: true)->maxSteps(3)->run();
+        $replay = replayStored($r1);
+        $r2 = $node->req('anthropic:claude-sonnet-4-5')->history([new UserMessage('Weather in Paris?')])->replay($replay)->prompt('And in Rome?')->run();
+
+        $assistant = $log['requests'][0]['messages'][1];
+        expect($r1->steps[0]->text)->toBe('One moment.')
+            ->and($replay['messages'][0]['content'])->toBe('')
+            ->and(array_column($assistant['content'], 'type'))->toBe(['thinking', 'tool_use'])
+            ->and($assistant['content'][0])->toBe(['type' => 'thinking', 'thinking' => 'Need the weather tool.', 'signature' => 'sig_1'])
+            ->and($r2->text)->toBe('Rainy.');
+    });
+
+    it('keeps an Anthropic text block that a later thinking block is bound to; the provider rejects the replay without it', function () {
+        $user = [['role' => 'user', 'content' => [['type' => 'text', 'text' => 'Weather in Paris?']]]];
+        $thinking = ['type' => 'thinking', 'thinking' => 'Need the weather tool.', 'signature' => 'sig_1'];
+        $rule = replayAnthropicBindingRule($user, ['sig_1' => [], 'sig_2' => [$thinking, ['type' => 'text', 'text' => 'One moment.']]]);
+        $log = replayFake('api.anthropic.com/*', [replayAnthropicToolStream('One moment.', thinkingAfterText: true)], replayAnthropicText('Rainy.'), $rule);
+        $node = new ReplayProbeNode('n');
+
+        $r1 = $node->req('anthropic:claude-sonnet-4-5')->prompt('Weather in Paris?')->tools([replayWeather()])->terminalTools(['weather'], holdStepText: true)->maxSteps(3)->run();
+        $replay = replayStored($r1);
+        $node->req('anthropic:claude-sonnet-4-5')->history([new UserMessage('Weather in Paris?')])->replay($replay)->prompt('And in Rome?')->run();
+
+        expect($replay['messages'][0]['content'])->toBe('One moment.')
+            ->and(array_column($log['requests'][0]['messages'][1]['content'], 'type'))->toBe(['thinking', 'text', 'thinking', 'tool_use']);
+
+        $edited = $replay;
+        $edited['messages'][0]['provider_content']['content_blocks'] = array_values(array_filter($replay['messages'][0]['provider_content']['content_blocks'], fn (array $block): bool => $block['type'] !== 'text'));
+        expect(fn () => $node->req('anthropic:claude-sonnet-4-5')->history([new UserMessage('Weather in Paris?')])->replay($edited)->prompt('And in Rome?')->run())
+            ->toThrow(Exception::class, 'bound to a different conversation');
+    });
+});
