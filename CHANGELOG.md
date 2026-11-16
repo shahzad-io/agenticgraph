@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.10 - 2026-11-17
+
+### Fixed
+
+- **The stream route no longer rolls back an open transaction.** Since 0.2.9 the SSE controller closed every database connection before the read loop (except in-memory SQLite). Closing a connection with an open transaction rolls the transaction back, and nothing reports it. An app whose tests run on Postgres inside `RefreshDatabase` found no rows in every read after a stream request (3 tests failed). A request that a middleware wraps in a transaction lost its writes the same way. Core's own suite runs on in-memory SQLite, which the release skips, so it did not see this. The controller now keeps a connection with `transactionLevel() > 0` and logs one debug line, `agenticgraph.stream.connection_kept`, with the connection name. That connection stays open during the read loop. A connection without a transaction is still closed. Tested on a SQLite file: the row written in the transaction was lost before, and is kept now. The 0.2.9 live test (20 open streams on Postgres, 0 connections during the loop) still passes.
+
 ## 0.2.9 - 2026-11-16
 
 ### Fixed

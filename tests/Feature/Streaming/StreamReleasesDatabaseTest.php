@@ -2,6 +2,7 @@
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Http\Controllers\StreamController;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamEvent;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
@@ -55,6 +56,9 @@ beforeEach(function () {
 });
 
 afterEach(function () {
+    while (DB::connection('release_probe')->transactionLevel() > 0) {
+        DB::connection('release_probe')->rollBack();
+    }
     DB::purge('release_probe');
     @unlink($this->probeFile);
 });
@@ -85,4 +89,25 @@ it('keeps an in-memory sqlite connection, which a disconnect would erase', funct
     ob_end_clean();
 
     expect(DB::connection()->getRawPdo())->toBe($pdo);
+});
+
+it('keeps a connection with an open transaction, so its uncommitted writes stay', function () {
+    // An app that wraps the request in a transaction (RefreshDatabase in tests, a transaction middleware).
+    $db = DB::connection('release_probe');
+    $db->statement('create table notes (body text)');
+    $db->beginTransaction();
+    $db->insert("insert into notes (body) values ('kept')");
+    $pdo = $db->getRawPdo();
+    Log::spy();
+
+    $response = (new StreamController)->stream('s-release', Request::create('/streams/s-release'), releaseProbeStore());
+    ob_start();
+    $response->sendContent();
+    ob_end_clean();
+
+    Log::shouldHaveReceived('debug')->once()
+        ->with('agenticgraph.stream.connection_kept', ['connection' => 'release_probe', 'reason' => 'open_transaction']);
+    expect($db->table('notes')->pluck('body')->all())->toBe(['kept'])
+        ->and($db->getRawPdo())->toBe($pdo)
+        ->and($db->transactionLevel())->toBe(1);
 });
