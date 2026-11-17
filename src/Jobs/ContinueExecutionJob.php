@@ -105,7 +105,7 @@ class ContinueExecutionJob implements ShouldQueue
                     delivery: $options->streaming->value,
                 );
                 $session = new StreamSession(
-                    streamId: $this->streamId ?? uniqid('stream_', true),
+                    streamId: $this->streamId ?? StreamSession::newId(),
                     executionId: $this->executionId,
                     options: $streamOptions,
                     startedAtUnix: time(),

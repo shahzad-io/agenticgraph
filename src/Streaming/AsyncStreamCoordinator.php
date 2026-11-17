@@ -35,7 +35,7 @@ final class AsyncStreamCoordinator
         }
 
         $executionId = ExecutionId::generate();
-        $streamId = uniqid('stream_', true);
+        $streamId = StreamSession::newId();
         $rootSpanId = uniqid('span_', true);
 
         $statePayload = State::toStoragePayload($state);

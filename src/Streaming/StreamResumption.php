@@ -98,7 +98,7 @@ final class StreamResumption
             $loopMetadata = LoopMetadata::fromArray($checkpoint->metadata['loop']);
         }
 
-        $streamId = $checkpoint->metadata['stream_id'] ?? uniqid('stream_', true);
+        $streamId = $checkpoint->metadata['stream_id'] ?? StreamSession::newId();
         $lastSeq = $checkpoint->metadata['last_seq'] ?? null;
         if (! is_int($lastSeq)) {
             $lastSeq = 0;

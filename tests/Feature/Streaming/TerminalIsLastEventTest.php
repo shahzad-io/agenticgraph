@@ -112,6 +112,7 @@ class TerminalLastBroadcaster implements Broadcaster
  */
 function terminalLastRun(string $name, GraphBuilder $builder, ?string $failOn = null): array
 {
+    config()->set('agenticgraph.streaming.broadcast.fatal', true); // the fatal transport path; the default is in BroadcastFailurePolicyTest
     $broadcaster = new TerminalLastBroadcaster($failOn);
     app()->instance(Broadcaster::class, $broadcaster);
     AgenticGraph::register($name, $builder->build());

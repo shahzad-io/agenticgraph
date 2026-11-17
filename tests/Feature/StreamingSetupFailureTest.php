@@ -126,6 +126,7 @@ it('closes the stream sink with ERROR when setup fails during graph_start emit',
     config()->set('agenticgraph.streaming.errors.store_fatal', false);
 
     $streamCloseStatuses = [];
+    config()->set('agenticgraph.streaming.broadcast.fatal', true); // the fatal transport path; the default is in BroadcastFailurePolicyTest
     $broadcaster = Mockery::mock(Broadcaster::class);
     $broadcaster->shouldReceive('broadcast')
         ->andReturnUsing(function ($channels, $event, $payload) use (&$streamCloseStatuses): void {
