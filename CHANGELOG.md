@@ -1,14 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.2.11 - 2026-11-17
 
 ### Added
 
 - **`withoutStreaming()` on `LlmRequest`.** A node can keep one model call off the stream: no `text_delta` or other model events for it, and `text()` or `run()` returns the full reply. The run still streams its lifecycle events and the node's `streamEvent()` calls. Works for text, structured and tool requests; `explain()['stream']` is `false`. Before, `LlmCall::$stream` existed but `LlmRequest` never set it, so an answer could not be held back until a check had run. The name follows `withoutCache()`, the other per-call switch for a default the run decides.
 
-### Changed
+### Behavior changes
 
-- **`Llm::fake()` runs tool handlers.** A queued `TextResponseFake` with tool calls, for a request with tools, now runs each handler, sends the results back as the tool result message and takes the next queued response, until a response has no tool calls or `maxSteps` is reached, as a provider loop does. Before, the tool call was returned as the final result and no handler ran. Several calls in one step run in order; a handler that throws gives its error as the tool result. Streamed runs get `tool_call` and `tool_result` per step, and a terminal tool ends the run before the next response. A `TextResponseFake` with its own steps or tool results passes through as before. `Llm::fake($responses, runTools: false)` keeps the old behavior. A test that queued a tool call for a request with tools now runs the handler: at the default one step no next response is taken, but the handler's side effects happen.
+- **`Llm::fake()` runs tool handlers.** A queued `TextResponseFake` with tool calls, for a request with tools, now runs each handler, sends the results back as the tool result message and takes the next queued response, until a response has no tool calls or `maxSteps` is reached, as a provider loop does. Before, the tool call was returned as the final result and no handler ran. Several calls in one step run in order; a handler that throws gives its error as the tool result. Streamed runs get `tool_call` and `tool_result` per step, and a terminal tool ends the run before the next response. A `TextResponseFake` with its own steps or tool results passes through as before. A test that queued a tool call for a request with tools now runs the handler: at the default one step no next response is taken, but the handler's side effects happen.
+  - **The way back:** `Llm::fake($responses, runTools: false)` never runs handlers, as up to 0.2.10.
 
 ## 0.2.10 - 2026-11-17
 
