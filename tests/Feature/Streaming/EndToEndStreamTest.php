@@ -710,6 +710,7 @@ it('includes heartbeat events in stream controller response', function () {
 });
 
 it('handles broadcast channel unavailable', function () {
+    config()->set('agenticgraph.streaming.broadcast.fatal', true); // the fatal transport path; the default is in BroadcastFailurePolicyTest
     $broadcaster = Mockery::mock(Broadcaster::class);
     $broadcaster->shouldReceive('broadcast')->andThrow(new RuntimeException('channel unavailable'));
     $sink = new BroadcastSink($broadcaster, 'stream-1');

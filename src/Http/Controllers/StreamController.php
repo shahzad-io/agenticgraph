@@ -36,7 +36,9 @@ final class StreamController
             if (! app()->runningUnitTests()) {
                 @ini_set('output_buffering', 'off');
                 @ini_set('zlib.output_compression', '0');
-                while (ob_get_level() > 0) {
+                // End only PHP's own buffers (output_buffering, zlib). A handler the server or the app owns stays:
+                // Octane with Swoole writes the response through one, and ending it sent every event to stdout.
+                while (ob_get_level() > 0 && in_array(ob_get_status()['name'] ?? '', ['default output handler', 'zlib output compression'], true)) {
                     ob_end_flush();
                 }
                 ob_implicit_flush(true);

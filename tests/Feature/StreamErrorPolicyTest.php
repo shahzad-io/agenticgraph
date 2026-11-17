@@ -191,6 +191,7 @@ it('marks streaming execution failed when transport delivery fails', function ()
     config()->set('agenticgraph.streaming.store.driver', 'database');
     config()->set('agenticgraph.streaming.errors.store_fatal', false);
 
+    config()->set('agenticgraph.streaming.broadcast.fatal', true); // the fatal transport path; the default is in BroadcastFailurePolicyTest
     $broadcaster = Mockery::mock(Broadcaster::class);
     $broadcaster->shouldReceive('broadcast')
         ->andReturnUsing(function ($channels, $event, $payload): void {

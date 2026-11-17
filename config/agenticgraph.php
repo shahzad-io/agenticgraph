@@ -156,6 +156,13 @@ return [
         'broadcast' => [
             'channel_prefix' => env('AGENTICGRAPH_STREAM_BROADCAST_CHANNEL_PREFIX', 'agenticgraph.stream.'),
             'force_above_seconds' => env('AGENTICGRAPH_STREAM_BROADCAST_FORCE_ABOVE', 300),
+            // A broadcast error does not fail the run: a frame over max_bytes (the Pusher request body; Reverb's
+            // max_request_size is 10,000) is skipped, and after the first failed call the run stops broadcasting.
+            // The store is written either way. fatal=true: every frame is sent and an error fails the run (up to 0.2.11).
+            'fatal' => env('AGENTICGRAPH_STREAM_BROADCAST_FATAL', false),
+            'max_bytes' => env('AGENTICGRAPH_STREAM_BROADCAST_MAX_BYTES', 10000),
+            // HTTP timeout in seconds for a Pusher or Reverb connection, connect included.
+            'timeout' => env('AGENTICGRAPH_STREAM_BROADCAST_TIMEOUT', 2),
         ],
         'store' => [
             'default_ttl_seconds' => env('AGENTICGRAPH_STREAM_DEFAULT_TTL', 3600),

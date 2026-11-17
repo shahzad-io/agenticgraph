@@ -109,7 +109,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
             }
             if (! $session) {
                 $session = new StreamSession(
-                    streamId: uniqid('stream_', true),
+                    streamId: StreamSession::newId(),
                     executionId: $executionId,
                     options: $options,
                     startedAtUnix: time()
@@ -242,7 +242,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
             }
             if (! $session) {
                 $session = new StreamSession(
-                    streamId: uniqid('stream_', true),
+                    streamId: StreamSession::newId(),
                     executionId: $executionId,
                     options: $options,
                     startedAtUnix: time()
