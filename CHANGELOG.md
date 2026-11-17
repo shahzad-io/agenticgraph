@@ -1,13 +1,34 @@
 # Changelog
 
-## Unreleased (0.2.12)
+## 0.2.12 - 2026-11-18
 
 ### Fixed
 
 - **SSE works on Octane with Swoole.** The stream controller ended every output buffer before the read loop, Octane's own buffer too (the handler that writes to the Swoole response). Every event then went to the worker's stdout, and Octane's `ob_end_clean()` threw, so every stream request returned 500. The controller now ends only PHP's own buffers (`default output handler`, from `output_buffering`, and `zlib output compression`) and keeps a handler that the server or the app owns. Tested live on Octane 2.25 with Swoole 6.2 (8 workers): events arrive 2 ms (p50) after the model sends them, a reconnect in the middle replays exactly (5 of 5, seq gap-free), 100 of 100 runs complete. A buffer the app started with a plain `ob_start()` has the same name as PHP's and is still ended. On Octane, set `octane.max_execution_time` at or above `streaming.sse.max_duration_seconds` (120), or Octane kills the worker at 30 s; each open stream holds one worker, as on PHP-FPM.
 - **A broadcast error no longer fails the run.** `AgenticGraph::broadcast()` sent each event with a synchronous Pusher or Reverb call, and any error was a fatal transport error (`errors.transport_fatal`). One tool result over 10 KB failed the run with "Payload too large" (Reverb's `max_request_size` is 10,000 bytes), and with Reverb down the first event stalled 10 s or more and the run failed. Now a frame whose Pusher request body is over `streaming.broadcast.max_bytes` (10000) is skipped and logged (`agenticgraph.broadcast.frame_skipped`). After the first failed call the run stops broadcasting and carries on, with one warning (`agenticgraph.broadcast.stopped`; the URL query, which holds the app key, is left out of the message). A Pusher or Reverb connection used for stream frames has an HTTP timeout of `streaming.broadcast.timeout` (2 s, connect included), unless the app set one in `client_options` or `options`. The store is written as before, every event and the `execution_terminal`. Measured live with Reverb unreachable: the run completed in 2.4 s; before, it threw after 50 s.
-  - **The way back:** `streaming.broadcast.fatal` (`AGENTICGRAPH_STREAM_BROADCAST_FATAL`, default false). `true` sends every frame with the app's own timeouts, and an error fails the run, as up to 0.2.11. An app that publishes the config file adds the three keys to use them.
 - **Stream ids are random and have no dot.** They came from `uniqid('stream_', true)`: time-based, so guessable, and with a dot, which a Laravel channel parameter (`agenticgraph.stream.{streamId}`) never matches. They are now `stream_` and 32 hex digits from `random_bytes(16)`, minted in one place (`StreamSession::newId()`). Nothing in the core or the stream client parses a stream id; it is compared for equality only, so ids already stored keep working.
+
+### Behavior changes
+
+- **A broadcast failure no longer fails the run.** The run completes and the store is written in full; only the broadcast is affected.
+- **Frames over `streaming.broadcast.max_bytes` (10000) are not sent.** The size is the Pusher request body. The event is still in the store.
+- **Broadcasting stops for the run after the first failure.** One failed call, of any kind, ends broadcasting for that run; the next run tries again.
+- **The stream frame timeout is 2 s** (`streaming.broadcast.timeout`, connect included) for a Pusher or Reverb connection, unless the app set its own in `client_options` or `options`. Before, Laravel's defaults applied: 10 s connect, 30 s total.
+- **The stream id format changed** from `stream_6afcbe0aa7a187.72088730` (time-based, with a dot) to `stream_` and 32 hex digits. Code that matched the old format must change; the core and the stream client treat the id as an opaque string.
+- **The way back:** `AGENTICGRAPH_STREAM_BROADCAST_FATAL=true` sends every frame with the app's own timeouts, and an error fails the run, as up to 0.2.11. The stream id format has no way back.
+
+### Upgrade
+
+- An app that published `config/agenticgraph.php` must add `streaming.broadcast.fatal`, `max_bytes` and `timeout` to it, or the environment values (`AGENTICGRAPH_STREAM_BROADCAST_FATAL`, `AGENTICGRAPH_STREAM_BROADCAST_MAX_BYTES`, `AGENTICGRAPH_STREAM_BROADCAST_TIMEOUT`) have no effect; the defaults (false, 10000, 2) apply.
+
+```php
+'broadcast' => [
+    // ...
+    'fatal' => env('AGENTICGRAPH_STREAM_BROADCAST_FATAL', false),
+    'max_bytes' => env('AGENTICGRAPH_STREAM_BROADCAST_MAX_BYTES', 10000),
+    'timeout' => env('AGENTICGRAPH_STREAM_BROADCAST_TIMEOUT', 2),
+],
+```
 
 ### Known limits
 
