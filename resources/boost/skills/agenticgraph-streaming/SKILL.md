@@ -104,7 +104,7 @@ $this->whenStreaming(function () use ($items): void {
 ```
 
 - `streamEvent()` is a no-op without a sink, for example in a `run()` or `dispatch()` graph.
-- `$this->llm()` streams by itself when a sink is bound, and `text()` still returns the full string. There is no special streaming node. Text, chat, structured with a Prism `Schema`, tool runs (every step) and MCP stream. Tools run between steps with no events, so a slow tool is a quiet gap. `run()->text` and the hooks' `finalText` are the final step; `run()->steps` and the hooks' `text` hold the narration; the app decides which to persist. A structured retry after a streamed attempt runs without streaming (its reply is not on the wire).
+- `$this->llm()` streams by itself when a sink is bound, and `text()` still returns the full string. There is no special streaming node. Text, chat, structured with a Prism `Schema`, tool runs (every step) and MCP stream. Tools run between steps with no events, so a slow tool is a quiet gap. `run()->text` and the hooks' `finalText` are the final step; `run()->steps` and the hooks' `text` hold the narration; the app decides which to persist. A structured retry after a streamed attempt runs without streaming (its reply is not on the wire). `->withoutStreaming()` keeps one request off the wire (no model events, full reply returned); lifecycle and `streamEvent()` events still stream. Use it to hold an answer back until a check has run.
 
 ## Events
 

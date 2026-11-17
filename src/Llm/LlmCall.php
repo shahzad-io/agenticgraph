@@ -26,7 +26,7 @@ final readonly class LlmCall
      * @param  array<int, mixed>  $tools
      * @param  list<array{server: string, options: array<string, mixed>}>  $mcp
      * @param  array<string, mixed>  $providerOptions  merged over the node's, call wins per key
-     * @param  bool|null  $stream  false never streams (PrismRouter); null follows the streaming matrix
+     * @param  bool|null  $stream  false never streams (PrismRouter, withoutStreaming()); null follows the streaming matrix
      * @param  string|null  $reasoning  off, low, medium or high; this call's, wins over the node's
      * @param  string|null  $structuredMode  auto, json or structured (OpenAI only); this call's
      * @param  class-string|null  $dto  hydrate the structured reply into this class
