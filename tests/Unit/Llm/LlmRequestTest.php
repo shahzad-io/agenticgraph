@@ -609,6 +609,32 @@ describe('streaming matrix', function () {
             ->toBe([['Checking.', 1, 1, 10, FinishReason::ToolCalls], ['Final.', 0, 0, 20, FinishReason::Stop]]);
     });
 
+    it('does not stream a call marked withoutStreaming(): no text deltas, the full text returned', function () {
+        $sink = llmBindSink();
+        Prism::fake([llmText('Held answer.'), llmText('Streamed.')]);
+        $node = new LlmProbeNode;
+
+        $held = $node->call(fn (LlmRequest $llm) => $llm->prompt('a')->withoutStreaming()->text());
+        $heldEvents = iterator_count($sink->events());
+        $node->call(fn (LlmRequest $llm) => $llm->prompt('b')->text());
+
+        expect($held)->toBe('Held answer.')
+            ->and($heldEvents)->toBe(0)
+            ->and(iterator_count($sink->events()))->toBeGreaterThan(0)
+            ->and($node->call(fn (LlmRequest $llm) => $llm->prompt('c')->withoutStreaming()->explain()['stream']))->toBeFalse();
+    });
+
+    it('does not stream a tool run or a structured call marked withoutStreaming()', function (Closure $build, array $fakes) {
+        $sink = llmBindSink();
+
+        llmRecorded([$build], $fakes);
+
+        expect(iterator_count($sink->events()))->toBe(0);
+    })->with([
+        'tools, two steps' => [fn (LlmRequest $llm) => $llm->prompt('a')->tools([llmTool()])->maxSteps(2)->withoutStreaming()->run(), fn () => [llmTwoSteps()]],
+        'schema' => [fn (LlmRequest $llm) => $llm->prompt('a')->schema(llmSchema())->withoutStreaming()->structured(), fn () => [llmStructured()]],
+    ]);
+
     it('returns the final step text of a streamed tool run, as non-streamed', function () {
         llmBindSink();
         Prism::fake([llmTwoSteps()]);

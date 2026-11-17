@@ -27,6 +27,7 @@ use Shahzad\AgenticGraph\Prompts\PromptTemplate;
  *     $this->llm()->chat($template)->vars($vars)->user($visitorText)->text();
  *     $this->llm()->prompt($ask)->schema($schema)->structured();
  *     $this->llm()->system($rules)->prompt($ask)->tools($tools)->toolChoice('lookup')->maxSteps(5)->run();
+ *     $this->llm()->prompt($ask)->withoutStreaming()->text(); // held back from the stream
  */
 final class LlmRequest
 {
@@ -68,6 +69,8 @@ final class LlmRequest
     private array $providerOptions = [];
 
     private ?bool $cache = null;
+
+    private ?bool $stream = null;
 
     private ?int $cacheTtl = null;
 
@@ -294,6 +297,15 @@ final class LlmRequest
         return $this->with('cache', false);
     }
 
+    /**
+     * This call does not stream, also when a sink is bound: no text_delta (or other model events) for it, and the
+     * full text in the reply. The run keeps streaming its other events. Hold an answer back until a check has run.
+     */
+    public function withoutStreaming(): self
+    {
+        return $this->with('stream', false);
+    }
+
     /** Escape hatch: prefer the node's $model property. */
     public function model(string $model): self
     {
@@ -518,6 +530,7 @@ final class LlmRequest
             structuredRetries: $this->structuredRetries,
             cache: $this->cache,
             cacheTtl: $this->cacheTtl,
+            stream: $this->stream,
             context: $context,
             promptFile: $this->template instanceof PromptFile ? $this->template->meta() : null,
             timeout: $this->timeout,
