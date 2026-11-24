@@ -238,13 +238,17 @@ final class StreamController
 
     /**
      * Stores only drop events from the front (retention, max length, TTL), so a cursor is
-     * gone when the next event it needs is older than the first stored one.
+     * gone when the next event it needs is older than the first stored one. Cursor 0 is no
+     * cursor: it reads from the start, also when a filter left the first stored seq above 1.
      */
     private function cursorIsGone(StreamStoreInterface $store, string $streamId, int $cursor): bool
     {
+        if ($cursor <= 0) {
+            return false;
+        }
         $firstSeq = $store->firstSeq($streamId);
 
-        return $firstSeq === null ? $cursor > 0 : $cursor + 1 < $firstSeq;
+        return $firstSeq === null || $cursor + 1 < $firstSeq;
     }
 
     private function closesResponse(StreamEvent $event): bool

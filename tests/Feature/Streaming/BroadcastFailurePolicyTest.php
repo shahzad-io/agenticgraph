@@ -2,6 +2,7 @@
 
 use Illuminate\Broadcasting\BroadcastException;
 use Illuminate\Contracts\Broadcasting\Broadcaster;
+use Illuminate\Support\Facades\Log;
 use Prism\Prism\Enums\FinishReason;
 use Prism\Prism\Testing\TextResponseFake;
 use Prism\Prism\Tool;
@@ -12,7 +13,10 @@ use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Nodes\PrismNode;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
+use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
+use Shahzad\AgenticGraph\Streaming\Sinks\BroadcastSink;
 use Shahzad\AgenticGraph\Streaming\StreamEventEnvelope;
+use Shahzad\AgenticGraph\Streaming\StreamStatus;
 use Shahzad\AgenticGraph\Testing\Llm;
 
 class BroadcastPolicyToolNode extends PrismNode
@@ -130,4 +134,57 @@ it('fails the run as before with streaming.broadcast.fatal', function () {
 
     expect(fn () => runBroadcastPolicyGraph(reverbLikeBroadcaster(down: true)))
         ->toThrow(BroadcastException::class, 'Failed to connect');
+});
+
+it('skips a frame Pusher or Reverb refuses with a 4xx code, and sends every later frame and the terminal', function () {
+    BroadcastPolicyToolNode::$resultBytes = 100; // under the body limit: only the server refuses it
+    Log::spy();
+    $broadcaster = fakePusherClientBroadcaster(['tool_result' => 413]);
+
+    [$handle, $types] = runBroadcastPolicyGraph($broadcaster);
+    $client = $broadcaster->getPusher();
+
+    expect($handle->status()->value)->toBe('completed')
+        ->and($types)->toContain('tool_result')
+        ->and($client->sent)->not->toContain('tool_result')
+        ->and(array_values(array_diff(array_slice($client->sent, (int) array_search('tool_call', $client->sent, true) + 1), ['batch'])))
+        ->toBe([...array_values(array_diff(array_slice($types, (int) array_search('tool_result', $types, true) + 1), ['text_delta'])), StreamEventEnvelope::TYPE_STREAM_CLOSE])
+        ->and($client->sent)->toContain('batch');
+    Log::shouldHaveReceived('warning')->with('agenticgraph.broadcast.frame_skipped', Mockery::on(fn (array $c) => $c['code'] === 413 && $c['event'] === 'tool_result'));
+});
+
+it('stops the sink on Pusher code 0 or 5xx, and the run completes', function (int $code) {
+    BroadcastPolicyToolNode::$resultBytes = 100;
+    $broadcaster = fakePusherClientBroadcaster(['tool_result' => $code]);
+
+    [$handle, $types, $terminal] = runBroadcastPolicyGraph($broadcaster);
+    $client = $broadcaster->getPusher();
+
+    expect($handle->status()->value)->toBe('completed')
+        ->and($terminal->type())->toBe(StreamEventEnvelope::TYPE_EXECUTION_TERMINAL)
+        ->and($client->sent[count($client->sent) - 1])->toBe('tool_call')
+        ->and($client->calls)->toBe(count($client->sent) + 1); // nothing tried after the failed frame
+})->with([0, 503]);
+
+it('sends the same request body as Laravel broadcast(), for a normal frame and a batch', function () {
+    config()->set('agenticgraph.streaming.broadcast.batch_ms', 60_000);
+    $event = fn (int $seq, string $type) => new StreamEventImpl('stream_batch', 'exec_batch', 'agent', null, null, $type, ['delta' => "d$seq"], $seq, $seq, new DateTimeImmutable('2024-01-01T00:00:00Z'));
+    $events = [$event(1, 'text_delta'), $event(2, 'text_delta'), $event(3, 'thinking_delta'), $event(4, 'node_complete')];
+    $bodies = function (bool $laravel) use ($events): array {
+        config()->set('agenticgraph.streaming.broadcast.fatal', $laravel); // fatal sends through PusherBroadcaster::broadcast()
+        $broadcaster = fakePusherClientBroadcaster();
+        $sink = new BroadcastSink($broadcaster, 'stream_batch');
+        foreach ($events as $event) {
+            $sink->emit($event);
+        }
+        $sink->close(StreamStatus::SUCCESS);
+
+        return $broadcaster->getPusher()->bodies;
+    };
+
+    $viaLaravel = $bodies(true);
+    $direct = $bodies(false);
+
+    expect(array_map(fn ($b) => json_decode($b, true)['name'], $direct))->toBe(['batch', 'node_complete', 'stream_close'])
+        ->and($direct)->toBe($viaLaravel);
 });

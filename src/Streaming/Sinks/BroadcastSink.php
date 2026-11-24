@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph\Streaming\Sinks;
 
+use Illuminate\Broadcasting\Broadcasters\PusherBroadcaster;
 use Illuminate\Contracts\Broadcasting\Broadcaster;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Log;
+use Pusher\ApiErrorException;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamEvent;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
 use Shahzad\AgenticGraph\Streaming\StreamEventEnvelope;
@@ -15,7 +18,8 @@ use Shahzad\AgenticGraph\Streaming\StreamStatus;
  * Broadcasts each event on the stream's channel (`private-` plus the prefix, unless `streaming.broadcast.private` is
  * false). The store is written before this sink (WrappedStreamSink), so a broadcast failure loses nothing a reader
  * of the store needs, and it does not fail the run: a frame over `streaming.broadcast.max_bytes` less the header
- * headroom is skipped, and after the first failed call the sink stops broadcasting for the run.
+ * headroom is skipped. On Pusher or Reverb a frame the server refuses with a 4xx code (413) is skipped too; a network
+ * error (code 0), a 5xx or any other failure stops the sink for the run.
  * `streaming.broadcast.fatal` restores the old behavior: every frame is sent and an error fails the run.
  *
  * Text and thinking deltas are buffered and sent as one `batch` frame (`streaming.broadcast.batch_ms`, 0 = off).
@@ -166,11 +170,36 @@ final class BroadcastSink implements StreamSinkInterface
             return;
         }
         try {
-            $this->broadcaster->broadcast($channels, $event, $payload);
+            $this->trigger($channels, $event, $payload);
         } catch (\Throwable $e) {
-            // ponytail: any failure stops broadcasting for the run, a transient error included; the store has it all.
+            if ($e instanceof ApiErrorException && $e->getCode() >= 400 && $e->getCode() < 500) {
+                // the server refused this frame (413: too large); the next one can pass, the replay heals this one
+                Log::warning('agenticgraph.broadcast.frame_skipped', ['stream_id' => $this->streamId, 'event' => $event, 'code' => $e->getCode()]);
+
+                return;
+            }
+            // ponytail: a network error (code 0), a 5xx or any other failure stops broadcasting for the run, a transient
+            // one included; the store has it all.
             $this->down = true;
             Log::warning('agenticgraph.broadcast.stopped', ['stream_id' => $this->streamId, 'event' => $event, 'error' => $e::class, 'message' => preg_replace('/\?[^\s)]*/', '', $e->getMessage())]); // the URL query holds the app key
         }
+    }
+
+    /**
+     * Pusher or Reverb: the call Laravel's PusherBroadcaster::broadcast() makes, without its wrap in BroadcastException,
+     * so the status code stays. The request body is the same. Any other broadcaster: broadcast() as bound.
+     *
+     * @param  list<string>  $channels
+     * @param  array<string, mixed>  $payload
+     */
+    private function trigger(array $channels, string $event, array $payload): void
+    {
+        if (! $this->broadcaster instanceof PusherBroadcaster) {
+            $this->broadcaster->broadcast($channels, $event, $payload);
+
+            return;
+        }
+        $socket = Arr::pull($payload, 'socket');
+        $this->broadcaster->getPusher()->trigger($channels, $event, $payload, $socket !== null ? ['socket_id' => $socket] : []);
     }
 }

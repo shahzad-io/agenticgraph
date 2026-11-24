@@ -221,7 +221,7 @@ it('SYNC+ITERATOR retains in-process iterator streaming', function () {
         ->and($handle->getFinalState()->get('path'))->toBe('streaming');
 });
 
-it('SYNC+SSE handle stream returns null after inline path removal', function () {
+it('SYNC+SSE handle stream has no inline stream after inline path removal, only the stored stream URL', function () {
     registerSyncIteratorGraph('sync-sse-removed');
 
     $handle = AgenticGraph::execute(
@@ -230,5 +230,6 @@ it('SYNC+SSE handle stream returns null after inline path removal', function () 
         new ExecutionOptions(mode: ExecutionMode::SYNC, streaming: StreamingMode::SSE)
     );
 
-    expect($handle->stream()->hasStream())->toBeFalse();
+    expect($handle->stream()->isInline())->toBeFalse()
+        ->and($handle->stream()->transport())->toBe('sse');
 });

@@ -2,6 +2,7 @@
 
 use Illuminate\Broadcasting\Broadcasters\PusherBroadcaster;
 use Illuminate\Contracts\Broadcasting\Broadcaster;
+use Pusher\ApiErrorException;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
 use Shahzad\AgenticGraph\Streaming\RetentionPolicyFactory;
 use Shahzad\AgenticGraph\Streaming\StreamDescriptor;
@@ -108,4 +109,47 @@ function unpackFrames(array $frames): array
     }
 
     return $events;
+}
+
+/**
+ * A Pusher broadcaster on a fake Pusher client. trigger() records the request body as the Pusher SDK builds it
+ * (make_trigger_body), or throws Pusher\ApiErrorException with the code $codes sets for that event name.
+ *
+ * @param  array<string, int>  $codes  event name => code (0: network error, else the HTTP status)
+ */
+function fakePusherClientBroadcaster(array $codes = []): PusherBroadcaster
+{
+    return new class($codes) extends PusherBroadcaster
+    {
+        public function __construct(array $codes)
+        {
+            $this->pusher = new class($codes)
+            {
+                /** @var list<string> request bodies sent */
+                public array $bodies = [];
+
+                /** @var list<string> event names sent */
+                public array $sent = [];
+
+                public int $calls = 0;
+
+                public function __construct(private readonly array $codes) {}
+
+                public function trigger($channels, string $event, $data, array $params = []): object
+                {
+                    $this->calls++;
+                    if (isset($this->codes[$event])) {
+                        throw new ApiErrorException('refused', $this->codes[$event]);
+                    }
+                    $channels = array_values((array) $channels);
+                    $body = ['name' => $event, 'data' => json_encode($data, JSON_THROW_ON_ERROR)]
+                        + (count($channels) === 1 ? ['channel' => $channels[0]] : ['channels' => $channels]);
+                    $this->bodies[] = json_encode(array_merge($body, $params), JSON_THROW_ON_ERROR);
+                    $this->sent[] = $event;
+
+                    return new stdClass;
+                }
+            };
+        }
+    };
 }

@@ -137,29 +137,21 @@ final class ExecutionHandle
             );
         }
 
-        if ($this->options->mode === ExecutionMode::ASYNC) {
-            $streamId = $this->resolveStreamId();
-            $token = $streamId === null ? null : $this->tokenFor($streamId);
-            $routes = $streamId !== null && config('agenticgraph.streaming.routes.enabled', true) && Route::has(StreamDescriptor::ROUTE_NAME);
-
-            return new StreamDescriptor(
-                streamId: $streamId,
-                // execution_id lets the route send final_state on replay_unavailable.
-                streamUrl: $routes ? route(StreamDescriptor::ROUTE_NAME, ['streamId' => $streamId, 'execution_id' => $this->id(), 'token' => $token]) : null,
-                inline: null,
-                mode: $mode,
-                token: $token,
-                replayUrl: $routes ? route(StreamDescriptor::REPLAY_ROUTE_NAME, ['streamId' => $streamId, 'token' => $token]) : null,
-                authUrl: $routes ? route(StreamDescriptor::AUTH_ROUTE_NAME, ['streamId' => $streamId]) : null,
-                channel: $this->broadcastChannel(),
-            );
-        }
+        // Sync or async: a sync run with SSE or broadcast has a stored stream too, the replay and SSE routes read it.
+        $streamId = $this->resolveStreamId();
+        $token = $streamId === null ? null : $this->tokenFor($streamId);
+        $routes = $streamId !== null && config('agenticgraph.streaming.routes.enabled', true) && Route::has(StreamDescriptor::ROUTE_NAME);
 
         return new StreamDescriptor(
-            streamId: null,
-            streamUrl: null,
+            streamId: $streamId,
+            // execution_id lets the route send final_state on replay_unavailable.
+            streamUrl: $routes ? route(StreamDescriptor::ROUTE_NAME, ['streamId' => $streamId, 'execution_id' => $this->id(), 'token' => $token]) : null,
             inline: null,
             mode: $mode,
+            token: $token,
+            replayUrl: $routes ? route(StreamDescriptor::REPLAY_ROUTE_NAME, ['streamId' => $streamId, 'token' => $token]) : null,
+            authUrl: $routes ? route(StreamDescriptor::AUTH_ROUTE_NAME, ['streamId' => $streamId]) : null,
+            channel: $this->broadcastChannel(),
         );
     }
 

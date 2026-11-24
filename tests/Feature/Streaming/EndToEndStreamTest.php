@@ -984,7 +984,7 @@ it('applies node and event filters for streaming', function () {
         ->and($handle->getFinalState()->get('beta'))->toBeTrue();
 });
 
-it('does not return inline sse stream from sync stream handle', function () {
+it('does not return inline sse stream from sync stream handle, only the stored stream URL', function () {
     $graph = GraphBuilder::create('sse-streaming')
         ->addNode('alpha', StreamableTestNode::class)
         ->setEntryPoint('alpha')
@@ -995,7 +995,8 @@ it('does not return inline sse stream from sync stream handle', function () {
 
     $handle = AgenticGraph::execute('sse-streaming', new State, streamingOptions(StreamingMode::SSE));
 
-    expect($handle->stream()->hasStream())->toBeFalse();
+    expect($handle->stream()->isInline())->toBeFalse()
+        ->and($handle->stream()->transport())->toBe('sse');
 });
 
 it('iterates over stream handle directly', function () {

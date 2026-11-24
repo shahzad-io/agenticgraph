@@ -1,5 +1,6 @@
 <?php
 
+use Illuminate\Contracts\Broadcasting\Broadcaster;
 use Illuminate\Support\Facades\Bus;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Execution\ExecutionMode;
@@ -12,6 +13,7 @@ use Shahzad\AgenticGraph\Graph\GraphRegistry;
 use Shahzad\AgenticGraph\Jobs\ExecuteGraphJob;
 use Shahzad\AgenticGraph\Nodes\AbstractNode;
 use Shahzad\AgenticGraph\State\State;
+use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
 use Shahzad\AgenticGraph\Streaming\StreamDescriptor;
 use Shahzad\AgenticGraph\Streaming\StreamToken;
 
@@ -218,4 +220,27 @@ it('exports the descriptor with toArray: token, replay and auth URLs, transport,
     expect($broadcast['transport'])->toBe('broadcast')
         ->and($broadcast['channel'])->toBe('private-agenticgraph.stream.'.$broadcast['stream_id'])
         ->and($broadcast['token'])->not->toBeNull();
+});
+
+it('exports the full descriptor after a sync run: the stream exists in the store', function () {
+    app()->instance(Broadcaster::class, frameRecorder());
+    registerDescriptorAsyncGraph('descriptor-sync');
+
+    $broadcastHandle = AgenticGraph::broadcast('descriptor-sync', new State, async: false);
+    $broadcast = $broadcastHandle->stream()->toArray();
+    $streamId = (string) $broadcastHandle->streamId();
+
+    expect(app(StreamStoreInterface::class)->firstSeq($streamId))->not->toBeNull()
+        ->and($broadcast['transport'])->toBe('broadcast')
+        ->and($broadcast['stream_id'])->toBe($streamId)
+        ->and($broadcast['channel'])->toBe('private-agenticgraph.stream.'.$streamId)
+        ->and(StreamToken::verify((string) $broadcast['token'], $streamId)->isValid())->toBeTrue()
+        ->and($broadcast['replay_url'])->toBe(route(StreamDescriptor::REPLAY_ROUTE_NAME, ['streamId' => $streamId, 'token' => $broadcast['token']]))
+        ->and($broadcast['auth_url'])->toBe(route(StreamDescriptor::AUTH_ROUTE_NAME, ['streamId' => $streamId]));
+
+    $sse = AgenticGraph::execute('descriptor-sync', new State, new ExecutionOptions(mode: ExecutionMode::SYNC, streaming: StreamingMode::SSE))->stream()->toArray();
+
+    expect($sse['transport'])->toBe('sse')
+        ->and($sse['stream_id'])->not->toBeNull()
+        ->and($sse['stream_url'])->toContain('token=');
 });

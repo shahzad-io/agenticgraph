@@ -1,10 +1,12 @@
 <?php
 
 use Illuminate\Contracts\Broadcasting\Broadcaster;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Facades\AgenticGraph;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
+use Shahzad\AgenticGraph\Http\Controllers\StreamController;
 use Shahzad\AgenticGraph\Nodes\PrismNode;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
@@ -171,4 +173,28 @@ it('applies the route middleware to the replay and auth routes', function () {
 
     expect(Route::getRoutes()->getByName('agenticgraph.streams.events')?->gatherMiddleware())->toBe($middleware)
         ->and(Route::getRoutes()->getByName('agenticgraph.streams.auth')?->gatherMiddleware())->toBe($middleware);
+});
+
+it('reads a filtered stream from the start with after=0 or cursor=0, and a cursor above 0 below the first seq stays gone', function () {
+    app()->instance(Broadcaster::class, replayBroadcaster());
+    replayGraph('hello world');
+    $handle = AgenticGraph::broadcast('replay', new State, events: ['text_delta'], async: false);
+    $streamId = (string) $handle->streamId();
+    $first = app(StreamStoreInterface::class)->firstSeq($streamId);
+    expect($first)->toBeGreaterThan(2); // the filter dropped the first events
+    $sse = function (array $query) use ($streamId): string {
+        config()->set('agenticgraph.streaming.sse.max_duration_seconds', 1);
+        ob_start();
+        (new StreamController)->stream($streamId, Request::create(streamUrlFor($streamId, $query)), app(StreamStoreInterface::class))->sendContent();
+
+        return (string) ob_get_clean();
+    };
+
+    $replay = $this->getJson(replayPath($streamId, ['after' => 0]))->assertOk();
+    expect($replay->json('gone'))->toBeFalse()
+        ->and($replay->json('events.0.body.seq'))->toBe($first)
+        ->and($sse(['cursor' => 0]))->toContain("id: {$first}\n")->not->toContain('stream_replay_unavailable');
+
+    expect($this->getJson(replayPath($streamId, ['after' => 1]))->json('gone'))->toBeTrue()
+        ->and($sse(['cursor' => 1]))->toContain('stream_replay_unavailable');
 });
