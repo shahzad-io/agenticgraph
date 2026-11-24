@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.0 - Unreleased
+## 0.3.0 - 2026-11-25
 
 The broadcast path keeps the SSE contract: the same events, in the same order, with no loss and no duplicates, after a drop, a reconnect and a late join. The channel is private. Use stream client 0.2.0 (`BroadcastTransport`) with it.
 
