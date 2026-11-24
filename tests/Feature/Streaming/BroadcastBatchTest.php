@@ -1,13 +1,21 @@
 <?php
 
+use Illuminate\Contracts\Broadcasting\Broadcaster;
 use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Execution\ExecutionRepository;
 use Shahzad\AgenticGraph\Facades\AgenticGraph;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Nodes\PrismNode;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
 use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
+use Shahzad\AgenticGraph\Streaming\RetentionPolicyFactory;
 use Shahzad\AgenticGraph\Streaming\Sinks\BroadcastSink;
+use Shahzad\AgenticGraph\Streaming\StreamErrorHandler;
+use Shahzad\AgenticGraph\Streaming\StreamObserverFactory;
+use Shahzad\AgenticGraph\Streaming\StreamOptions;
+use Shahzad\AgenticGraph\Streaming\StreamSession;
+use Shahzad\AgenticGraph\Streaming\StreamSinkFactory;
 use Shahzad\AgenticGraph\Streaming\StreamStatus;
 use Shahzad\AgenticGraph\Testing\Llm;
 
@@ -180,4 +188,57 @@ it('leaves room for the request line and headers in a batch: Reverb counts them 
 
     expect($batches)->not->toBeEmpty()
         ->and(max(array_map('pusherBytes', $batches)))->toBeLessThanOrEqual(10000 - 1024);
+});
+
+/** A BroadcastSink behind the wrapper with the given filters, as a run builds it. Returns [wrapped sink, recorder]. */
+function filteredBroadcast(mixed $eventTypeFilter = null, mixed $nodeFilter = null): array
+{
+    app()->instance(ExecutionRepository::class, Mockery::mock(ExecutionRepository::class)->shouldReceive('touch')->andReturn(true)->getMock());
+    $recorder = frameRecorder();
+    $options = new StreamOptions(delivery: 'broadcast', storeEnabled: false, nodeFilter: $nodeFilter, eventTypeFilter: $eventTypeFilter);
+    $factory = new StreamSinkFactory(Mockery::mock(Broadcaster::class), app(StreamStoreInterface::class), false, 100, false, new RetentionPolicyFactory, new StreamObserverFactory, new StreamErrorHandler, null);
+    $wrapped = $factory->wrap(new BroadcastSink($recorder, 'stream_batch'), $options, new StreamSession('stream_batch', 'exec_batch', $options, time()));
+
+    return [$wrapped, $recorder];
+}
+
+/** [event name, inner seqs] per frame sent so far. */
+function sentFrames(object $recorder): array
+{
+    return array_map(fn (array $frame) => [$frame['event'], $frame['event'] === 'batch' ? array_column($frame['payload']['events'], 'seq') : [$frame['payload']['seq'] ?? null]], $recorder->frames);
+}
+
+// The filter drops an event before BroadcastSink sees it. Without a flush the tail of a step waits for the next delta.
+it('flushes the batch when the filter drops a tool_call, and never sends that tool_call', function () {
+    [$sink, $recorder] = filteredBroadcast(['text_delta']);
+    $sink->emit(batchEvent(1, 'text_delta'));
+    $sink->emit(batchEvent(2, 'text_delta'));
+    $sink->emit(batchEvent(3, 'tool_call')); // dropped; then the model pauses, nothing else arrives
+
+    expect(sentFrames($recorder))->toBe([['batch', [1, 2]]]);
+});
+
+it('flushes the batch when the filter drops a step end', function () {
+    [$sink, $recorder] = filteredBroadcast(['text_delta']);
+    $sink->emit(batchEvent(1, 'text_delta'));
+    $sink->emit(batchEvent(2, 'text_delta'));
+    $sink->emit(batchEvent(3, 'step_finish'));
+
+    expect(sentFrames($recorder))->toBe([['batch', [1, 2]]]);
+});
+
+it('does not flush when the filter drops a delta: it is not another event type', function () {
+    [$sink, $recorder] = filteredBroadcast(null, ['other_node']);
+    $sink->emit(batchEvent(1, 'text_delta'));
+
+    expect(sentFrames($recorder))->toBe([]);
+});
+
+it('without a filter sends the tool_call after the flushed batch, as before', function () {
+    [$sink, $recorder] = filteredBroadcast();
+    $sink->emit(batchEvent(1, 'text_delta'));
+    $sink->emit(batchEvent(2, 'text_delta'));
+    $sink->emit(batchEvent(3, 'tool_call'));
+
+    expect(sentFrames($recorder))->toBe([['batch', [1, 2]], ['tool_call', [3]]]);
 });

@@ -10,6 +10,7 @@ use Shahzad\AgenticGraph\Execution\ExecutionRepository;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamEvent;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
+use Shahzad\AgenticGraph\Streaming\Sinks\BroadcastSink;
 use Shahzad\AgenticGraph\Streaming\Store\RetentionPolicy;
 
 final class WrappedStreamSink implements StreamSinkInterface
@@ -35,11 +36,18 @@ final class WrappedStreamSink implements StreamSinkInterface
         private readonly ?StreamSession $session = null,
         // Broadcast only: send the stored execution_terminal to the sink before its close (stream_close).
         private readonly bool $emitTerminal = false,
+        // Broadcast only: told of each event the filter drops, so it can flush its batch (the event is never sent).
+        private readonly ?BroadcastSink $broadcast = null,
     ) {}
 
     public function emit(StreamEvent $event): void
     {
-        if ($this->closed || ! $this->shouldEmit($event)) {
+        if ($this->closed) {
+            return;
+        }
+        if (! $this->shouldEmit($event)) {
+            $this->broadcast?->dropped($event);
+
             return;
         }
         $this->heartbeat($event);

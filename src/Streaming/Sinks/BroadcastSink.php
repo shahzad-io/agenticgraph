@@ -97,6 +97,17 @@ final class BroadcastSink implements StreamSinkInterface
         }
     }
 
+    /**
+     * The wrapper's filter dropped this event, so it is never sent. A dropped event of another type still ends the
+     * batch window, as a sent one would: the tail of a step does not wait for the next delta. A dropped delta does not.
+     */
+    public function dropped(StreamEvent $event): void
+    {
+        if (! in_array($event->type(), self::BATCHED, true)) {
+            $this->flush();
+        }
+    }
+
     /** Flushes the batch, then sends `stream_close`. An interrupt (`cancelled`) does not end the stream: no close frame. */
     public function close(StreamStatus $status, mixed $meta = null): void
     {

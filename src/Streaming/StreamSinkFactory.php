@@ -71,7 +71,7 @@ final class StreamSinkFactory
 
     public function wrap(StreamSinkInterface $sink, StreamOptions $options, StreamSession $session): StreamSinkInterface
     {
-        $emitTerminal = $sink instanceof BroadcastSink;
+        $broadcast = $sink instanceof BroadcastSink ? $sink : null;
         $store = $options->storeEnabled ? $this->store : null;
         $nodeFilter = $options->nodeFilter;
         $eventTypeFilter = $options->eventTypeFilter;
@@ -92,7 +92,8 @@ final class StreamSinkFactory
             $observer,
             $this->errorHandler,
             $session,
-            $emitTerminal,
+            $broadcast !== null,
+            $broadcast,
         );
     }
 }
