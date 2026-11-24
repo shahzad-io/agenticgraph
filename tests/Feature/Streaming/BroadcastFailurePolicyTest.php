@@ -17,12 +17,14 @@ use Shahzad\AgenticGraph\Testing\Llm;
 
 class BroadcastPolicyToolNode extends PrismNode
 {
+    public static int $resultBytes = 12_000;
+
     protected ?string $model = 'openai:test-model';
 
     public function execute(StateContract $state): StateContract
     {
         $tool = (new Tool)->as('lookup')->for('lookup')->withStringParameter('q', 'q')
-            ->using(fn (string $q): string => str_repeat('x', 12_000));
+            ->using(fn (string $q): string => str_repeat('x', self::$resultBytes));
         $text = $this->llm()->prompt('a')->tools([$tool])->maxSteps(2)->run()->text;
 
         return $state->set('answer', $text);
@@ -30,8 +32,8 @@ class BroadcastPolicyToolNode extends PrismNode
 }
 
 /**
- * Reverb as the Pusher broadcaster sees it: a request body over 10,000 bytes is refused, and when the server is down
- * every call fails.
+ * Reverb as the Pusher broadcaster sees it: a request over 10,000 bytes is refused (Reverb counts the request line and
+ * headers too: 361 bytes measured with the Pusher SDK), and when the server is down every call fails.
  */
 function reverbLikeBroadcaster(bool $down): Broadcaster
 {
@@ -55,7 +57,7 @@ function reverbLikeBroadcaster(bool $down): Broadcaster
                 throw new BroadcastException('Pusher error: cURL error 7: Failed to connect to reverb port 8080.');
             }
             $body = json_encode(['name' => $event, 'data' => json_encode($payload), 'channels' => $channels]);
-            if (strlen((string) $body) > 10_000) {
+            if (strlen((string) $body) + 361 > 10_000) {
                 throw new BroadcastException('Pusher error: Payload too large.');
             }
             $this->sent[] = $event;
@@ -84,6 +86,7 @@ function runBroadcastPolicyGraph(Broadcaster $broadcaster): array
 
 beforeEach(function () {
     config()->set('agenticgraph.streaming.store.driver', 'database');
+    BroadcastPolicyToolNode::$resultBytes = 12_000;
 });
 
 it('completes the run when Reverb is down, tries once and writes the store', function () {
@@ -108,6 +111,18 @@ it('completes the run with a tool result over 10 KB: the frame is skipped, the r
         ->and($terminal->payload()['status'])->toBe('completed')
         ->and($broadcaster->sent)->not->toContain('tool_result')
         ->and($broadcaster->sent)->toContain('tool_call', 'batch', StreamEventEnvelope::TYPE_EXECUTION_TERMINAL, StreamEventEnvelope::TYPE_STREAM_CLOSE);
+});
+
+it('skips a single frame with a body under max_bytes but over the header headroom, and sends the rest', function () {
+    BroadcastPolicyToolNode::$resultBytes = 9_200; // a tool_result body of 9,778 bytes: under max_bytes, refused with the headers
+    $broadcaster = reverbLikeBroadcaster(down: false);
+
+    [$handle, $types, $terminal] = runBroadcastPolicyGraph($broadcaster);
+
+    expect($handle->status()->value)->toBe('completed')
+        ->and($types)->toContain('tool_result')
+        ->and($broadcaster->sent)->not->toContain('tool_result')
+        ->and($broadcaster->sent)->toContain('batch', StreamEventEnvelope::TYPE_EXECUTION_TERMINAL, StreamEventEnvelope::TYPE_STREAM_CLOSE);
 });
 
 it('fails the run as before with streaming.broadcast.fatal', function () {

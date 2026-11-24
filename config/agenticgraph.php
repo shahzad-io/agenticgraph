@@ -161,8 +161,9 @@ return [
             // Text and thinking deltas within this window (ms) go as one `batch` frame. 0 = one frame per event.
             'batch_ms' => env('AGENTICGRAPH_STREAM_BROADCAST_BATCH_MS', 50),
             'force_above_seconds' => env('AGENTICGRAPH_STREAM_BROADCAST_FORCE_ABOVE', 300),
-            // A broadcast error does not fail the run: a frame over max_bytes (the Pusher request body; Reverb's
-            // max_request_size is 10,000) is skipped, and after the first failed call the run stops broadcasting.
+            // A broadcast error does not fail the run: a frame over max_bytes less 1024 bytes for the request line
+            // and headers (Reverb's max_request_size, 10,000, counts the whole request) is skipped, and after the
+            // first failed call the run stops broadcasting.
             // The store is written either way. fatal=true: every frame is sent and an error fails the run (up to 0.2.11).
             'fatal' => env('AGENTICGRAPH_STREAM_BROADCAST_FATAL', false),
             'max_bytes' => env('AGENTICGRAPH_STREAM_BROADCAST_MAX_BYTES', 10000),

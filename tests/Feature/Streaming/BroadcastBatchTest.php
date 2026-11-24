@@ -158,7 +158,7 @@ it('flushes before a delta that would make the request body exceed max_bytes', f
 });
 
 it('skips a single delta over max_bytes and sends the rest', function () {
-    config()->set('agenticgraph.streaming.broadcast.max_bytes', 1200);
+    config()->set('agenticgraph.streaming.broadcast.max_bytes', 2500); // a single frame also keeps 1024 bytes for the headers
 
     expect(batchSink([batchEvent(1, 'text_delta'), batchEvent(2, 'text_delta', str_repeat('z', 2000)), batchEvent(3, 'text_delta')]))
         ->toBe([['text_delta', [1]], ['text_delta', [3]], ['stream_close', [null]]]);

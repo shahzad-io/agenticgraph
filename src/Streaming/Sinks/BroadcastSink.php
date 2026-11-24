@@ -14,9 +14,9 @@ use Shahzad\AgenticGraph\Streaming\StreamStatus;
 /**
  * Broadcasts each event on the stream's channel (`private-` plus the prefix, unless `streaming.broadcast.private` is
  * false). The store is written before this sink (WrappedStreamSink), so a broadcast failure loses nothing a reader
- * of the store needs, and it does not fail the run: a frame over `streaming.broadcast.max_bytes` is skipped, and
- * after the first failed call the sink stops broadcasting for the run. `streaming.broadcast.fatal` restores the old
- * behavior: every frame is sent and an error fails the run.
+ * of the store needs, and it does not fail the run: a frame over `streaming.broadcast.max_bytes` less the header
+ * headroom is skipped, and after the first failed call the sink stops broadcasting for the run.
+ * `streaming.broadcast.fatal` restores the old behavior: every frame is sent and an error fails the run.
  *
  * Text and thinking deltas are buffered and sent as one `batch` frame (`streaming.broadcast.batch_ms`, 0 = off).
  * Every send is a direct call, never queued: queued sends lose the order across queue workers.
@@ -26,9 +26,9 @@ final class BroadcastSink implements StreamSinkInterface
     private const BATCHED = ['text_delta', 'thinking_delta'];
 
     /**
-     * Room a batch leaves under max_bytes for the request line and headers: Reverb's max_request_size counts the whole
-     * HTTP request, not the body. ponytail: fixed allowance, 361 bytes measured with the Pusher SDK on Reverb; a
-     * single frame keeps the body-only check of 0.2.12.
+     * Room every frame leaves under max_bytes for the request line and headers: Reverb's max_request_size counts the
+     * whole HTTP request, not the body. ponytail: fixed allowance, 361 bytes measured with the Pusher SDK on Reverb;
+     * measure the real request if a client sends longer headers.
      */
     private const HEADER_BYTES = 1024;
 
@@ -80,8 +80,8 @@ final class BroadcastSink implements StreamSinkInterface
         }
 
         $item = ['type' => $envelope->type] + $envelope->toWireArray();
-        $maxBytes = (int) config('agenticgraph.streaming.broadcast.max_bytes', 10000);
-        if ($this->batch !== [] && $maxBytes > 0 && $this->bytes('batch', $this->batchBody([...$this->batch, $item])) > $maxBytes - self::HEADER_BYTES) {
+        $limit = self::bodyLimit();
+        if ($this->batch !== [] && $limit !== null && $this->bytes('batch', $this->batchBody([...$this->batch, $item])) > $limit) {
             $this->flush();
         }
         if ($this->batch === []) {
@@ -103,7 +103,7 @@ final class BroadcastSink implements StreamSinkInterface
         $this->send(StreamEventEnvelope::TYPE_STREAM_CLOSE, StreamEventEnvelope::streamCloseWirePayload($status, $meta));
     }
 
-    /** One buffered delta goes as a normal frame, two or more as one `batch` frame. A delta over max_bytes is skipped by send(). */
+    /** One buffered delta goes as a normal frame, two or more as one `batch` frame. A frame over the body limit is skipped by send(). */
     private function flush(): void
     {
         $batch = $this->batch;
@@ -124,6 +124,14 @@ final class BroadcastSink implements StreamSinkInterface
     private function batchBody(array $events): array
     {
         return ['stream_id' => $events[0]['stream_id'], 'execution_id' => $events[0]['execution_id'], 'events' => $events];
+    }
+
+    /** The largest request body for any frame: max_bytes minus the header headroom. Null: max_bytes is 0, no limit. */
+    private static function bodyLimit(): ?int
+    {
+        $maxBytes = (int) config('agenticgraph.streaming.broadcast.max_bytes', 10000);
+
+        return $maxBytes > 0 ? $maxBytes - self::HEADER_BYTES : null;
     }
 
     /**
@@ -151,9 +159,9 @@ final class BroadcastSink implements StreamSinkInterface
             return;
         }
         $bytes = $this->bytes($event, $payload);
-        $maxBytes = (int) config('agenticgraph.streaming.broadcast.max_bytes', 10000);
-        if ($maxBytes > 0 && $bytes > $maxBytes) {
-            Log::warning('agenticgraph.broadcast.frame_skipped', ['stream_id' => $this->streamId, 'event' => $event, 'bytes' => $bytes, 'max_bytes' => $maxBytes]);
+        $limit = self::bodyLimit();
+        if ($limit !== null && $bytes > $limit) {
+            Log::warning('agenticgraph.broadcast.frame_skipped', ['stream_id' => $this->streamId, 'event' => $event, 'bytes' => $bytes, 'max_bytes' => (int) config('agenticgraph.streaming.broadcast.max_bytes', 10000)]);
 
             return;
         }
