@@ -1,5 +1,77 @@
 # Changelog
 
+## 0.3.0 - Unreleased
+
+The broadcast path keeps the SSE contract: the same events, in the same order, with no loss and no duplicates, after a drop, a reconnect and a late join. The channel is private. Use stream client 0.2.0 (`BroadcastTransport`) with it.
+
+### Added
+
+- **The terminal is broadcast.** The stored `execution_terminal` (the same body and the same `seq` as in the store) goes on the channel before `stream_close`, on every path that ends a run: the normal end, a failed job, `agenticgraph:interrupt:expire` and `agenticgraph:executions:expire`.
+- **Replay route.** `GET {prefix}/{streamId}/events?after=N&token=T`, named `agenticgraph.streams.events`. JSON `{ events, last_seq, more, gone }`, pages of 200, and `final_state` with `gone` when the execution owns the stream. Same cursor rules as the SSE route, from the same controller code. One read, never a stream, so it holds no worker. A broadcast client heals a drop or a late join with it.
+- **Channel auth route.** `POST {prefix}/{streamId}/auth`, named `agenticgraph.streams.auth`, body `socket_id`, `channel_name`, `token`. It signs the stream's private channel with the Pusher client of the app's broadcaster (Pusher or Reverb). It does not use `Broadcast::auth()`, so a guest with a valid token needs no Laravel user.
+- **Stream token.** `Streaming\StreamToken` (`issue()`, `verify()`): an HMAC-SHA256 token over the stream id, the execution id and an expiry, with a key derived from the app key, never the raw key. `$handle->stream()->streamUrl` carries it, and `$handle->streamToken()` issues a fresh one (for a refresh endpoint). TTL `streaming.token.ttl`, 3600 s.
+- **`AgenticGraph::authorizeStreamsUsing(fn (Request $request, string $streamId, ?string $executionId): bool)`**, an app check on the three stream routes after the token check. Null removes it.
+- **`StreamDescriptor::toArray()`**: `transport` (`sse` or `broadcast`), `stream_id`, `stream_url`, `replay_url`, `auth_url`, `token`, `channel`. Pass `$handle->stream()->toArray()` to the browser; `createStreamTransport()` in the stream client builds the transport from it.
+- **Delta batching on broadcast.** `text_delta` and `thinking_delta` within `streaming.broadcast.batch_ms` (50) go as one `batch` frame; each inner event keeps its own nine-key body and `seq`. Any other event, the size limit and the close flush the batch first. The store still gets one row per delta. `batch_ms = 0` sends one frame per event.
+- Config keys `streaming.token.required`, `streaming.token.ttl`, `streaming.broadcast.private` and `streaming.broadcast.batch_ms`.
+
+### Behavior changes
+
+- **The three stream routes deny without a valid token.** The SSE route, the replay route and the channel auth route return 403 `stream_token_invalid` with no token or a bad one, and 403 `stream_token_expired` with an expired one. An app that passes `$handle->stream()->streamUrl` needs no change. An app that builds the URL with `route('agenticgraph.streams.show', ...)` or signs its own URL must add `token`.
+- **One token source per route.** The SSE and replay routes read `token` from the query only (`EventSource` cannot send headers). The channel auth route reads it from the POST body only. A token in another place counts as no token.
+- **The authorizer gets only the token's execution id**, or null without a valid token. An `execution_id` query value is used only by the ownership check for `final_state`, never passed to the authorizer. The authorizer passes only when it returns exactly `true`; any other value returns 403 `stream_forbidden`.
+- **The broadcast channel is private:** `private-agenticgraph.stream.{streamId}`. `$handle->broadcastChannel()` returns the name in use. `EchoTransport` 0.1 subscribes to the public name and gets nothing.
+- **Deltas arrive in `batch` frames.** `EchoTransport` 0.1 drops them.
+- **The stored terminal is broadcast before `stream_close`.** A handler for `execution_terminal` now runs on broadcast too.
+- **An interrupt sends no `stream_close`.** The interrupted terminal is broadcast, and the resumed segment continues on the same channel.
+- **One size limit for every frame:** `max_bytes` minus 1024 bytes for the request line and headers, for a single frame and a batch. Reverb's `max_request_size` counts the whole request. In 0.2.12 a single frame could use the full `max_bytes`, so a body between the two got a 413 from Reverb and stopped broadcasting for the run.
+- **A 4xx from Pusher or Reverb skips that frame, and the sink continues.** The frame is logged as `agenticgraph.broadcast.frame_skipped` with `code`, and the replay heals it. A network error (code 0), a 5xx or any other error still stops broadcasting for the run (`agenticgraph.broadcast.stopped`).
+- **`after=0` and `cursor=0` read from the start**, also when an event filter left the first stored seq above 1. Before, `cursor=0` on such a stream was answered with `replay_unavailable`.
+- **A sync SSE or broadcast run returns the full descriptor.** `$handle->stream()` after a sync run with SSE or broadcast now has the stream id, the URLs, the token and the channel. Before, a sync run had no stream id and no URL.
+- **The way back**, one key at a time: `AGENTICGRAPH_STREAM_TOKEN_REQUIRED=false` lets any request with the stream id in, as in 0.2 (the authorizer still runs if set). `AGENTICGRAPH_STREAM_BROADCAST_PRIVATE=false` and `AGENTICGRAPH_STREAM_BROADCAST_BATCH_MS=0` keep `EchoTransport` 0.1 working. The first two open the stream to anyone who has its id.
+
+### Fixed
+
+- **The failed and expiry paths use the timeout connection and `max_bytes`.** A failed job, `agenticgraph:interrupt:expire` and `agenticgraph:executions:expire` built their broadcast sink with `app(BroadcastSink::class)`, so they skipped the 2 s `streaming.broadcast.timeout` connection. They now use `StreamSinkFactory::broadcastSink()`, like the normal end, with the same size limit and status policy, and a stop logs `agenticgraph.broadcast.stopped`.
+- **With `streaming.token.required=false` and no app key, no exception.** `StreamToken::issue()` returns null, `$handle->stream()` builds the URLs without `token`, and the three routes work with no token. With `required` true and no app key, `MissingAppKeyException` is thrown as before.
+
+### Upgrade
+
+Do these steps in order. The full guide is [Upgrading to 0.3](https://agenticgraph.dev/docs/stream-upgrading-to-0-3).
+
+1. Pass the stream URL from the handle. `$handle->stream()->streamUrl` now carries a stream token. If you build the URL yourself, add `token=$handle->streamToken()`. Without it the route returns 403. If your middleware signs the URL, ignore `token` in the signature check, or sign after you add it.
+2. Broadcast users: update `@agenticgraph/stream-client` to 0.2.0. Replace `EchoTransport` with `createStreamTransport(descriptor, { echo })`. Send the descriptor to the browser with `$handle->stream()->toArray()`. Add `streamChannelAuthorizer()` to your Echo `channelAuthorization`, and pass your own handler as `fallback` if you have other private channels.
+3. Long sessions: give the transport a `refreshToken` callback that asks your app for `$handle->streamToken()`.
+4. Published config: an app that published `config/agenticgraph.php` must add the `token` block and the `private` and `batch_ms` keys, or the environment values have no effect; the defaults (true, 3600, true, 50) apply.
+
+```php
+'streaming' => [
+    'broadcast' => [
+        // ...
+        'private' => env('AGENTICGRAPH_STREAM_BROADCAST_PRIVATE', true),
+        'batch_ms' => env('AGENTICGRAPH_STREAM_BROADCAST_BATCH_MS', 50),
+    ],
+    // ...
+    'token' => [
+        'required' => env('AGENTICGRAPH_STREAM_TOKEN_REQUIRED', true),
+        'ttl' => env('AGENTICGRAPH_STREAM_TOKEN_TTL', 3600),
+    ],
+],
+```
+
+5. Queue the run. `broadcast()` frees the web worker only when the queue connection is not `sync`.
+6. The way back for 0.3.x: `AGENTICGRAPH_STREAM_TOKEN_REQUIRED=false` restores the 0.2 SSE route. `AGENTICGRAPH_STREAM_BROADCAST_PRIVATE=false` and `AGENTICGRAPH_STREAM_BROADCAST_BATCH_MS=0` keep `EchoTransport` 0.1 working. The first two open the stream to anyone who has its id.
+
+### Measured
+
+- Measured on local Reverb, 500 deltas, interleaved, 10 runs each (medians): Reverb calls 517 to 43 and 512 to 39; time inside Reverb calls 310 to 96 ms and 372 to 23 ms; whole run 1345 to 402 ms (workflow-agents); /ping p95 with 50 broadcast viewers 19 ms on Octane and 34 ms on FPM, against 19 s on SSE. Local Reverb has no network distance, so real per-call cost is higher.
+
+### Known limits
+
+- During a model pause the open batch waits: PHP has no timer in the token loop, so the window closes at the next delta. A tool call, the end of a step, any other event and the close flush it.
+- The token is in the query string on the SSE and replay routes, so it can appear in access logs. It is scoped to one stream and expires.
+- Rotating the app key makes every open token invalid. Clients recover through `refreshToken`.
+
 ## 0.2.12 - 2026-11-18
 
 ### Fixed
