@@ -148,7 +148,7 @@ it('ASYNC+BROADCAST broadcasts and writes to store', function () {
     $streamId = uniqid('stream_', true);
     $broadcaster = Mockery::mock(Broadcaster::class);
     $broadcaster->shouldReceive('broadcast')->atLeast()->once()->with(
-        Mockery::on(fn ($channels): bool => is_array($channels) && $channels[0] === 'agenticgraph.stream.'.$streamId),
+        Mockery::on(fn ($channels): bool => is_array($channels) && $channels[0] === 'private-agenticgraph.stream.'.$streamId),
         Mockery::type('string'),
         Mockery::on(function ($payload): bool {
             return is_array($payload)

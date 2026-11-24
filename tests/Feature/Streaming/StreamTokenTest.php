@@ -1,14 +1,31 @@
 <?php
 
 use Illuminate\Contracts\Broadcasting\Broadcaster;
+use Illuminate\Encryption\MissingAppKeyException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Testing\TestResponse;
+use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Execution\ExecutionMode;
+use Shahzad\AgenticGraph\Execution\ExecutionOptions;
+use Shahzad\AgenticGraph\Execution\StreamingMode;
 use Shahzad\AgenticGraph\Facades\AgenticGraph;
+use Shahzad\AgenticGraph\Graph\GraphBuilder;
+use Shahzad\AgenticGraph\Nodes\AbstractNode;
+use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
 use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
 use Shahzad\AgenticGraph\Streaming\StreamToken;
 
 const TOKEN_STREAM = 'stream_tok_a';
+
+class TokenNoopNode extends AbstractNode
+{
+    public function execute(StateContract $state): StateContract
+    {
+        return $state;
+    }
+}
 
 function tokenSeed(): void
 {
@@ -118,4 +135,67 @@ it('verifies valid, invalid and expired, and carries the execution id', function
     $token = StreamToken::issue(TOKEN_STREAM, null, 10);
     $this->travel(11)->seconds();
     expect(StreamToken::verify($token, TOKEN_STREAM)->state)->toBe('expired');
+});
+
+it('reads the token from one place only: a token in the wrong place is no token', function (string $route) {
+    $prefix = config('agenticgraph.streaming.routes.prefix', 'agentic-graph/streams');
+    $token = StreamToken::issue(TOKEN_STREAM, null, 3600);
+
+    $response = match ($route) {
+        // SSE and replay read the query only, not a body.
+        'sse' => $this->call('GET', "/{$prefix}/".TOKEN_STREAM, [], [], [], ['CONTENT_TYPE' => 'application/json'], (string) json_encode(['token' => $token])),
+        'replay' => $this->json('GET', "/{$prefix}/".TOKEN_STREAM.'/events', ['token' => $token]),
+        // Channel auth reads the POST body only, not the query.
+        'auth' => $this->postJson("/{$prefix}/".TOKEN_STREAM.'/auth?token='.rawurlencode($token), [
+            'socket_id' => '123.456',
+            'channel_name' => 'private-agenticgraph.stream.'.TOKEN_STREAM,
+        ]),
+    };
+
+    $response->assertForbidden()->assertExactJson(['error' => 'stream_token_invalid']);
+})->with('routes');
+
+it('gives the authorizer the token\'s execution id only, never the execution_id query', function (string $route) {
+    config()->set('agenticgraph.streaming.token.required', false);
+    $seen = 'unset';
+    AgenticGraph::authorizeStreamsUsing(function (Request $request, string $streamId, ?string $executionId) use (&$seen): bool {
+        $seen = $executionId;
+
+        return true;
+    });
+    $prefix = config('agenticgraph.streaming.routes.prefix', 'agentic-graph/streams');
+
+    $response = match ($route) {
+        'sse' => $this->get("/{$prefix}/".TOKEN_STREAM.'?execution_id=exec-tok'),
+        'replay' => $this->getJson("/{$prefix}/".TOKEN_STREAM.'/events?execution_id=exec-tok'),
+        'auth' => $this->postJson("/{$prefix}/".TOKEN_STREAM.'/auth?execution_id=exec-tok', ['socket_id' => '123.456', 'channel_name' => 'private-agenticgraph.stream.'.TOKEN_STREAM]),
+    };
+
+    $response->assertOk();
+    expect($seen)->toBeNull();
+})->with('routes');
+
+it('works with no app key when token.required=false, and throws MissingAppKeyException when it is true', function () {
+    AgenticGraph::register('token-no-key', GraphBuilder::create('token-no-key')
+        ->addNode('stream', TokenNoopNode::class)
+        ->setEntryPoint('stream')
+        ->addExitPoint('stream')
+        ->build());
+    Bus::fake();
+    $handle = AgenticGraph::execute('token-no-key', new State, new ExecutionOptions(mode: ExecutionMode::ASYNC, streaming: StreamingMode::SSE));
+    config()->set('app.key', '');
+    config()->set('agenticgraph.streaming.token.required', false);
+
+    $descriptor = $handle->stream();
+    expect($descriptor->token)->toBeNull()
+        ->and($descriptor->streamUrl)->not->toBeNull()->not->toContain('token=')
+        ->and($descriptor->replayUrl)->not->toBeNull()
+        ->and($handle->streamToken())->toBeNull();
+    foreach (['sse', 'replay', 'auth'] as $route) {
+        tokenCall($route, null)->assertOk();
+        tokenCall($route, 'some.token')->assertOk(); // an unverifiable token is no token
+    }
+
+    config()->set('agenticgraph.streaming.token.required', true);
+    expect(fn () => $handle->stream())->toThrow(MissingAppKeyException::class);
 });

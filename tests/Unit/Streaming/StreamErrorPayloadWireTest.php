@@ -71,7 +71,7 @@ test('broadcast stream_error envelope wire body includes error details not empty
 
     $broadcaster = Mockery::mock(Broadcaster::class);
     $broadcaster->shouldReceive('broadcast')->once()->with(
-        ['agenticgraph.stream.stream-error-wire'],
+        ['private-agenticgraph.stream.stream-error-wire'],
         StreamEventEnvelope::TYPE_STREAM_ERROR,
         $wire
     );

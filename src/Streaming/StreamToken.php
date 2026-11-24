@@ -12,17 +12,20 @@ use Illuminate\Encryption\MissingAppKeyException;
  */
 final class StreamToken
 {
-    public static function issue(string $streamId, ?string $executionId, int $ttl): string
+    /** Null only with no app key and `streaming.token.required` false: the routes then need no token. */
+    public static function issue(string $streamId, ?string $executionId, int $ttl): ?string
     {
         $payload = self::encode((string) json_encode(['s' => $streamId, 'e' => $executionId, 'x' => now()->getTimestamp() + $ttl]));
+        $signature = self::sign($payload);
 
-        return $payload.'.'.self::sign($payload);
+        return $signature === null ? null : $payload.'.'.$signature;
     }
 
     public static function verify(string $token, string $streamId): TokenResult
     {
         $parts = explode('.', $token);
-        if (count($parts) !== 2 || ! hash_equals(self::sign($parts[0]), $parts[1])) {
+        $signature = count($parts) === 2 ? self::sign($parts[0]) : null;
+        if ($signature === null || ! hash_equals($signature, $parts[1])) {
             return TokenResult::invalid();
         }
         $data = json_decode((string) base64_decode(strtr($parts[0], '-_', '+/'), true), true);
@@ -36,11 +39,15 @@ final class StreamToken
         return TokenResult::valid(is_string($data['e'] ?? null) ? $data['e'] : null);
     }
 
-    private static function sign(string $payload): string
+    private static function sign(string $payload): ?string
     {
         $appKey = (string) config('app.key');
         if ($appKey === '') {
-            throw new MissingAppKeyException;
+            if ((bool) config('agenticgraph.streaming.token.required', true)) {
+                throw new MissingAppKeyException;
+            }
+
+            return null;
         }
 
         return self::encode(hash_hmac('sha256', $payload, hash_hmac('sha256', 'agenticgraph.stream-token', $appKey), true));

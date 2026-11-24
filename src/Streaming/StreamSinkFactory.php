@@ -32,11 +32,17 @@ final class StreamSinkFactory
     public function create(StreamSession $session, StreamOptions $options): StreamSinkInterface
     {
         return match ($options->delivery) {
-            'broadcast' => new BroadcastSink($this->streamBroadcaster(), $session->streamId),
+            'broadcast' => $this->broadcastSink($session->streamId),
             'iterator' => new MemorySink,
             'sse' => new NullTransportSink,
             default => new MemorySink,
         };
+    }
+
+    /** The broadcast sink of a stream, on the short-timeout connection. Every path that broadcasts uses it. */
+    public function broadcastSink(string $streamId): BroadcastSink
+    {
+        return new BroadcastSink($this->streamBroadcaster(), $streamId);
     }
 
     /**
@@ -65,6 +71,7 @@ final class StreamSinkFactory
 
     public function wrap(StreamSinkInterface $sink, StreamOptions $options, StreamSession $session): StreamSinkInterface
     {
+        $emitTerminal = $sink instanceof BroadcastSink;
         $store = $options->storeEnabled ? $this->store : null;
         $nodeFilter = $options->nodeFilter;
         $eventTypeFilter = $options->eventTypeFilter;
@@ -84,7 +91,8 @@ final class StreamSinkFactory
             $retention,
             $observer,
             $this->errorHandler,
-            $session
+            $session,
+            $emitTerminal,
         );
     }
 }

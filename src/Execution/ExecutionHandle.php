@@ -11,6 +11,7 @@ use Shahzad\AgenticGraph\Exceptions\InterruptPersistenceDisabledException;
 use Shahzad\AgenticGraph\Jobs\ResumeExecutionJob;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
+use Shahzad\AgenticGraph\Streaming\Sinks\BroadcastSink;
 use Shahzad\AgenticGraph\Streaming\StreamDescriptor;
 use Shahzad\AgenticGraph\Streaming\StreamHandle;
 use Shahzad\AgenticGraph\Streaming\StreamOptions;
@@ -139,7 +140,7 @@ final class ExecutionHandle
         if ($this->options->mode === ExecutionMode::ASYNC) {
             $streamId = $this->resolveStreamId();
             $token = $streamId === null ? null : $this->tokenFor($streamId);
-            $routes = $streamId !== null && $token !== null && config('agenticgraph.streaming.routes.enabled', true) && Route::has(StreamDescriptor::ROUTE_NAME);
+            $routes = $streamId !== null && config('agenticgraph.streaming.routes.enabled', true) && Route::has(StreamDescriptor::ROUTE_NAME);
 
             return new StreamDescriptor(
                 streamId: $streamId,
@@ -178,7 +179,7 @@ final class ExecutionHandle
         return $streamId === null ? null : $this->tokenFor($streamId);
     }
 
-    private function tokenFor(string $streamId): string
+    private function tokenFor(string $streamId): ?string
     {
         return StreamToken::issue($streamId, $this->id(), (int) config('agenticgraph.streaming.token.ttl', 3600));
     }
@@ -246,9 +247,7 @@ final class ExecutionHandle
             return null;
         }
 
-        $prefix = (string) config('agenticgraph.streaming.broadcast.channel_prefix', 'agenticgraph.stream.');
-
-        return $prefix.$streamId;
+        return BroadcastSink::channelName($streamId);
     }
 
     public function isInterrupted(): bool

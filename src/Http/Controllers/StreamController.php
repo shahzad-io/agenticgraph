@@ -37,7 +37,7 @@ final class StreamController
 
     public function stream(string $streamId, Request $request, StreamStoreInterface $store, ?ExecutionStore $executionStore = null): StreamedResponse
     {
-        $executionId = $this->authorizeStream($request, $streamId);
+        $executionId = $this->ownerId($request, $this->authorizeStream($request, $streamId, $request->query('token')));
         $executionStore ??= app(ExecutionStore::class);
         $cursor = $request->query('cursor', $request->header('Last-Event-ID'));
         $cursor = is_numeric($cursor) ? (int) $cursor : null;
@@ -124,7 +124,7 @@ final class StreamController
      */
     public function events(string $streamId, Request $request, StreamStoreInterface $store, ExecutionStore $executionStore): JsonResponse
     {
-        $executionId = $this->authorizeStream($request, $streamId);
+        $executionId = $this->ownerId($request, $this->authorizeStream($request, $streamId, $request->query('token')));
         $after = $request->query('after');
         $after = is_numeric($after) ? max(0, (int) $after) : null;
 
@@ -155,7 +155,7 @@ final class StreamController
      */
     public function auth(string $streamId, Request $request, Broadcaster $broadcaster): JsonResponse
     {
-        $this->authorizeStream($request, $streamId);
+        $this->authorizeStream($request, $streamId, $request->post('token'));
         if ($request->input('channel_name') !== BroadcastSink::privateChannelName($streamId)) {
             return response()->json(['error' => 'stream_channel_mismatch'], 403);
         }
@@ -171,19 +171,17 @@ final class StreamController
     }
 
     /**
-     * The stream token first (`streaming.token.required`), then the app authorizer if set; both must pass. Returns the
-     * execution id: the token's, else the `execution_id` query (only an ownership check trusts it).
+     * The stream token first (`streaming.token.required`), then the app authorizer if set; both must pass. The caller
+     * passes the token from the one place its route reads it (SSE and replay: query; channel auth: POST body).
+     * Returns the execution id in a valid token, else null.
      */
-    private function authorizeStream(Request $request, string $streamId): ?string
+    private function authorizeStream(Request $request, string $streamId, mixed $token): ?string
     {
-        $token = $request->input('token');
         $result = is_string($token) && $token !== '' ? StreamToken::verify($token, $streamId) : null;
         if ((bool) config('agenticgraph.streaming.token.required', true) && ! $result?->isValid()) {
             throw new HttpResponseException(response()->json(['error' => $result?->state === 'expired' ? 'stream_token_expired' : 'stream_token_invalid'], 403));
         }
         $executionId = $result?->isValid() ? $result->executionId : null;
-        $query = $request->query('execution_id');
-        $executionId ??= is_string($query) && $query !== '' ? $query : null;
 
         $authorizer = app()->bound(AgenticGraph::STREAM_AUTHORIZER) ? app(AgenticGraph::STREAM_AUTHORIZER) : null;
         if ($authorizer instanceof \Closure && $authorizer($request, $streamId, $executionId) !== true) {
@@ -191,6 +189,14 @@ final class StreamController
         }
 
         return $executionId;
+    }
+
+    /** The execution id for the final_state ownership check: the token's, else the `execution_id` query. */
+    private function ownerId(Request $request, ?string $tokenExecutionId): ?string
+    {
+        $query = $request->query('execution_id');
+
+        return $tokenExecutionId ?? (is_string($query) && $query !== '' ? $query : null);
     }
 
     /**

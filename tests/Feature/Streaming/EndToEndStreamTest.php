@@ -720,8 +720,8 @@ it('handles broadcast channel unavailable', function () {
         nodeName: 'node-a',
         spanId: null,
         parentSpanId: null,
-        type: 'text_delta',
-        payload: ['delta' => 'x'],
+        type: 'node_start', // not a delta: sent at once, not batched
+        payload: ['node_name' => 'node-a'],
         seq: 1,
         nodeSeq: 1,
         occurredAt: new DateTimeImmutable('2024-01-01T00:00:00Z')
@@ -1025,7 +1025,7 @@ it('broadcasts stream events via facade', function () {
             return is_array($channels)
                 && isset($channels[0])
                 && is_string($channels[0])
-                && str_starts_with($channels[0], 'agenticgraph.stream.');
+                && str_starts_with($channels[0], 'private-agenticgraph.stream.');
         }),
         Mockery::type('string'),
         Mockery::on(function ($payload): bool {

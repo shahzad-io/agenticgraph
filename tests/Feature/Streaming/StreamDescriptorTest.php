@@ -216,6 +216,6 @@ it('exports the descriptor with toArray: token, replay and auth URLs, transport,
     $broadcast = AgenticGraph::broadcast('descriptor-to-array', new State)->stream()->toArray();
 
     expect($broadcast['transport'])->toBe('broadcast')
-        ->and($broadcast['channel'])->toBe('agenticgraph.stream.'.$broadcast['stream_id'])
+        ->and($broadcast['channel'])->toBe('private-agenticgraph.stream.'.$broadcast['stream_id'])
         ->and($broadcast['token'])->not->toBeNull();
 });

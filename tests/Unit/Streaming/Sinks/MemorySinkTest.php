@@ -723,7 +723,7 @@ test('wrapped sink applies retention metrics and error handling in order', funct
 test('wrapped sink preserves broadcast sink behavior', function () {
     $broadcaster = Mockery::mock(Broadcaster::class);
     $broadcaster->shouldReceive('broadcast')->once()->with(
-        ['agenticgraph.stream.stream-broadcast'],
+        ['private-agenticgraph.stream.stream-broadcast'],
         'text_delta',
         Mockery::on(function ($payload) {
             return $payload['stream_id'] === 'stream-broadcast'
@@ -733,7 +733,7 @@ test('wrapped sink preserves broadcast sink behavior', function () {
         })
     );
     $broadcaster->shouldReceive('broadcast')->once()->with(
-        ['agenticgraph.stream.stream-broadcast'],
+        ['private-agenticgraph.stream.stream-broadcast'],
         'stream_close',
         StreamEventEnvelope::streamCloseWirePayload(StreamStatus::SUCCESS, null)
     );

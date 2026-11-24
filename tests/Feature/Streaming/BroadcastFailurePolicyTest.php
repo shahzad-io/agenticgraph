@@ -68,7 +68,7 @@ function runBroadcastPolicyGraph(Broadcaster $broadcaster): array
     app()->instance(Broadcaster::class, $broadcaster);
     Llm::fake([
         TextResponseFake::make()->withToolCalls([new ToolCall('c0', 'lookup', ['q' => 'a'])])->withFinishReason(FinishReason::ToolCalls),
-        'done',
+        'done, all done.', // three deltas: one batch frame
     ]);
     AgenticGraph::register('broadcast-policy', GraphBuilder::create('broadcast-policy')
         ->addNode('agent', BroadcastPolicyToolNode::class)
@@ -107,7 +107,7 @@ it('completes the run with a tool result over 10 KB: the frame is skipped, the r
         ->and($types)->toContain('tool_result')
         ->and($terminal->payload()['status'])->toBe('completed')
         ->and($broadcaster->sent)->not->toContain('tool_result')
-        ->and($broadcaster->sent)->toContain('tool_call', 'text_delta', StreamEventEnvelope::TYPE_STREAM_CLOSE);
+        ->and($broadcaster->sent)->toContain('tool_call', 'batch', StreamEventEnvelope::TYPE_EXECUTION_TERMINAL, StreamEventEnvelope::TYPE_STREAM_CLOSE);
 });
 
 it('fails the run as before with streaming.broadcast.fatal', function () {

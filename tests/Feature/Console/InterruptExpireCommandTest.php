@@ -150,8 +150,9 @@ it('expires a pending interrupt past expires_at and ends its execution and strea
         ->and($after[0]->payload()['error_type'])->toBe('ExecutionFailed')
         ->and(app(ExecutionRepository::class)->endedByExpiry($run['execution_id']))->toBeTrue()
         ->and($after[1]->payload()['status'])->toBe('failed')
-        ->and(array_column($broadcasts, 'event'))->toBe(['stream_close'])
-        ->and($broadcasts[0]['payload']['status'])->toBe('error');
+        ->and(array_column($broadcasts, 'event'))->toBe(['execution_terminal', 'stream_close'])
+        ->and($broadcasts[0]['payload']['seq'])->toBe($after[1]->seq())
+        ->and($broadcasts[1]['payload']['status'])->toBe('error');
 
     Event::assertDispatchedTimes(GraphExecutionFailed::class, 1);
     Event::assertDispatched(InterruptExpired::class, fn (InterruptExpired $event) => $event->interruptId === $run['interrupt']->interruptId()

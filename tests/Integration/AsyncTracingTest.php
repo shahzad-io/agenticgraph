@@ -192,7 +192,7 @@ it('ExecuteGraphJob emits to broadcast sink', function () {
         Mockery::on(function ($channels) use ($streamId): bool {
             return is_array($channels)
                 && isset($channels[0])
-                && $channels[0] === 'agenticgraph.stream.'.$streamId;
+                && $channels[0] === 'private-agenticgraph.stream.'.$streamId;
         }),
         Mockery::type('string'),
         Mockery::on(function ($payload): bool {

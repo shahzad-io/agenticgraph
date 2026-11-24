@@ -159,9 +159,10 @@ it('ends the execution and stream once when the resume fails before the run star
         ->and($after)->toBe(['graph_failed', 'execution_terminal'])
         ->and($terminal->payload()['status'])->toBe('failed')
         ->and($terminal->payload()['final_state'])->toBeNull()
-        ->and(array_column($broadcasts, 'event'))->toBe(['stream_close'])
-        ->and($broadcasts[0]['payload']['status'])->toBe('error')
-        ->and($broadcasts[0]['payload']['meta']['final_state'])->toBeNull();
+        ->and(array_column($broadcasts, 'event'))->toBe(['execution_terminal', 'stream_close'])
+        ->and($broadcasts[0]['payload']['seq'])->toBe($terminal->seq())
+        ->and($broadcasts[1]['payload']['status'])->toBe('error')
+        ->and($broadcasts[1]['payload']['meta']['final_state'])->toBeNull();
 
     Event::assertDispatchedTimes(GraphExecutionFailed::class, 1);
 });

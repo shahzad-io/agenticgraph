@@ -155,6 +155,11 @@ return [
         ],
         'broadcast' => [
             'channel_prefix' => env('AGENTICGRAPH_STREAM_BROADCAST_CHANNEL_PREFIX', 'agenticgraph.stream.'),
+            // Frames go to `private-{channel_prefix}{streamId}`; the client authorizes with the stream token on the
+            // core's auth route. private=false sends to the public name, as in 0.2 (anyone with the stream id listens).
+            'private' => env('AGENTICGRAPH_STREAM_BROADCAST_PRIVATE', true),
+            // Text and thinking deltas within this window (ms) go as one `batch` frame. 0 = one frame per event.
+            'batch_ms' => env('AGENTICGRAPH_STREAM_BROADCAST_BATCH_MS', 50),
             'force_above_seconds' => env('AGENTICGRAPH_STREAM_BROADCAST_FORCE_ABOVE', 300),
             // A broadcast error does not fail the run: a frame over max_bytes (the Pusher request body; Reverb's
             // max_request_size is 10,000) is skipped, and after the first failed call the run stops broadcasting.

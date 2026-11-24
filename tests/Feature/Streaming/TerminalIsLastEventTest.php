@@ -143,14 +143,14 @@ function terminalLastSingle(string $name, string $node): GraphBuilder
 }
 
 /**
- * The F12 rule for one run: one terminal, last stored; one stream_close, last broadcast.
+ * The F12 rule for one run: one terminal, last stored; the stored terminal then one stream_close, last broadcast.
  */
 function expectTerminalLast(array $run): void
 {
     expect($run['stored'])->not->toBeEmpty()
         ->and(end($run['stored']))->toBe('execution_terminal')
         ->and(array_count_values($run['stored'])['execution_terminal'])->toBe(1)
-        ->and(end($run['broadcast']))->toBe('stream_close')
+        ->and(array_slice($run['broadcast'], -2))->toBe(['execution_terminal', 'stream_close'])
         ->and(array_count_values($run['broadcast'])['stream_close'])->toBe(1);
 }
 
@@ -173,7 +173,7 @@ it('emits graph_failed before the single terminal on a node error', function () 
     expectTerminalLast($run);
     expect($run['error'])->toBe('node failed')
         ->and(array_slice($run['stored'], -3))->toBe(['node_error', 'graph_failed', 'execution_terminal'])
-        ->and(array_slice($run['broadcast'], -3))->toBe(['node_error', 'graph_failed', 'stream_close']);
+        ->and(array_slice($run['broadcast'], -4))->toBe(['node_error', 'graph_failed', 'execution_terminal', 'stream_close']);
 });
 
 it('ends with the terminal when the graph fails outside a node', function () {
@@ -198,15 +198,17 @@ it('ends with the terminal when setup fails on graph_start delivery', function (
         ->and(end($run['stored']))->toBe('execution_terminal')
         ->and(array_count_values($run['stored'])['execution_terminal'])->toBe(1)
         ->and(array_slice($run['stored'], -2))->toBe(['graph_failed', 'execution_terminal'])
-        ->and(end($run['broadcast']))->toBe('stream_close')
+        ->and(array_slice($run['broadcast'], -2))->toBe(['execution_terminal', 'stream_close'])
         ->and(array_count_values($run['broadcast'])['stream_close'])->toBe(1);
 });
 
-it('ends an interrupted run with the terminal and one stream_close', function () {
+it('ends an interrupted run with the terminal and no stream_close: the resumed run continues the stream', function () {
     $run = terminalLastRun('f12-interrupt', terminalLastSingle('f12-interrupt', TerminalLastInterruptNode::class));
 
-    expectTerminalLast($run);
-    expect(array_slice($run['stored'], -2))->toBe(['node_interrupt', 'execution_terminal']);
+    expect(array_slice($run['stored'], -2))->toBe(['node_interrupt', 'execution_terminal'])
+        ->and(array_count_values($run['stored'])['execution_terminal'])->toBe(1)
+        ->and(end($run['broadcast']))->toBe('execution_terminal')
+        ->and($run['broadcast'])->not->toContain('stream_close');
 });
 
 it('closes once, after graph_failed, when the transport fails mid-node', function () {
@@ -215,5 +217,5 @@ it('closes once, after graph_failed, when the transport fails mid-node', functio
     expectTerminalLast($run);
     expect($run['error'])->toBe('transport failed on text_delta')
         ->and(array_slice($run['stored'], -2))->toBe(['graph_failed', 'execution_terminal'])
-        ->and(array_slice($run['broadcast'], -2))->toBe(['graph_failed', 'stream_close']);
+        ->and(array_slice($run['broadcast'], -3))->toBe(['graph_failed', 'execution_terminal', 'stream_close']);
 });
