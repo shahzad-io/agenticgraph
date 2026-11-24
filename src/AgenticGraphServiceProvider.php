@@ -391,6 +391,10 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
                 ->group(function (): void {
                     Route::get('/{streamId}', [StreamController::class, 'stream'])
                         ->name(StreamDescriptor::ROUTE_NAME);
+                    Route::get('/{streamId}/events', [StreamController::class, 'events'])
+                        ->name(StreamDescriptor::REPLAY_ROUTE_NAME);
+                    Route::post('/{streamId}/auth', [StreamController::class, 'auth'])
+                        ->name(StreamDescriptor::AUTH_ROUTE_NAME);
                 });
         }
     }

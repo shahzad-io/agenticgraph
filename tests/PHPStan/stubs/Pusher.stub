@@ -1,0 +1,9 @@
+<?php
+
+namespace Pusher;
+
+// The Pusher SDK is optional (the app installs it for Pusher or Reverb). The method the channel auth route calls.
+class Pusher
+{
+    public function authorizeChannel(string $channel, string $socket_id, ?string $custom_data = null): string {}
+}

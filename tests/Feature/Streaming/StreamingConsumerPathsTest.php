@@ -109,7 +109,7 @@ function invokeStreamControllerForStreamId(string $streamId, float $maxDurationS
     config()->set('agenticgraph.streaming.sse.heartbeat_interval', 0);
 
     $store = app(StreamStoreInterface::class);
-    $request = Request::create('/streams/'.$streamId, 'GET');
+    $request = Request::create(streamUrlFor($streamId));
     $controller = new StreamController;
     $response = $controller->stream($streamId, $request, $store);
 
@@ -251,7 +251,7 @@ it('locks async sse as a store-served read shape via controller and replayFrom',
     $storedTerminals = executionTerminalEventsFrom($stored);
 
     expect($descriptor->hasUrl())->toBeTrue()
-        ->and($descriptor->streamUrl)->toBe(route(StreamDescriptor::ROUTE_NAME, ['streamId' => $streamId, 'execution_id' => $handle->id()]))
+        ->and($descriptor->streamUrl)->toBe(route(StreamDescriptor::ROUTE_NAME, ['streamId' => $streamId, 'execution_id' => $handle->id(), 'token' => $descriptor->token]))
         ->and($descriptor->isInline())->toBeFalse()
         ->and($storedTerminals)->toHaveCount(1)
         ->and($storedTerminals[0]->payload()['status'])->toBe('completed');

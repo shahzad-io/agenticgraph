@@ -34,7 +34,7 @@ it('keeps a user output handler and writes the events through it', function () {
         public function truncate(string $streamId, int $beforeSeq): void {}
     };
     config()->set('agenticgraph.streaming.sse.heartbeat_interval', 0);
-    $response = (new StreamController)->stream('stream_ob', Request::create('/streams/stream_ob'), $store);
+    $response = (new StreamController)->stream('stream_ob', Request::create(streamUrlFor('stream_ob')), $store);
 
     $base = ob_get_level();
     $written = '';

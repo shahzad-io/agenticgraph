@@ -15,7 +15,7 @@ function sseCustomFrames(string $streamId, array $query = []): string
     config()->set('agenticgraph.streaming.sse.max_duration_seconds', 2);
     config()->set('agenticgraph.streaming.sse.poll_interval_ms', 20);
     config()->set('agenticgraph.streaming.sse.heartbeat_interval', 0);
-    $response = (new StreamController)->stream($streamId, Request::create('/streams/'.$streamId, 'GET', $query), app(StreamStoreInterface::class));
+    $response = (new StreamController)->stream($streamId, Request::create(streamUrlFor($streamId, $query)), app(StreamStoreInterface::class));
     ob_start();
     $response->sendContent();
 

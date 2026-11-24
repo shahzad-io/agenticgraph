@@ -198,6 +198,12 @@ return [
             // number stays with the previous middleware's parameters; use a middleware group for other parameters.
             'middleware' => array_values(array_filter(array_map('trim', preg_split('/,(?!\s*\d+\s*(?:,|$))/', (string) env('AGENTICGRAPH_STREAMING_MIDDLEWARE', 'api')) ?: []), fn (string $middleware) => $middleware !== '')) ?: ['api'],
         ],
+        // The stream token ($handle->streamToken(), in streamUrl) guards the SSE, replay and channel auth routes.
+        // required=false lets any request with the stream id in, as in 0.2. ttl is in seconds.
+        'token' => [
+            'required' => env('AGENTICGRAPH_STREAM_TOKEN_REQUIRED', true),
+            'ttl' => env('AGENTICGRAPH_STREAM_TOKEN_TTL', 3600),
+        ],
         'capture' => [
             'state' => env('AGENTICGRAPH_STREAM_CAPTURE_STATE', 'none'),
             // 'none' = lifecycle payload unchanged (default for stream store)

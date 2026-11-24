@@ -626,7 +626,7 @@ it('replays from Last-Event-ID header', function () {
         ));
     }
 
-    $request = Request::create('/streams/'.$streamId, 'GET');
+    $request = Request::create(streamUrlFor($streamId));
     $request->headers->set('Last-Event-ID', '1');
 
     $controller = new StreamController;
@@ -662,7 +662,7 @@ it('replays from cursor query', function () {
         ));
     }
 
-    $request = Request::create('/streams/'.$streamId, 'GET', ['cursor' => 2]);
+    $request = Request::create(streamUrlFor($streamId, ['cursor' => 2]));
     $controller = new StreamController;
     $response = $controller->stream($streamId, $request, $store);
 
@@ -680,7 +680,7 @@ it('emits stream replay unavailable when cursor missing', function () {
     $store = app(StreamStoreInterface::class);
     $streamId = (string) Str::uuid();
 
-    $request = Request::create('/streams/'.$streamId, 'GET', ['cursor' => 10]);
+    $request = Request::create(streamUrlFor($streamId, ['cursor' => 10]));
     $controller = new StreamController;
     $response = $controller->stream($streamId, $request, $store);
 
@@ -698,7 +698,7 @@ it('includes heartbeat events in stream controller response', function () {
     $store = app(StreamStoreInterface::class);
     $streamId = (string) Str::uuid();
 
-    $request = Request::create('/streams/'.$streamId, 'GET');
+    $request = Request::create(streamUrlFor($streamId));
     $controller = new StreamController;
     $response = $controller->stream($streamId, $request, $store);
 

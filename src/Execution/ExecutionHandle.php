@@ -15,6 +15,7 @@ use Shahzad\AgenticGraph\Streaming\StreamDescriptor;
 use Shahzad\AgenticGraph\Streaming\StreamHandle;
 use Shahzad\AgenticGraph\Streaming\StreamOptions;
 use Shahzad\AgenticGraph\Streaming\StreamResumption;
+use Shahzad\AgenticGraph\Streaming\StreamToken;
 
 final class ExecutionHandle
 {
@@ -137,12 +138,19 @@ final class ExecutionHandle
 
         if ($this->options->mode === ExecutionMode::ASYNC) {
             $streamId = $this->resolveStreamId();
+            $token = $streamId === null ? null : $this->tokenFor($streamId);
+            $routes = $streamId !== null && $token !== null && config('agenticgraph.streaming.routes.enabled', true) && Route::has(StreamDescriptor::ROUTE_NAME);
 
             return new StreamDescriptor(
                 streamId: $streamId,
-                streamUrl: $this->resolveStreamUrl($streamId),
+                // execution_id lets the route send final_state on replay_unavailable.
+                streamUrl: $routes ? route(StreamDescriptor::ROUTE_NAME, ['streamId' => $streamId, 'execution_id' => $this->id(), 'token' => $token]) : null,
                 inline: null,
                 mode: $mode,
+                token: $token,
+                replayUrl: $routes ? route(StreamDescriptor::REPLAY_ROUTE_NAME, ['streamId' => $streamId, 'token' => $token]) : null,
+                authUrl: $routes ? route(StreamDescriptor::AUTH_ROUTE_NAME, ['streamId' => $streamId]) : null,
+                channel: $this->broadcastChannel(),
             );
         }
 
@@ -159,22 +167,20 @@ final class ExecutionHandle
         return $this->streamId();
     }
 
-    private function resolveStreamUrl(?string $streamId): ?string
+    /**
+     * A fresh stream token for this handle's stream, for the SSE, replay and channel auth routes. Call it again to
+     * refresh (on page load, or on resume after an interrupt). Null when the handle has no stream.
+     */
+    public function streamToken(): ?string
     {
-        if ($streamId === null || $streamId === '') {
-            return null;
-        }
+        $streamId = $this->streamId();
 
-        if (! config('agenticgraph.streaming.routes.enabled', true)) {
-            return null;
-        }
+        return $streamId === null ? null : $this->tokenFor($streamId);
+    }
 
-        if (! Route::has(StreamDescriptor::ROUTE_NAME)) {
-            return null;
-        }
-
-        // execution_id lets the route send final_state on replay_unavailable.
-        return route(StreamDescriptor::ROUTE_NAME, ['streamId' => $streamId, 'execution_id' => $this->id()]);
+    private function tokenFor(string $streamId): string
+    {
+        return StreamToken::issue($streamId, $this->id(), (int) config('agenticgraph.streaming.token.ttl', 3600));
     }
 
     public function getFinalState(): StateContract

@@ -69,7 +69,7 @@ it('releases the database connection before the read loop and reconnects for a l
     expect(DB::connection('release_probe')->getRawPdo())->not->toBeNull();
 
     $store = releaseProbeStore();
-    $response = (new StreamController)->stream('s-release', Request::create('/streams/s-release'), $store);
+    $response = (new StreamController)->stream('s-release', Request::create(streamUrlFor('s-release')), $store);
     ob_start();
     $response->sendContent();
     $content = (string) ob_get_clean();
@@ -83,7 +83,7 @@ it('keeps an in-memory sqlite connection, which a disconnect would erase', funct
     DB::connection()->select('select 1');
     $pdo = DB::connection()->getRawPdo();
 
-    $response = (new StreamController)->stream('s-release', Request::create('/streams/s-release'), releaseProbeStore());
+    $response = (new StreamController)->stream('s-release', Request::create(streamUrlFor('s-release')), releaseProbeStore());
     ob_start();
     $response->sendContent();
     ob_end_clean();
@@ -100,7 +100,7 @@ it('keeps a connection with an open transaction, so its uncommitted writes stay'
     $pdo = $db->getRawPdo();
     Log::spy();
 
-    $response = (new StreamController)->stream('s-release', Request::create('/streams/s-release'), releaseProbeStore());
+    $response = (new StreamController)->stream('s-release', Request::create(streamUrlFor('s-release')), releaseProbeStore());
     ob_start();
     $response->sendContent();
     ob_end_clean();

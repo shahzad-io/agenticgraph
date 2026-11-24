@@ -32,7 +32,7 @@ function sseControlRun(string $streamId, ?int $cursor, float $maxDuration, ?Stre
     config()->set('agenticgraph.streaming.sse.heartbeat_interval', $heartbeat);
 
     $query = $cursor === null ? [] : ['cursor' => $cursor];
-    $response = (new StreamController)->stream($streamId, Request::create('/streams/'.$streamId, 'GET', $query), $store ?? app(StreamStoreInterface::class));
+    $response = (new StreamController)->stream($streamId, Request::create(streamUrlFor($streamId, $query)), $store ?? app(StreamStoreInterface::class));
 
     $start = microtime(true);
     ob_start();

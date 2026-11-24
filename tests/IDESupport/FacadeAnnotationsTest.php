@@ -56,7 +56,7 @@ class FacadeAnnotationsTest extends TestCase
 
             // Extract @method annotation for this method (handle complex return types)
             preg_match(
-                '/@method\s+static\s+(.+?)\s+'.preg_quote($methodName, '/').'\s*\((.*?)\)/',
+                '/@method\s+static\s+(.+?)\s+'.preg_quote($methodName, '/').'\s*\(([^\n]*)\)/', // to the last ")" on the line: a typed closure has its own
                 $facadeDoc,
                 $matches
             );

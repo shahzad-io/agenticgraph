@@ -34,6 +34,15 @@ final class BroadcastSink implements StreamSinkInterface
         );
     }
 
+    /**
+     * The private channel name of a stream: `private-` plus the current name. The channel auth route checks against
+     * it. The sink and `broadcastChannel()` switch to it in the next step (`streaming.broadcast.private`).
+     */
+    public static function privateChannelName(string $streamId): string
+    {
+        return 'private-'.config('agenticgraph.streaming.broadcast.channel_prefix', 'agenticgraph.stream.').$streamId;
+    }
+
     public function emit(StreamEvent $event): void
     {
         $envelope = StreamEventEnvelope::fromStreamEvent($event);
