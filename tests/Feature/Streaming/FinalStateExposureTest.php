@@ -131,7 +131,7 @@ function finalStateReplayUnavailablePayload(ExecutionHandle $handle, ?string $st
     $store = app(StreamStoreInterface::class);
     // Retention trimmed every event, so cursor 10 is gone.
     $store->truncate($streamId, (int) $store->lastSeq($streamId) + 1);
-    $request = Request::create('/streams/'.$streamId, 'GET', ['cursor' => 10, 'execution_id' => $handle->id()]);
+    $request = Request::create(streamUrlFor($streamId, ['cursor' => 10, 'execution_id' => $handle->id()]));
     $response = (new StreamController)->stream($streamId, $request, $store);
 
     ob_start();

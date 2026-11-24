@@ -86,7 +86,7 @@ test('contract freeze guard: broadcast delivery uses event name as type and body
 
     $broadcaster = Mockery::mock(Broadcaster::class);
     $broadcaster->shouldReceive('broadcast')->once()->with(
-        ['agenticgraph.stream.stream-broadcast-freeze'],
+        ['private-agenticgraph.stream.stream-broadcast-freeze'],
         'node_complete',
         Mockery::on(function (array $payload) use ($wire): bool {
             expect(array_keys($payload))->toBe(StreamEventEnvelope::FROZEN_WIRE_BODY_KEYS)

@@ -60,7 +60,7 @@ function runStreamControllerSse(string $streamId, float $maxDurationSeconds = 30
     config()->set('agenticgraph.streaming.sse.heartbeat_interval', 0);
 
     $store = app(StreamStoreInterface::class);
-    $request = Request::create('/streams/'.$streamId, 'GET');
+    $request = Request::create(streamUrlFor($streamId));
     $controller = new StreamController;
     $response = $controller->stream($streamId, $request, $store);
 

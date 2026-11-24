@@ -263,7 +263,7 @@ it('returns broadcastChannel from config prefix and streamId only for broadcast 
 
     $streamId = $broadcastHandle->streamId();
     expect($streamId)->not->toBeNull()
-        ->and($broadcastHandle->broadcastChannel())->toBe('custom.stream.'.$streamId);
+        ->and($broadcastHandle->broadcastChannel())->toBe('private-custom.stream.'.$streamId);
 
     $noneHandle = AgenticGraph::execute(
         $graphName,
@@ -299,14 +299,14 @@ it('uses the same broadcast channel prefix in BroadcastSink as broadcastChannel(
         nodeName: null,
         spanId: null,
         parentSpanId: null,
-        type: 'text_delta',
-        payload: ['delta' => 'x'],
+        type: 'node_start', // not a delta: sent at once, not batched
+        payload: ['node_name' => 'x'],
         seq: 1,
         nodeSeq: null,
         occurredAt: new DateTimeImmutable
     ));
 
-    expect($capturedChannel)->toBe('unified.prefix.stream-unified');
+    expect($capturedChannel)->toBe('private-unified.prefix.stream-unified');
 });
 
 it('exposes status predicates that match execution status honestly', function () {

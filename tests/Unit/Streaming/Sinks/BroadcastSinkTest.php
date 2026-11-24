@@ -23,12 +23,12 @@ test('broadcast sink broadcasts unified envelope wire array', function () {
 
     $broadcaster = Mockery::mock(Broadcaster::class);
     $broadcaster->shouldReceive('broadcast')->once()->with(
-        ['agenticgraph.stream.stream-1'],
+        ['private-agenticgraph.stream.stream-1'],
         'text_delta',
         $wire
     );
     $broadcaster->shouldReceive('broadcast')->once()->with(
-        ['agenticgraph.stream.stream-1'],
+        ['private-agenticgraph.stream.stream-1'],
         StreamEventEnvelope::TYPE_STREAM_CLOSE,
         StreamEventEnvelope::streamCloseWirePayload(StreamStatus::SUCCESS, ['finish' => 'ok'])
     );

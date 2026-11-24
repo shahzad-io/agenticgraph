@@ -1,6 +1,6 @@
 ---
 name: agenticgraph-streaming
-description: "Stream AgenticGraph output: the stream and broadcast presets, ExecutionMode and StreamingMode, SSE and broadcast transports, stream events, the signed and resumable SSE route, and the frontend: @agenticgraph/stream-client, stream-react and stream-vue, library reconnect, resolveUrl and null, stop reasons, and the script-tag build."
+description: "Stream AgenticGraph output: the stream and broadcast presets, ExecutionMode and StreamingMode, SSE and broadcast transports, stream events, the stream token and the token-guarded SSE, replay and channel auth routes, the private broadcast channel, and the frontend: @agenticgraph/stream-client, stream-react and stream-vue, createStreamTransport, BroadcastTransport, library reconnect, resolveUrl and null, refreshToken, stop reasons, and the script-tag build."
 ---
 
 # AgenticGraph Streaming
@@ -14,11 +14,11 @@ Other skills, use them when installed: `agenticgraph-core` for graphs, nodes, in
 ## Rules
 
 1. Streaming does not change the graph. It adds a sink to the same loop. A graph started with `run()` or `dispatch()` emits nothing.
-2. Use SSE when the client must not lose events. It is gap-free from a cursor. Broadcast has no replay.
+2. Both deliveries are gap-free (core 0.3.0, stream client 0.2.0). SSE reads the store from a cursor. Broadcast (`BroadcastTransport`) heals a drop or a late join from the replay route. SSE holds one web worker per open stream; broadcast needs Reverb or Pusher and a real queue.
 3. The client library reconnects SSE by itself. Do not write a retry loop around it. Reconnect by hand only after the library reports `failed`.
 4. `resolveUrl` returns a fresh URL, or `null` to end the stream. Return `null` on purpose; throw on a network error.
-5. A signed stream URL must validate while ignoring `cursor`, because the client appends it on every reconnect.
-6. The stream is progress, not the record. The final state arrives on `execution_terminal` over SSE. After a reconnect or a reload, the HTTP status route (`getExecution`) is the authority.
+5. Every stream route needs a valid stream token (`token`). Pass `$handle->stream()->streamUrl` or `$handle->stream()->toArray()` to the browser; both carry it. A signed stream URL must validate while ignoring `cursor` and `token`, because the client sets them.
+6. The stream is progress, not the record. The final state arrives on `execution_terminal`, over SSE and broadcast. After a reconnect or a reload, the HTTP status route (`getExecution`) is the authority.
 7. In a Laravel app with Vite (the default), import the package from `resources/js/app.js` and load it with `@vite()`. Use the script-tag build only when there is no bundler. Never copy `dist/index.global.js` into `public/`.
 
 ## Task: choose a delivery
@@ -27,7 +27,7 @@ Other skills, use them when installed: `agenticgraph-core` for graphs, nodes, in
 |---|---|---|
 | `AgenticGraph::stream($name, $state)` | `ASYNC` + `SSE` | `$handle->stream()->streamUrl`. A worker writes the store; the HTTP route reads it. |
 | `AgenticGraph::stream($name, $state, inline: true)` | `SYNC` + `ITERATOR` | `$handle->stream()->inline`. Consume in this process. No queue. |
-| `AgenticGraph::broadcast($name, $state)` | `ASYNC` + `BROADCAST` | `$handle->broadcastChannel()`. Reverb or Echo. No replay. |
+| `AgenticGraph::broadcast($name, $state)` | `ASYNC` + `BROADCAST` | `$handle->stream()->toArray()`: the private channel, the replay URL, the auth URL and the token. Reverb or Pusher. |
 | `AgenticGraph::broadcast($name, $state, async: false)` | `SYNC` + `BROADCAST` | Same channel, loop in this process |
 
 - Both presets also take `nodes:` and `events:` filters.
@@ -77,15 +77,14 @@ public function start(Request $request): JsonResponse
 
     return response()->json([
         'execution_id' => $handle->id(),
-        'stream_id' => $handle->streamId(),
-        'stream_url' => $sse ? $handle->stream()->streamUrl : null,
-        'channel' => $handle->broadcastChannel(),
+        'descriptor' => $handle->stream()->toArray(),
         'status' => $handle->status()->value,
     ]);
 }
 ```
 
-- For SSE, return `$handle->stream()->streamUrl`. For broadcast, return the channel.
+- Return `$handle->stream()->toArray()`: `transport` (`sse` or `broadcast`), `stream_id`, `stream_url`, `replay_url`, `auth_url`, `token`, `channel`. `createStreamTransport(descriptor)` in the stream client builds the right transport from it.
+- A sync run with SSE or broadcast returns the full descriptor too.
 - Status and interrupt payloads still come from HTTP (`getExecution`, `interruptDetails`). The stream is progress, not the whole handle.
 - `streamUrl` already carries `execution_id`, so `replay_unavailable` brings `final_state` (see the SSE task). Send `execution_id` back as well: the client needs it to resume.
 
@@ -109,7 +108,8 @@ $this->whenStreaming(function () use ($items): void {
 ## Events
 
 - **Lifecycle**, from the coordinator: `graph_start`, `graph_complete`, `graph_failed`, `node_start`, `node_complete`, `node_error`, `node_interrupt`, `stream_resume`.
-- **Terminal**: `execution_terminal` (SSE; `status` is `completed`, `interrupted` or `failed`, plus `final_state`), `stream_close` (broadcast; `{status, meta}`), `stream_error`.
+- **Terminal**: `execution_terminal` (SSE and broadcast; `status` is `completed`, `interrupted` or `failed`, plus `final_state`; on broadcast the stored event with the same `seq`), `stream_close` (broadcast only, `{status, meta}`, after the terminal; an interrupt sends none), `stream_error`.
+- **Broadcast `batch` frames**: text and thinking deltas within `AGENTICGRAPH_STREAM_BROADCAST_BATCH_MS` (50) go as one frame named `batch`, body `{ stream_id, execution_id, events: [{ type, ...nine keys }] }`. `BroadcastTransport` unpacks them; handlers see the single events.
 - **Prism**, from `$this->llm()`: `text_start`, `text_delta`, `text_complete`, `tool_call`, `tool_result`, `thinking_*`, `stream_start`, `step_start`, `step_finish`, `stream_end`, `provider_tool_event`, `artifact`, `error`. One `stream_start` and one `stream_end` per model request (end: cumulative `usage` and `finish_reason`); one `step_start` and `step_finish` per step (finish: that step's `usage` and `finish_reason`). Each step has its own `message_id`. A run that a terminal tool ends (`terminalTools()`) sends `tool_result`, `step_finish`, then the tool's text as `text_start`, `text_delta`, `text_complete` (its own `message_id`), then `stream_end`; no `step_start` follows the tool result. With `holdStepText: true` a step's text events are sent when the step ends, before its `step_finish`, or not at all when the step called a terminal tool.
 - **Yours**: any string through `streamEvent($type, $payload)`. Over SSE, add `?custom_events=wrap` to the stream URL (core 0.2.1) and they arrive as `event: custom_event` with your name in `event_type`, so a browser `EventSource` needs no list of names. Without the parameter the frames are unchanged. Stream client 0.1.1 sends it by itself and delivers them under your type; against core 0.2.0 the parameter is ignored and custom events are not delivered over SSE.
 - `stream_heartbeat` and `stream_replay_unavailable` are SSE only and may change.
@@ -123,7 +123,7 @@ Docs: `/docs/streaming#your-own-events`, `/docs/api/streaming`
 
 - `nodes:` and `events:` are AND filters on every emitted event. Lifecycle events are not exempt.
 - `events: ['text_delta']` hides `node_interrupt`. Keep a status route, or include the event.
-- `stream_close` is never filtered, so a client still learns that the run was interrupted.
+- `execution_terminal` is never filtered, so a client still learns that the run was interrupted.
 
 Docs: `/docs/streaming#filters`
 
@@ -159,20 +159,37 @@ Docs: `/docs/streaming`
 - The controller sends `retry: 2000` (`agenticgraph.streaming.sse.retry_ms`), so a client waits 2 s before it reconnects. It polls the store until `execution_terminal` or `AGENTICGRAPH_STREAM_SSE_MAX_DURATION` (120 s). At the limit it sends control `reconnect` with `after_ms` and closes.
 - Reconnect from a point with `?cursor=` or `Last-Event-ID`. Control events (`heartbeat`, `reconnect`, `replay_unavailable`) carry no `id` and are never stored.
 - `replay_unavailable` is sent when the cursor is older than the store keeps. It carries `cursor`. It carries `final_state` only when the request has `execution_id` (the query string) and that execution owns the stream. `streamUrl` includes it.
+- `cursor=0` is the same as no cursor: it reads from the start.
 - `$handle->replayFrom($cursor)` reads the store again from PHP.
 
-**Signed URLs.** The route has no signature check of its own. To require one, add Laravel's `signed` middleware and ignore `cursor`, because clients append it:
+**Stream token.** The route needs `token` in the query (`EventSource` cannot send headers). `streamUrl` carries it. With no token or a bad one: 403 `{"error":"stream_token_invalid"}`; expired: 403 `stream_token_expired`. `$handle->streamToken()` issues a fresh one, for a refresh endpoint. TTL `AGENTICGRAPH_STREAM_TOKEN_TTL` (3600 s). `AGENTICGRAPH_STREAM_TOKEN_REQUIRED=false` lets any request with the stream id in, as in 0.2. The key is derived from the app key; rotating the app key makes every open token invalid.
+
+**App authorizer.** An extra check after the token, never instead of it:
+
+```php
+use Illuminate\Http\Request;
+use Shahzad\AgenticGraph\Facades\AgenticGraph;
+
+// AppServiceProvider::boot()
+AgenticGraph::authorizeStreamsUsing(function (Request $request, string $streamId, ?string $executionId): bool {
+    return $executionId !== null && $request->user()?->can('view-run', $executionId) === true;
+});
+```
+
+- It runs on the SSE, replay and channel auth routes. `$executionId` is the one in the valid token, else null. Return exactly `true` to pass; anything else is 403 `stream_forbidden`.
+
+**Signed URLs.** The token replaces them. To keep a signature check, add Laravel's `signed` middleware and ignore `cursor` and `token`, because the client sets them:
 
 ```php
 // config/agenticgraph.php
 'streaming' => [
     'routes' => [
-        'middleware' => ['api', 'signed:cursor'],
+        'middleware' => ['api', 'signed:cursor,token'],
     ],
 ],
 ```
 
-Mint the URL with `URL::temporarySignedRoute('agenticgraph.streams.show', now()->addMinutes(10), ['streamId' => $streamId, 'execution_id' => $executionId])`, from an endpoint the frontend calls. A signature that covers `cursor` fails on the first reconnect.
+A signature that covers `cursor` or `token` fails on the first reconnect or refresh.
 
 ```dotenv
 STREAM_STORE_DRIVER=redis
@@ -188,11 +205,15 @@ Docs: `/docs/stream-transports`, `/docs/stream-limitations`
 
 ## Task: broadcast
 
-- The channel is `agenticgraph.stream.{streamId}` (`AGENTICGRAPH_STREAM_BROADCAST_CHANNEL_PREFIX`).
-- Needs Reverb (or Pusher), Laravel Echo and `pusher-js`, with `BROADCAST_CONNECTION=reverb`.
-- Events sent before the client subscribes are lost. Subscribe before kickoff when you can, or use SSE rule 2.
+- The channel is private: `private-agenticgraph.stream.{streamId}` (`AGENTICGRAPH_STREAM_BROADCAST_CHANNEL_PREFIX` after `private-`). `$handle->broadcastChannel()` returns the name in use. `AGENTICGRAPH_STREAM_BROADCAST_PRIVATE=false` sends to the public name, as in 0.2.
+- Channel auth: `POST /agentic-graph/streams/{streamId}/auth` (`agenticgraph.streams.auth`), form body `socket_id`, `channel_name`, `token`. It does not use `Broadcast::auth()`, so guests with a valid token work. Errors: 403 `stream_token_invalid`, `stream_token_expired`, `stream_forbidden`, `stream_channel_mismatch`; 422 `invalid_socket_id`; 501 `broadcaster_unsupported` (not Pusher or Reverb).
+- Replay: `GET /agentic-graph/streams/{streamId}/events?after=N&token=T` (`agenticgraph.streams.events`). JSON `{ events, last_seq, more, gone, final_state? }`, pages of 200. No `after` (or `after=0`) reads from the start.
+- Needs Reverb (or Pusher), Laravel Echo and `pusher-js`, with `BROADCAST_CONNECTION=reverb`, and a real queue: on the `sync` connection the whole run and every frame run in the web request.
+- Every frame body is at most `AGENTICGRAPH_STREAM_BROADCAST_MAX_BYTES` (10000) minus 1024. A bigger frame, or one Reverb refuses with a 4xx, is skipped (`agenticgraph.broadcast.frame_skipped`); the client heals it from the replay route. A network error or a 5xx stops broadcasting for the run (`agenticgraph.broadcast.stopped`); the store has it all.
+- `AGENTICGRAPH_STREAM_BROADCAST_BATCH_MS=0` sends one frame per event.
+- `php artisan serve` drops process environment variables: a `BROADCAST_CONNECTION` set only in the shell does not reach the server, and channel auth answers 501. Set it in `.env`.
 
-Docs: `/docs/stream-transports#broadcast-echotransport`
+Docs: `/docs/stream-transports`, `/docs/stream-upgrading-to-0-3`
 
 ## Task: read the stream in PHP
 
@@ -223,19 +244,23 @@ The client owns the connection. Create the transport after the start request, gi
 
 | Package | Use |
 |---|---|
-| `@agenticgraph/stream-client` | `AgenticStream`, `SSETransport`, `EchoTransport`, `MockTransport`, selectors. `laravel-echo` is an optional peer, for broadcast only. |
+| `@agenticgraph/stream-client` | `AgenticStream`, `createStreamTransport`, `SSETransport`, `BroadcastTransport`, `streamChannelAuthorizer`, `MockTransport`, selectors. `EchoTransport` is deprecated. `laravel-echo` is an optional peer, for broadcast only. |
 | `@agenticgraph/stream-react` | `useAgenticStream`, `useStreamSelector`. React 18+. |
 | `@agenticgraph/stream-vue` | Same API with refs. Vue 3.4+. |
 
-- `AgenticStream.connect()` is the only constructor. It resolves once the transport is connected, and rejects if the transport reports `failed` first.
+- Build the transport with `createStreamTransport(descriptor, { echo, refreshToken })` from the descriptor your start endpoint returned. It returns `SSETransport` or `BroadcastTransport`. `echo` is needed for broadcast only.
+- Broadcast: set `channelAuthorization: { customHandler: streamChannelAuthorizer({ fallback }) }` on your Echo instance. Pass your own handler as `fallback` when you have other private channels.
+- `refreshToken: () => Promise<string | null>` runs once on 403 `stream_token_expired`. Return a fresh token from an endpoint that calls `$handle->streamToken()`, or null to stop with `unauthorized`.
+- `AgenticStream.connect()` is the only constructor. It resolves once the transport is connected, or when the transport is stopped by hand first. It rejects if the transport reports `failed`, or stops for another reason (for example `unauthorized`), first.
 - Rule 3: `SSETransport` reconnects by itself. A transient drop keeps `status` where it was. After `maxAttempts` (5) failed retries it reports `failed`: `status` is `error` with `error.kind` `connection` and `error.canReconnect` `true` (a lost connection only; `false` for the other kinds and when the first connect fails). Call `stream.reconnect()`, or `reconnect()` from `useAgenticStream` (client 0.1.1): it resumes from the last event, `status` goes back to `streaming`, `error` clears and the text is kept. Or make a new transport.
 - Client 0.1.1 with core 0.2.1: custom events arrive over SSE (the client sends `?custom_events=wrap`), and `execution_terminal` handlers run before `status` changes. `error.kind` `terminal_error` shows `meta.message` and `error_type`, which is generic or a provider category (`rate_limited`, `provider_unavailable`, `provider_error`) unless the server sets `AGENTICGRAPH_STREAM_EXPOSE_ERROR_DETAILS`. Do not show `error_type` to a visitor as a diagnosis.
 - Rule 4: `resolveUrl(lastSeq)` runs before each reconnect. Return a fresh URL, or `null` to end the stream. Return `null` on purpose: the transport stops with reason `resolver`, and that is not an error. A throw counts as one failed attempt.
-- `transport.getStopReason()`: `terminal` (execution completed or failed), `replay_unavailable` (cursor too old; `error.kind` is `replay_unavailable`), `resolver` (`null` from `resolveUrl`), `manual` (`disconnect()`), `failed` (gave up). `null` while running.
+- `transport.getStopReason()`: `terminal` (execution completed or failed), `replay_unavailable` (cursor too old; `error.kind` is `replay_unavailable`), `resolver` (`null` from `resolveUrl` or `resolveReplayUrl`), `manual` (`disconnect()`), `failed` (gave up), `unauthorized` (a 403 that `refreshToken` did not fix, or channel auth failed). `null` while running. An exhaustive TypeScript `switch` must handle `unauthorized`.
 - `status`: `idle`, `streaming`, `complete`, `interrupted`, `error`. `error.kind`: `connection`, `stream_error`, `terminal_error`, `replay_unavailable`.
 - `interrupt` has `checkpointId`, `reason`, `node` and `payload`. Your `getInterruptPayload()` is at `payload.interrupt_payload`.
-- Broadcast (`EchoTransport`) has no cursor and no `resolveUrl`. It loses the gap during a drop.
-- One connect per transport. With the hooks, the hook owns the connection. Never also call `AgenticStream.connect()` on the same transport.
+- `BroadcastTransport` waits for the confirmed subscription, replays from the start, merges by `seq` and drops duplicates. A hole replays once (debounced 250 ms); no frame for `idleMs` (5000) replays with backoff, and every 30 s while interrupted. `resolveReplayUrl(cursor)` and `maxAttempts` work as on SSE.
+- `EchoTransport` (deprecated) works only with `AGENTICGRAPH_STREAM_BROADCAST_PRIVATE=false` and `AGENTICGRAPH_STREAM_BROADCAST_BATCH_MS=0`, and loses the gap during a drop.
+- One connect per transport. With the hooks, the hook owns the connection. Never also call `AgenticStream.connect()` on the same transport. `disconnect()` stops the transport only for the stream that connected last on it.
 - The hook's `onResume` posts to your Laravel resume route. Send the execution id from your start response; `AgenticGraph::resume()` takes the execution id, not the checkpoint id.
 - Not a chat framework: no message history or threads.
 - Full React and Vue examples: [references/clients.md](references/clients.md).
@@ -244,13 +269,13 @@ Docs: `/docs/stream-getting-started`, `/docs/stream-core`, `/docs/stream-react`,
 
 ### Script-tag build (only when there is no bundler)
 
-With Vite, use `import { AgenticStream, SSETransport } from '@agenticgraph/stream-client'` in `resources/js/app.js` and `@vite('resources/js/app.js')` in the Blade view. Without a bundler, load the pinned CDN build, `https://cdn.jsdelivr.net/npm/@agenticgraph/stream-client@<version>/dist/index.global.js`. It sets `window.AgenticGraphStream`, with the same exports as the module build:
+With Vite, use `import { AgenticStream, createStreamTransport } from '@agenticgraph/stream-client'` in `resources/js/app.js` and `@vite('resources/js/app.js')` in the Blade view. Without a bundler, load the pinned CDN build, `https://cdn.jsdelivr.net/npm/@agenticgraph/stream-client@<version>/dist/index.global.js`. It sets `window.AgenticGraphStream`, with the same exports as the module build:
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/@agenticgraph/stream-client@0.1.2/dist/index.global.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@agenticgraph/stream-client@0.2.0/dist/index.global.js"></script>
 <script>
-  const { AgenticStream, SSETransport } = window.AgenticGraphStream;
-  AgenticStream.connect({ transport: new SSETransport({ url: streamUrl }) });
+  const { AgenticStream, createStreamTransport } = window.AgenticGraphStream;
+  AgenticStream.connect({ transport: createStreamTransport(descriptor) });
 </script>
 ```
 
@@ -267,12 +292,12 @@ Docs: `/docs/guide-testing`
 ## Mistakes
 
 1. `stream()` without `inline` is async. Without a worker the EventSource stays quiet.
-2. Expecting broadcast to replay. Use SSE with a cursor for gap-free reads.
+2. Broadcast on the `sync` queue connection: the whole run holds the web request. Run a real queue.
 3. Filtering to `text_delta` and waiting for `node_interrupt`.
 4. `foreach ($handle->stream() as $event)`. Iterate `->inline`.
 5. Two `connect()` calls on one transport, or a retry loop around `SSETransport`.
 6. `streamEvent()` in a graph started with `run()`; nothing is emitted.
-7. A signed URL that covers `cursor`, so every reconnect gets a 403.
+7. A stream URL built by hand without `token`, or a signed URL that covers `cursor` or `token`: every request or reconnect gets a 403.
 8. Expecting the exception message in the browser. It is generic unless `AGENTICGRAPH_STREAM_EXPOSE_ERROR_DETAILS=true`; read the stored execution `error` or the logs.
 9. `agenticgraph:executions:expire` not scheduled, so a run without a worker never ends and the stream stays quiet.
 10. Custom events with a raw `EventSource` and no `?custom_events=wrap`: they arrive under your own event names, which `onmessage` never sees.

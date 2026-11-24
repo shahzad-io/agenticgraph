@@ -27,6 +27,7 @@ AgenticGraph is the first open-source Laravel AI orchestration package, bringing
 - API reference: [Streaming API](https://agenticgraph.dev/docs/api/streaming)
 - Event catalog: every event type and payload is in the wire contract above
 - Deployment: [Stream transports](https://agenticgraph.dev/docs/stream-transports) (broadcast vs SSE and what each needs)
+- Upgrading: [Upgrading to 0.3](https://agenticgraph.dev/docs/stream-upgrading-to-0-3) (stream token, private channel, `createStreamTransport()`)
 - Troubleshooting: [Stream limitations](https://agenticgraph.dev/docs/stream-limitations)
 - Examples: [Stream client getting started](https://agenticgraph.dev/docs/stream-getting-started)
 
@@ -68,14 +69,29 @@ If you run async graphs, schedule `agenticgraph:executions:expire` every minute,
 
 Run `php artisan boost:update`. It finds the AgenticGraph packages and asks which skills to add; tick `agenticgraph-core`, `agenticgraph-streaming` and `agenticgraph-tracing`, so your coding assistant knows how to build, stream and trace graphs with this package. A first-time Boost setup is `php artisan boost:install`.
 
+### Upgrading from 0.2.x
+
+Core 0.3.0 guards the stream routes with a stream token and makes the broadcast channel private. Do these steps in order. The full guide is [Upgrading to 0.3](https://agenticgraph.dev/docs/stream-upgrading-to-0-3), and the full list of changes is in [CHANGELOG.md](CHANGELOG.md).
+
+```bash
+composer require agenticgraph/agenticgraph:^0.3
+```
+
+1. **Stream URL.** Pass `$handle->stream()->streamUrl` to the browser: it now carries a stream token. If you build the URL yourself, add `token=$handle->streamToken()`. Without it the SSE route returns 403 `stream_token_invalid`. If your middleware signs the URL, ignore `token` in the signature check, or sign after you add it.
+2. **Broadcast.** Update `@agenticgraph/stream-client` to 0.2.0. Send `$handle->stream()->toArray()` to the browser and build the transport with `createStreamTransport(descriptor, { echo })` in place of `EchoTransport`. Add `streamChannelAuthorizer()` to your Echo `channelAuthorization`.
+3. **Long sessions.** Give the transport a `refreshToken` callback that asks your app for `$handle->streamToken()`.
+4. **Published config.** Add the `streaming.token` block and the `private` and `batch_ms` keys under `streaming.broadcast` (see the CHANGELOG), or the environment values have no effect.
+5. **Queue.** `broadcast()` frees the web worker only when the queue connection is not `sync`.
+6. **The way back.** `AGENTICGRAPH_STREAM_TOKEN_REQUIRED=false` restores the 0.2 SSE route. `AGENTICGRAPH_STREAM_BROADCAST_PRIVATE=false` and `AGENTICGRAPH_STREAM_BROADCAST_BATCH_MS=0` keep `EchoTransport` 0.1 working. The first two open the stream to anyone who has its id.
+
 ### Upgrading from 0.1.0
 
-Do these steps in order. The full list of changes is in [CHANGELOG.md](CHANGELOG.md).
+Do these steps in order, then the steps in "Upgrading from 0.2.x" above. The full list of changes is in [CHANGELOG.md](CHANGELOG.md).
 
 1. **Platform.** Use PHP 8.3+ and Laravel 12.61.1+ or 13.12+. Older PHP and Laravel versions are no longer supported. The package requires `prism-php/prism` `^0.102.0`, which sends Anthropic structured output in native mode (Claude Sonnet 4.5 or newer; for an older model set `$providerOptions = ['use_tool_calling' => true]` on the node):
 
    ```bash
-   composer require agenticgraph/agenticgraph:^0.2 prism-php/prism:^0.102 -W
+   composer require agenticgraph/agenticgraph:^0.3 prism-php/prism:^0.102 -W
    ```
 
 2. **Migrations.** Publish the migrations again and run them. Files you already published keep their names. The new tables and the `zzzz_*` upgrade migrations are added, and each upgrade checks the schema first:
@@ -100,9 +116,9 @@ The three packages are released together:
 
 | Package | Version | Works with |
 |---|---|---|
-| `agenticgraph/agenticgraph` (core) | 0.2.x | PHP 8.3+, Laravel 12.61.1+ or 13.12+, Prism 0.102 |
-| `agenticgraph/vector` | 0.1.x | PHP 8.3+, Laravel 12.61.1+ or 13.12+, Prism 0.102, PostgreSQL with pgvector (0.8+ for iterative scan). Core 0.2.x is optional (tracing) |
-| `@agenticgraph/stream-client`, `@agenticgraph/stream-react`, `@agenticgraph/stream-vue` | 0.1.x | Core 0.2.x on the server (stream wire contract v1.1; core 0.2.1 and client 0.1.1 together for custom events and error details), Node.js 18+, React 18+ or Vue 3.4+ for the adapters |
+| `agenticgraph/agenticgraph` (core) | 0.3.x | PHP 8.3+, Laravel 12.61.1+ or 13.12+, Prism 0.102 |
+| `agenticgraph/vector` | 0.1.x | PHP 8.3+, Laravel 12.61.1+ or 13.12+, Prism 0.102, PostgreSQL with pgvector (0.8+ for iterative scan). Core 0.2.x or 0.3.x is optional (tracing) |
+| `@agenticgraph/stream-client`, `@agenticgraph/stream-react`, `@agenticgraph/stream-vue` | 0.2.x | Core 0.3.x on the server (stream wire contract v1.1; `BroadcastTransport` needs core 0.3.0; `SSETransport` also works with core 0.2.x), Node.js 18+, React 18+ or Vue 3.4+ for the adapters |
 
 ## Quick Start
 

@@ -21,6 +21,7 @@ use Illuminate\Support\Facades\Facade;
  * @method static \Shahzad\AgenticGraph\Execution\ResumeResult resume(string $executionId, mixed $humanInput)
  * @method static \Shahzad\AgenticGraph\Execution\InterruptStatus interruptDetails(string $executionId)
  * @method static \Shahzad\AgenticGraph\Graph\Graph|null getOrBuild(string $name)
+ * @method static void authorizeStreamsUsing((\Closure(\Illuminate\Http\Request, string, string|null): bool)|null $callback)
  *
  * @see \Shahzad\AgenticGraph\AgenticGraph
  */

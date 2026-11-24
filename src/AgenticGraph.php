@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Shahzad\AgenticGraph;
 
+use Illuminate\Http\Request;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Exceptions\InterruptExpiredException;
 use Shahzad\AgenticGraph\Exceptions\InterruptPersistenceDisabledException;
@@ -25,6 +26,19 @@ use Shahzad\AgenticGraph\Graph\GraphRegistry;
 
 class AgenticGraph
 {
+    public const STREAM_AUTHORIZER = 'agenticgraph.streams.authorizer';
+
+    /**
+     * Adds an app check to the three stream routes. It runs after the stream token check, never instead of it, and
+     * returns false to deny (403 `stream_forbidden`). Null removes it.
+     *
+     * @param  (\Closure(Request, string, ?string): bool)|null  $callback
+     */
+    public function authorizeStreamsUsing(?\Closure $callback): void
+    {
+        app()->instance(self::STREAM_AUTHORIZER, $callback);
+    }
+
     public function registry(): GraphRegistry
     {
         return app(GraphRegistry::class);

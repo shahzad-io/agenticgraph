@@ -626,7 +626,7 @@ it('replays from Last-Event-ID header', function () {
         ));
     }
 
-    $request = Request::create('/streams/'.$streamId, 'GET');
+    $request = Request::create(streamUrlFor($streamId));
     $request->headers->set('Last-Event-ID', '1');
 
     $controller = new StreamController;
@@ -662,7 +662,7 @@ it('replays from cursor query', function () {
         ));
     }
 
-    $request = Request::create('/streams/'.$streamId, 'GET', ['cursor' => 2]);
+    $request = Request::create(streamUrlFor($streamId, ['cursor' => 2]));
     $controller = new StreamController;
     $response = $controller->stream($streamId, $request, $store);
 
@@ -680,7 +680,7 @@ it('emits stream replay unavailable when cursor missing', function () {
     $store = app(StreamStoreInterface::class);
     $streamId = (string) Str::uuid();
 
-    $request = Request::create('/streams/'.$streamId, 'GET', ['cursor' => 10]);
+    $request = Request::create(streamUrlFor($streamId, ['cursor' => 10]));
     $controller = new StreamController;
     $response = $controller->stream($streamId, $request, $store);
 
@@ -698,7 +698,7 @@ it('includes heartbeat events in stream controller response', function () {
     $store = app(StreamStoreInterface::class);
     $streamId = (string) Str::uuid();
 
-    $request = Request::create('/streams/'.$streamId, 'GET');
+    $request = Request::create(streamUrlFor($streamId));
     $controller = new StreamController;
     $response = $controller->stream($streamId, $request, $store);
 
@@ -720,8 +720,8 @@ it('handles broadcast channel unavailable', function () {
         nodeName: 'node-a',
         spanId: null,
         parentSpanId: null,
-        type: 'text_delta',
-        payload: ['delta' => 'x'],
+        type: 'node_start', // not a delta: sent at once, not batched
+        payload: ['node_name' => 'node-a'],
         seq: 1,
         nodeSeq: 1,
         occurredAt: new DateTimeImmutable('2024-01-01T00:00:00Z')
@@ -984,7 +984,7 @@ it('applies node and event filters for streaming', function () {
         ->and($handle->getFinalState()->get('beta'))->toBeTrue();
 });
 
-it('does not return inline sse stream from sync stream handle', function () {
+it('does not return inline sse stream from sync stream handle, only the stored stream URL', function () {
     $graph = GraphBuilder::create('sse-streaming')
         ->addNode('alpha', StreamableTestNode::class)
         ->setEntryPoint('alpha')
@@ -995,7 +995,8 @@ it('does not return inline sse stream from sync stream handle', function () {
 
     $handle = AgenticGraph::execute('sse-streaming', new State, streamingOptions(StreamingMode::SSE));
 
-    expect($handle->stream()->hasStream())->toBeFalse();
+    expect($handle->stream()->isInline())->toBeFalse()
+        ->and($handle->stream()->transport())->toBe('sse');
 });
 
 it('iterates over stream handle directly', function () {
@@ -1025,7 +1026,7 @@ it('broadcasts stream events via facade', function () {
             return is_array($channels)
                 && isset($channels[0])
                 && is_string($channels[0])
-                && str_starts_with($channels[0], 'agenticgraph.stream.');
+                && str_starts_with($channels[0], 'private-agenticgraph.stream.');
         }),
         Mockery::type('string'),
         Mockery::on(function ($payload): bool {

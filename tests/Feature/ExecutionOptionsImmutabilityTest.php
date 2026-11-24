@@ -267,7 +267,7 @@ it('ExecuteGraphJob resolves AUTO to broadcast and emits through the broadcast s
     $streamId = uniqid('stream_', true);
     $broadcaster = Mockery::mock(Broadcaster::class);
     $broadcaster->shouldReceive('broadcast')->atLeast()->once()->with(
-        Mockery::on(fn (array $channels): bool => isset($channels[0]) && $channels[0] === 'agenticgraph.stream.'.$streamId),
+        Mockery::on(fn (array $channels): bool => isset($channels[0]) && $channels[0] === 'private-agenticgraph.stream.'.$streamId),
         Mockery::type('string'),
         Mockery::type('array')
     );

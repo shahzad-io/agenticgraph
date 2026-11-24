@@ -12,11 +12,11 @@ use Shahzad\AgenticGraph\Execution\StreamingMode;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
 use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
-use Shahzad\AgenticGraph\Streaming\Sinks\BroadcastSink;
 use Shahzad\AgenticGraph\Streaming\StreamEventEnvelope;
 use Shahzad\AgenticGraph\Streaming\StreamLifecycleEventTypes;
 use Shahzad\AgenticGraph\Streaming\StreamOptions;
 use Shahzad\AgenticGraph\Streaming\StreamSession;
+use Shahzad\AgenticGraph\Streaming\StreamSinkFactory;
 use Shahzad\AgenticGraph\Streaming\StreamStatus;
 use Shahzad\AgenticGraph\Streaming\StreamTerminalStatus;
 
@@ -105,19 +105,21 @@ trait EndsFailedExecution
             null,
             new \DateTimeImmutable,
         ));
-        $store->append(StreamEventEnvelope::executionTerminal(
+        $terminal = StreamEventEnvelope::executionTerminal(
             $session,
             StreamTerminalStatus::FAILED,
             $stateData,
             $error,
-        )->toStreamEvent());
+        )->toStreamEvent();
+        $store->append($terminal);
 
-        // The terminal is stored; the live close is best effort, so a broadcaster that is down
+        // The terminal is stored; the live terminal and close are best effort, so a broadcaster that is down
         // (for example Reverb) does not stop the failure from being recorded.
         if ($streaming === StreamingMode::BROADCAST) {
             try {
-                app(BroadcastSink::class, ['streamId' => $streamId])
-                    ->close(StreamStatus::ERROR, $error + ['final_state' => $stateData]);
+                $sink = app(StreamSinkFactory::class)->broadcastSink($streamId);
+                $sink->emit($terminal);
+                $sink->close(StreamStatus::ERROR, $error + ['final_state' => $stateData]);
             } catch (\Throwable $broadcastError) {
                 Log::warning('AgenticGraph: stream close broadcast failed', [
                     'execution_id' => $executionId,

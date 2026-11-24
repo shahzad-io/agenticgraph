@@ -44,6 +44,7 @@ class TestCase extends Orchestra
         config()->set('agenticgraph.storage', 'database');
         config()->set('agenticgraph.tracing.enabled', false); // Disable tracing in tests by default
         config()->set('agenticgraph.prism.model', 'openai:gpt-4o-mini'); // the package has no default model
+        config()->set('app.key', 'base64:'.base64_encode(str_repeat('k', 32))); // the stream token key derives from it
         $app['config']->set('database.connections.testing', [
             'driver' => 'sqlite',
             'database' => ':memory:',

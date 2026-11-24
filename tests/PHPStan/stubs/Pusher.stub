@@ -1,0 +1,17 @@
+<?php
+
+namespace Pusher;
+
+// The Pusher SDK is optional (the app installs it for Pusher or Reverb). The methods the core calls.
+class Pusher
+{
+    public function authorizeChannel(string $channel, string $socket_id, ?string $custom_data = null): string {}
+
+    /** @param array<int, string>|string $channels */
+    public function trigger($channels, string $event, mixed $data, array $params = [], bool $already_encoded = false): object {}
+}
+
+class PusherException extends \Exception {}
+
+// An HTTP error response: getCode() is the status, 0 for a network error.
+class ApiErrorException extends PusherException {}

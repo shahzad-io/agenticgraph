@@ -155,9 +155,15 @@ return [
         ],
         'broadcast' => [
             'channel_prefix' => env('AGENTICGRAPH_STREAM_BROADCAST_CHANNEL_PREFIX', 'agenticgraph.stream.'),
+            // Frames go to `private-{channel_prefix}{streamId}`; the client authorizes with the stream token on the
+            // core's auth route. private=false sends to the public name, as in 0.2 (anyone with the stream id listens).
+            'private' => env('AGENTICGRAPH_STREAM_BROADCAST_PRIVATE', true),
+            // Text and thinking deltas within this window (ms) go as one `batch` frame. 0 = one frame per event.
+            'batch_ms' => env('AGENTICGRAPH_STREAM_BROADCAST_BATCH_MS', 50),
             'force_above_seconds' => env('AGENTICGRAPH_STREAM_BROADCAST_FORCE_ABOVE', 300),
-            // A broadcast error does not fail the run: a frame over max_bytes (the Pusher request body; Reverb's
-            // max_request_size is 10,000) is skipped, and after the first failed call the run stops broadcasting.
+            // A broadcast error does not fail the run: a frame over max_bytes less 1024 bytes for the request line
+            // and headers (Reverb's max_request_size, 10,000, counts the whole request) is skipped, and after the
+            // first failed call the run stops broadcasting.
             // The store is written either way. fatal=true: every frame is sent and an error fails the run (up to 0.2.11).
             'fatal' => env('AGENTICGRAPH_STREAM_BROADCAST_FATAL', false),
             'max_bytes' => env('AGENTICGRAPH_STREAM_BROADCAST_MAX_BYTES', 10000),
@@ -197,6 +203,12 @@ return [
             // AGENTICGRAPH_STREAMING_MIDDLEWARE: comma-separated, e.g. "api,throttle:60,1". A comma before a
             // number stays with the previous middleware's parameters; use a middleware group for other parameters.
             'middleware' => array_values(array_filter(array_map('trim', preg_split('/,(?!\s*\d+\s*(?:,|$))/', (string) env('AGENTICGRAPH_STREAMING_MIDDLEWARE', 'api')) ?: []), fn (string $middleware) => $middleware !== '')) ?: ['api'],
+        ],
+        // The stream token ($handle->streamToken(), in streamUrl) guards the SSE, replay and channel auth routes.
+        // required=false lets any request with the stream id in, as in 0.2. ttl is in seconds.
+        'token' => [
+            'required' => env('AGENTICGRAPH_STREAM_TOKEN_REQUIRED', true),
+            'ttl' => env('AGENTICGRAPH_STREAM_TOKEN_TTL', 3600),
         ],
         'capture' => [
             'state' => env('AGENTICGRAPH_STREAM_CAPTURE_STATE', 'none'),

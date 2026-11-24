@@ -10,6 +10,7 @@ use Shahzad\AgenticGraph\Execution\ExecutionRepository;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamEvent;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamSinkInterface;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
+use Shahzad\AgenticGraph\Streaming\Sinks\BroadcastSink;
 use Shahzad\AgenticGraph\Streaming\Store\RetentionPolicy;
 
 final class WrappedStreamSink implements StreamSinkInterface
@@ -33,11 +34,20 @@ final class WrappedStreamSink implements StreamSinkInterface
         private readonly StreamObserver $observer,
         private readonly StreamErrorHandler $errorHandler,
         private readonly ?StreamSession $session = null,
+        // Broadcast only: send the stored execution_terminal to the sink before its close (stream_close).
+        private readonly bool $emitTerminal = false,
+        // Broadcast only: told of each event the filter drops, so it can flush its batch (the event is never sent).
+        private readonly ?BroadcastSink $broadcast = null,
     ) {}
 
     public function emit(StreamEvent $event): void
     {
-        if ($this->closed || ! $this->shouldEmit($event)) {
+        if ($this->closed) {
+            return;
+        }
+        if (! $this->shouldEmit($event)) {
+            $this->broadcast?->dropped($event);
+
             return;
         }
         $this->heartbeat($event);
@@ -116,19 +126,23 @@ final class WrappedStreamSink implements StreamSinkInterface
         }
         $this->closed = true;
 
-        $this->appendStoreTerminalIfNeeded($status, $meta);
+        $terminal = $this->appendStoreTerminalIfNeeded($status, $meta);
+        if ($terminal !== null && $this->emitTerminal) {
+            $this->sink->emit($terminal);
+        }
         $this->sink->close($status, $meta);
         $this->observer->flush();
     }
 
-    private function appendStoreTerminalIfNeeded(StreamStatus $status, mixed $meta): void
+    /** The stored execution_terminal, or null when none was stored now. */
+    private function appendStoreTerminalIfNeeded(StreamStatus $status, mixed $meta): ?StreamEvent
     {
         if ($this->store === null || $this->session === null || $this->terminalAppended) {
-            return;
+            return null;
         }
 
         if (! is_array($meta) || ! array_key_exists('final_state', $meta)) {
-            return;
+            return null;
         }
 
         $finalState = $meta['final_state'];
@@ -152,8 +166,12 @@ final class WrappedStreamSink implements StreamSinkInterface
                 $this->retention->enforce($this->store, $event);
             }
             $this->terminalAppended = true;
+
+            return $event;
         } catch (\Throwable $e) {
             $this->handleError($e, $envelope->toStreamEvent(), 'store');
+
+            return null;
         }
     }
 

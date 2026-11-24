@@ -183,7 +183,7 @@ it('stream default is equivalent to execute with ASYNC and SSE', function () {
     expect($verbDescriptor->mode)->toBe(StreamingMode::SSE)
         ->and($explicitDescriptor->mode)->toBe(StreamingMode::SSE)
         ->and($verbDescriptor->hasUrl())->toBeTrue()
-        ->and($verbDescriptor->streamUrl)->toBe(route(StreamDescriptor::ROUTE_NAME, ['streamId' => $verbDescriptor->streamId, 'execution_id' => $verbHandle->id()]))
+        ->and($verbDescriptor->streamUrl)->toBe(route(StreamDescriptor::ROUTE_NAME, ['streamId' => $verbDescriptor->streamId, 'execution_id' => $verbHandle->id(), 'token' => $verbDescriptor->token]))
         ->and($verbDescriptor->inline)->toBeNull();
 });
 

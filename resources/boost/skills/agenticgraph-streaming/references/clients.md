@@ -8,7 +8,7 @@ npm install @agenticgraph/stream-vue     # Vue 3, pulls stream-client
 npm install @agenticgraph/stream-client  # vanilla
 ```
 
-Broadcast also needs `laravel-echo`, `pusher-js` and a configured Echo instance. SSE needs neither.
+Broadcast also needs `laravel-echo`, `pusher-js` and a configured Echo instance with `streamChannelAuthorizer()` (below). SSE needs neither.
 
 ## The server side
 
@@ -27,9 +27,14 @@ public function start(Request $request): JsonResponse
 
     return response()->json([
         'execution_id' => $handle->id(),
-        'stream_url' => $sse ? $handle->stream()->streamUrl : null,
-        'channel' => $handle->broadcastChannel(),
+        'descriptor' => $handle->stream()->toArray(),
     ]);
+}
+
+// A fresh stream token for refreshToken (after the TTL, or a resume after a long interrupt). Check first that the user may see this run.
+public function streamToken(string $executionId): JsonResponse
+{
+    return response()->json(['token' => AgenticGraph::getExecution($executionId)->streamToken()]);
 }
 
 public function resume(Request $request, string $executionId): JsonResponse
@@ -46,7 +51,7 @@ Create the transport after kickoff and pass it to one component. The hook owns t
 
 ```tsx
 import { useCallback, useMemo } from 'react';
-import { EchoTransport, SSETransport, type StreamTransport } from '@agenticgraph/stream-client';
+import { createStreamTransport, type StreamTransport } from '@agenticgraph/stream-client';
 import { useAgenticStream, useStreamSelector, nodeTextSelector } from '@agenticgraph/stream-react';
 
 function StreamPanel({ transport, executionId }: { transport: StreamTransport; executionId: string }) {
@@ -84,9 +89,10 @@ async function start(delivery: 'sse' | 'broadcast', topic: string) {
     body: JSON.stringify({ topic, delivery }),
   })).json();
 
-  const transport = delivery === 'sse'
-    ? new SSETransport({ url: payload.stream_url })
-    : new EchoTransport({ echo: window.Echo, channel: payload.channel });
+  const transport = createStreamTransport(payload.descriptor, {
+    echo: window.Echo, // needed for broadcast only
+    refreshToken: async () => (await (await fetch(`/drafts/${payload.execution_id}/stream-token`)).json()).token,
+  });
 
   return { transport, executionId: payload.execution_id };
 }
@@ -132,13 +138,38 @@ const draftText = useStreamSelector(client, nodeTextSelector('generate_draft'));
 
 Do not call `AgenticStream.connect()` in the parent.
 
+## Echo for broadcast
+
+Echo has one channel authorizer per instance. `streamChannelAuthorizer()` answers for stream channels with the token and `auth_url` of the transport that subscribed, and passes any other channel to `fallback`.
+
+```ts
+import Echo from 'laravel-echo';
+import Pusher from 'pusher-js';
+import { streamChannelAuthorizer } from '@agenticgraph/stream-client';
+
+window.Pusher = Pusher;
+window.Echo = new Echo({
+  broadcaster: 'reverb',
+  key: import.meta.env.VITE_REVERB_APP_KEY,
+  wsHost: import.meta.env.VITE_REVERB_HOST,
+  wsPort: import.meta.env.VITE_REVERB_PORT,
+  forceTLS: false,
+  enabledTransports: ['ws', 'wss'],
+  channelAuthorization: {
+    endpoint: '/broadcasting/auth',
+    headers: {},
+    customHandler: streamChannelAuthorizer({ fallback: yourOwnHandler }), // fallback: only with other private channels
+  },
+});
+```
+
 ## Vanilla
 
 ```ts
-import { AgenticStream, EchoTransport } from '@agenticgraph/stream-client';
+import { AgenticStream, createStreamTransport } from '@agenticgraph/stream-client';
 
 const stream = await AgenticStream.connect({
-  transport: new EchoTransport({ echo: window.Echo, channel: payload.channel }),
+  transport: createStreamTransport(payload.descriptor, { echo: window.Echo }),
 });
 
 const unsubscribe = stream.subscribe('text_delta', (event) => render(event.payload.delta));
@@ -151,7 +182,7 @@ unsubscribe();
 await stream.disconnect();
 ```
 
-`events()` has no replay: it yields from the moment you start iterating.
+`events()` yields from the moment you start iterating. The transport replays what it missed, but `events()` does not give earlier events again.
 
 ## Reconnect, resolveUrl and stop reasons
 
@@ -161,10 +192,10 @@ The transport reconnects on its own. `resolveUrl` is called before each reconnec
 import { AgenticStream, SSETransport } from '@agenticgraph/stream-client';
 
 const transport = new SSETransport({
-  url: payload.stream_url,
+  url: payload.descriptor.stream_url,
   maxAttempts: 5, // consecutive failed retries before the transport reports `failed`
   resolveUrl: async () => {
-    // A fresh signed URL from your own endpoint; the client appends ?cursor=.
+    // A fresh URL from your own endpoint; the client sets ?cursor= (and token after a refresh).
     // Return null to end the stream on purpose (stop reason `resolver`, not an error).
     const response = await fetch(`/drafts/${payload.execution_id}/stream-url`);
     if (response.status === 404) return null;
@@ -176,13 +207,14 @@ const transport = new SSETransport({
 const stream = await AgenticStream.connect({ transport });
 
 // status === 'error' and error.kind === 'connection' after `failed`: stream.reconnect() starts it again.
-// Why the transport stopped: 'terminal' | 'replay_unavailable' | 'resolver' | 'manual' | 'failed' (null while running).
+// Why the transport stopped: 'terminal' | 'replay_unavailable' | 'resolver' | 'manual' | 'failed' | 'unauthorized' (null while running).
 transport.getStopReason();
 ```
 
 - A transient drop leaves `status` where it was. It becomes `error` only when the transport reports `failed` (kind `connection`) or `replay_unavailable` arrives.
 - With the React and Vue hooks, `client` is the `AgenticStream` for manual `reconnect()`. Do not connect the transport yourself.
-- The signed URL must validate while ignoring `cursor`: [SKILL.md](../SKILL.md#task-serve-sse).
+- A signed URL must validate while ignoring `cursor` and `token`: [SKILL.md](../SKILL.md#task-serve-sse).
+- After any SSE error the transport checks the URL once with `fetch`. A 403 that `refreshToken` does not fix stops it with `unauthorized`, not with `failed` after `maxAttempts`.
 
 ## Tests
 
