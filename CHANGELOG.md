@@ -2,7 +2,7 @@
 
 ## 0.4.0 - unreleased
 
-A queued run that you delete stays deleted, an app can skip a queued run before it runs, old runs can be pruned, and a structured reply without a required key is no longer accepted. This is a breaking release. The stream client does not change: use 0.2.x.
+A queued run that you delete stays deleted, an app can skip a queued run before it runs, old runs can be pruned, and a structured reply without a required key is no longer accepted. This is a breaking release. Stream client 0.2.x works with it. Client 0.2.1 adds `skipped` to the `GraphFailedReason` type; 0.2.0 already passes the value through.
 
 ### Added
 
