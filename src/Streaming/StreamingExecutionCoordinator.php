@@ -79,7 +79,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
         return $this->streamContext;
     }
 
-    public function execute(Graph $graph, StateContract $state, StreamOptions $options, string $executionId, ?ExecutionOptions $executionOptions = null, bool $mustExist = false): StreamHandle
+    public function execute(Graph $graph, StateContract $state, StreamOptions $options, string $executionId, ?ExecutionOptions $executionOptions = null): StreamHandle
     {
         $state->validate();
         if ($this->container->bound(TraceContext::class)) {
@@ -128,10 +128,10 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                 $this->streamContext = $context;
             }
 
-            if (! $mustExist && ! $this->repo->get($executionId)) {
+            if (! $this->repo->get($executionId)) {
                 $this->repo->queued($executionId, $graph->name, State::toStoragePayload($state), $session->streamId, $executionOptions);
             }
-            if (! $this->repo->started($executionId, $graph->name, State::toStoragePayload($state), $session->streamId, $executionOptions, $mustExist)) {
+            if (! $this->repo->started($executionId, $graph->name, State::toStoragePayload($state), $session->streamId, $executionOptions)) {
                 throw new ExecutionEndedException($executionId); // Ended elsewhere: write nothing.
             }
 
@@ -210,8 +210,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
         StreamOptions $options,
         string $executionId,
         ?LoopMetadata $loopMetadata = null,
-        ?StreamResumePayload $resumePayload = null,
-        bool $mustExist = false
+        ?StreamResumePayload $resumePayload = null
     ): StreamHandle {
         $state->validate();
         $this->repo->reopen($executionId, includeExpired: true); // An explicit new run, even of an expired execution.
@@ -263,11 +262,11 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
             }
 
             $currentStatus = $this->repo->getStatus($executionId);
-            if ($mustExist && $currentStatus === null && ! $this->repo->exists($executionId)) {
+            if ($currentStatus === null && $this->repo->isDeletedQueuedRun($executionId)) {
                 throw new ExecutionEndedException($executionId); // Deleted: write nothing.
             }
             if ($currentStatus === 'queued' || $currentStatus === 'interrupted') {
-                if (! $this->repo->started($executionId, $graph->name, State::toStoragePayload($state), $session->streamId, mustExist: $mustExist) && $mustExist) {
+                if (! $this->repo->started($executionId, $graph->name, State::toStoragePayload($state), $session->streamId) && $this->repo->isDeletedQueuedRun($executionId)) {
                     throw new ExecutionEndedException($executionId);
                 }
             }

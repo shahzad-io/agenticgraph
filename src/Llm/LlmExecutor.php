@@ -453,7 +453,11 @@ final class LlmExecutor
         $cache = $this->cacheDecision($call, $settings);
         $cacheKey = $cache['enabled'] ? $cache['key'] : null;
         if ($cacheKey !== null && $this->cache->has($cacheKey)) {
-            return $this->cacheHit($call, $model, $cacheKey, $startTime);
+            $cached = $this->cache->get($cacheKey);
+            // A stored structured reply without a required key is a miss; the new reply replaces it.
+            if ($call->schema === null || ! $call->requireKeys || (is_array($cached) && self::missingRequiredKey($call, $cached) === null)) {
+                return $this->cacheHit($call, $model, $cacheKey, $cached, $startTime);
+            }
         }
 
         $response = $call->schema !== null
@@ -591,8 +595,9 @@ final class LlmExecutor
 
     /**
      * Attempt 1 (streamed when asked), then up to structured.retries more non-streamed attempts, each with the failed
-     * reply and the error appended. A failure is a reply that does not decode or does not fit as(). Every attempt that
-     * reports usage is dispatched; the response sums them, or has no usage at all when an attempt's is unknown.
+     * reply and the error appended. A failure is a reply that does not decode, misses a key the schema requires, or
+     * does not fit as(). Every attempt that reports usage is dispatched; the response sums them, or has no usage at
+     * all when an attempt's is unknown.
      *
      * @param  array<string, mixed>  $settings
      */
@@ -612,6 +617,9 @@ final class LlmExecutor
             try {
                 if ($response->structured === null) {
                     throw PrismStructuredDecodingException::make($response->text);
+                }
+                if ($call->requireKeys && ($missing = self::missingRequiredKey($call, $response->structured)) !== null) {
+                    throw StructuredHydrationException::missingKey($missing);
                 }
                 $data = $call->dto !== null ? DtoHydrator::hydrate($call->dto, $response->structured) : null;
             } catch (PrismStructuredDecodingException|StructuredHydrationException $e) {
@@ -635,6 +643,49 @@ final class LlmExecutor
                 attempts: $attempt,
             );
         }
+    }
+
+    /**
+     * The path (items.2.price) of the first key the schema requires that the reply does not have, or null. Prism does
+     * not validate a reply against its schema.
+     *
+     * @param  array<mixed>  $reply
+     */
+    private static function missingRequiredKey(LlmCall $call, array $reply): ?string
+    {
+        return $call->schema instanceof Schema ? self::missingKeyIn($call->schema->toArray(), $reply) : null;
+    }
+
+    /**
+     * Walks required, properties and items. Presence only: not types, enum values, extra keys or anyOf branches.
+     *
+     * @param  array<mixed>  $schema
+     * @param  array<mixed>  $value
+     */
+    private static function missingKeyIn(array $schema, array $value, string $prefix = ''): ?string
+    {
+        foreach (is_array($schema['required'] ?? null) ? $schema['required'] : [] as $key) {
+            if (is_string($key) && ! array_key_exists($key, $value)) {
+                return $prefix.$key;
+            }
+        }
+
+        $children = [];
+        foreach ((array) ($schema['properties'] ?? []) as $key => $property) {
+            $children[] = [$property, $value[$key] ?? null, $prefix.$key.'.'];
+        }
+        if (isset($schema['items']) && array_is_list($value)) {
+            foreach ($value as $index => $item) {
+                $children[] = [$schema['items'], $item, $prefix.$index.'.'];
+            }
+        }
+        foreach ($children as [$childSchema, $child, $childPrefix]) {
+            if (is_array($childSchema) && is_array($child) && ($missing = self::missingKeyIn($childSchema, $child, $childPrefix)) !== null) {
+                return $missing;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -772,9 +823,8 @@ final class LlmExecutor
         );
     }
 
-    private function cacheHit(LlmCall $call, string $model, string $cacheKey, float $startTime): LlmResponse
+    private function cacheHit(LlmCall $call, string $model, string $cacheKey, mixed $cached, float $startTime): LlmResponse
     {
-        $cached = $this->cache->get($cacheKey);
         $structured = $call->schema !== null && is_array($cached) ? $cached : null;
         $text = $structured !== null ? (string) json_encode($structured) : (is_string($cached) ? $cached : '');
 

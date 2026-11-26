@@ -130,9 +130,9 @@ class ExecuteGraphJob implements ShouldBeUnique, ShouldQueue
                 );
                 app()->instance(StreamContext::class, new StreamContext($session));
 
-                $executor->executeWithStreaming($graph->name, $state, $streamOptions, $this->executionId, $options, mustExist: true);
+                ExecutionRepository::asQueuedRun($this->executionId, fn () => $executor->executeWithStreaming($graph->name, $state, $streamOptions, $this->executionId, $options));
             } else {
-                $executor->execute($graph, $state, $options, useBatch: true, executionId: $this->executionId, mustExist: true);
+                ExecutionRepository::asQueuedRun($this->executionId, fn () => $executor->execute($graph, $state, $options, useBatch: true, executionId: $this->executionId));
             }
         } catch (ExecutionEndedException) {
             // Ended elsewhere (for example expired) while this worker ran it: nothing more to write, not a failure.

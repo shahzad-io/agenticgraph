@@ -25,6 +25,9 @@ class ExecutionRepository implements ExecutionStore
 
     private const BATCH_RESULTS_TABLE = 'agenticgraph_batch_results';
 
+    /** @var array<string, true> the queued runs this process is executing now, see asQueuedRun() */
+    private static array $queuedRuns = [];
+
     /**
      * Valid state transitions for execution lifecycle
      *
@@ -45,6 +48,37 @@ class ExecutionRepository implements ExecutionStore
     }
 
     /**
+     * Runs a queued job's execution. Its row was written at dispatch, so while $run runs a missing row of $id is a
+     * deleted run: queued() and started() create nothing for it. Synchronous runs keep creating their rows.
+     *
+     * @internal Only the queued jobs call this.
+     *
+     * @param  \Closure(): mixed  $run
+     */
+    public static function asQueuedRun(string $id, \Closure $run): mixed
+    {
+        $nested = isset(self::$queuedRuns[$id]);
+        self::$queuedRuns[$id] = true;
+        try {
+            return $run();
+        } finally {
+            if (! $nested) {
+                unset(self::$queuedRuns[$id]);
+            }
+        }
+    }
+
+    /**
+     * True inside asQueuedRun() when the row is gone: the coordinator stops and writes nothing.
+     *
+     * @internal
+     */
+    public function isDeletedQueuedRun(string $id): bool
+    {
+        return isset(self::$queuedRuns[$id]) && ! $this->exists($id);
+    }
+
+    /**
      * @param  array<string, mixed>  $initialState
      */
     public function queued(
@@ -55,6 +89,10 @@ class ExecutionRepository implements ExecutionStore
         ?ExecutionOptions $executionOptions = null,
         ?string $rootSpanId = null
     ): void {
+        if (isset(self::$queuedRuns[$id])) {
+            return; // The dispatch wrote this row; a missing one was deleted and stays deleted.
+        }
+
         InstrumentationGate::internal(fn () => $this->db->transaction(function () use ($id, $graphName, $initialState, $streamId, $executionOptions, $rootSpanId) {
             $payload = [
                 'graph_name' => $graphName,
@@ -89,24 +127,22 @@ class ExecutionRepository implements ExecutionStore
 
     /**
      * @param  array<string, mixed>  $initialState
-     * @param  bool  $mustExist  a queued run: a missing row returns false and creates nothing
      */
     public function started(
         string $id,
         string $graphName,
         array $initialState = [],
         ?string $streamId = null,
-        ?ExecutionOptions $executionOptions = null,
-        bool $mustExist = false
+        ?ExecutionOptions $executionOptions = null
     ): bool {
-        return InstrumentationGate::internal(fn () => $this->db->transaction(function () use ($id, $graphName, $initialState, $streamId, $executionOptions, $mustExist): bool {
+        return InstrumentationGate::internal(fn () => $this->db->transaction(function () use ($id, $graphName, $initialState, $streamId, $executionOptions): bool {
             // Verify the record exists and get current status with lock
             $current = $this->db->table($this->table)
                 ->where('id', $id)
                 ->lockForUpdate()
                 ->first();
 
-            if (! $current && $mustExist) {
+            if (! $current && isset(self::$queuedRuns[$id])) {
                 if ((bool) config('agenticgraph.logging.enabled', true)) {
                     $this->logger->info('Execution row is gone, not started', ['execution_id' => $id]);
                 }
@@ -623,31 +659,6 @@ class ExecutionRepository implements ExecutionStore
     public function deleteBatchResults(string $executionId): void
     {
         InstrumentationGate::internal(fn () => $this->db->table(self::BATCH_RESULTS_TABLE)->where('execution_id', $executionId)->delete());
-    }
-
-    /**
-     * Clean up old completed/failed executions
-     */
-    public function cleanup(int $olderThanDays = 30, ?string $status = null): int
-    {
-        $threshold = now()->subDays($olderThanDays);
-
-        return $this->db->transaction(function () use ($threshold, $status) {
-            // Rows of a batch that never ended (its worker died); a batch that ends deletes its own.
-            $this->db->table(self::BATCH_RESULTS_TABLE)->where('created_at', '<', $threshold)->delete();
-
-            $query = $this->db->table($this->table)
-                ->where('completed_at', '<', $threshold);
-
-            if ($status) {
-                $query->where('status', $status);
-            } else {
-                // Only cleanup completed and failed, keep running/queued
-                $query->whereIn('status', ['completed', 'failed']);
-            }
-
-            return $query->delete();
-        });
     }
 
     /**

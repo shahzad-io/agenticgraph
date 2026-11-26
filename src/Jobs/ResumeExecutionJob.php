@@ -88,9 +88,9 @@ class ResumeExecutionJob implements ShouldBeUnique, ShouldQueue
                     delivery: $delivery,
                     resumeFromCheckpointId: $checkpointId,
                 );
-                $streamResumption->resumeStream($checkpointId, $this->humanInput, $streamOptions, mustExist: true);
+                ExecutionRepository::asQueuedRun((string) $interrupt->executionId(), fn () => $streamResumption->resumeStream($checkpointId, $this->humanInput, $streamOptions));
             } else {
-                $interrupts->resumeWithInput($checkpointId, $this->humanInput, mustExist: true);
+                ExecutionRepository::asQueuedRun((string) $interrupt->executionId(), fn () => $interrupts->resumeWithInput($checkpointId, $this->humanInput));
             }
 
             $resolution = ['input' => $this->humanInput];

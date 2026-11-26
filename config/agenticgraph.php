@@ -56,6 +56,9 @@ return [
         'queued_timeout' => env('AGENTICGRAPH_EXECUTION_QUEUED_TIMEOUT', 300), // seconds
         'stale_grace' => env('AGENTICGRAPH_EXECUTION_STALE_GRACE', 60), // seconds
         'stale_running_after' => env('AGENTICGRAPH_EXECUTION_STALE_RUNNING_AFTER', 900), // seconds, used when timeout is 0
+        // agenticgraph:executions:prune (schedule it) deletes completed and failed runs older than this many days, with
+        // their stream events, interrupts, batch results and checkpoints. Null or 0, the default, is off.
+        'retention_days' => env('AGENTICGRAPH_EXECUTION_RETENTION_DAYS'),
         'max_iterations' => env('AGENTICGRAPH_MAX_ITERATIONS', 1000), // existing - used when loop.enabled = false
 
         // Loop support configuration (opt-in, backward compatible)
@@ -98,7 +101,8 @@ return [
         'cache_ttl' => env('AGENTICGRAPH_PRISM_CACHE_TTL', 60),
         'max_tokens' => env('AGENTICGRAPH_PRISM_MAX_TOKENS', null), // max output tokens per PrismNode call; null = no limit sent
         'temperature' => env('AGENTICGRAPH_PRISM_TEMPERATURE', null), // 0 to 2; a node's $temperature or a call's temperature() wins; null = not sent
-        // Extra model calls when a structured reply does not decode or fit as(); the error is fed back. 0 = fail at once.
+        // Extra model calls when a structured reply does not decode, misses a required key or does not fit as(); the
+        // error is fed back. 0 = fail at once.
         'structured' => [
             'retries' => env('AGENTICGRAPH_PRISM_STRUCTURED_RETRIES', 1),
         ],

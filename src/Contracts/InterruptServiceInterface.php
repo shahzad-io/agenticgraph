@@ -21,6 +21,5 @@ interface InterruptServiceInterface
 
     public function resume(string $checkpointId): StateContract;
 
-    /** @param  bool  $mustExist  a queued resume: a missing run row stops it and creates nothing */
-    public function resumeWithInput(string $checkpointId, mixed $humanInput, bool $mustExist = false): StateContract;
+    public function resumeWithInput(string $checkpointId, mixed $humanInput): StateContract;
 }

@@ -129,8 +129,7 @@ class ExecutionCoordinator
         StateContract $state,
         ExecutionOptions $options = new ExecutionOptions,
         bool $useBatch = false,
-        ?string $executionId = null,
-        bool $mustExist = false
+        ?string $executionId = null
     ): StateContract {
         $state->validate();
 
@@ -139,11 +138,10 @@ class ExecutionCoordinator
         $traceContext = $scope->traceContext;
         $executionContext = $scope->context;
 
-        // $mustExist: a queued run. Its row was written at dispatch; a missing one was deleted and stays deleted.
-        if (! $mustExist && ! $this->repo->get($executionId)) {
+        if (! $this->repo->get($executionId)) {
             $this->repo->queued($executionId, $graph->name, State::toStoragePayload($state), null, $options);
         }
-        if (! $this->repo->started($executionId, $graph->name, State::toStoragePayload($state), null, $options, $mustExist)) {
+        if (! $this->repo->started($executionId, $graph->name, State::toStoragePayload($state), null, $options)) {
             $e = new ExecutionEndedException($executionId); // Ended elsewhere: write nothing.
             $this->contextManager->exitWithException($scope, $e);
 
@@ -365,8 +363,7 @@ class ExecutionCoordinator
         StateContract $state,
         StreamOptions $options,
         ?string $executionId = null,
-        ?ExecutionOptions $executionOptions = null,
-        bool $mustExist = false
+        ?ExecutionOptions $executionOptions = null
     ): StreamHandle {
         $graph = $this->graphRegistry->getOrBuild($name);
         if ($graph === null) {
@@ -378,7 +375,7 @@ class ExecutionCoordinator
 
         $executionId = ExecutionId::resolve($executionId);
 
-        return $this->streamingCoordinator->execute($graph, $state, $options, $executionId, $executionOptions, $mustExist);
+        return $this->streamingCoordinator->execute($graph, $state, $options, $executionId, $executionOptions);
     }
 
     public function executeWithStreamingFromNode(
@@ -388,8 +385,7 @@ class ExecutionCoordinator
         string $executionId,
         StreamOptions $options,
         ?LoopMetadata $loopMetadata = null,
-        ?StreamResumePayload $resumePayload = null,
-        bool $mustExist = false
+        ?StreamResumePayload $resumePayload = null
     ): StreamHandle {
         return $this->streamingCoordinator->executeFromNodeWithResume(
             $graph,
@@ -398,8 +394,7 @@ class ExecutionCoordinator
             $options,
             $executionId,
             $loopMetadata,
-            $resumePayload,
-            $mustExist
+            $resumePayload
         );
     }
 
@@ -542,8 +537,7 @@ class ExecutionCoordinator
         string $executionId,
         bool $useBatch = false,
         ?LoopMetadata $loopMetadata = null,
-        bool $skipInterruptGateForEntry = false,
-        bool $mustExist = false
+        bool $skipInterruptGateForEntry = false
     ): StateContract {
         $this->repo->reopen($executionId, includeExpired: true); // An explicit new run, even of an expired execution.
         $options = new ExecutionOptions;
@@ -582,11 +576,11 @@ class ExecutionCoordinator
                     }
 
                     $currentStatus = $this->repo->getStatus($executionId);
-                    if ($mustExist && $currentStatus === null && ! $this->repo->exists($executionId)) {
+                    if ($currentStatus === null && $this->repo->isDeletedQueuedRun($executionId)) {
                         throw new ExecutionEndedException($executionId); // Deleted: write nothing.
                     }
                     if ($currentStatus === 'queued' || $currentStatus === 'interrupted') {
-                        if (! $this->repo->started($executionId, $graph->name, State::toStoragePayload($state), mustExist: $mustExist) && $mustExist) {
+                        if (! $this->repo->started($executionId, $graph->name, State::toStoragePayload($state)) && $this->repo->isDeletedQueuedRun($executionId)) {
                             throw new ExecutionEndedException($executionId);
                         }
                     }

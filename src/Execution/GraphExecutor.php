@@ -59,10 +59,9 @@ class GraphExecutor implements ExecutionLoopDelegate
         StateContract $state,
         ExecutionOptions $options = new ExecutionOptions,
         bool $useBatch = false,
-        ?string $executionId = null,
-        bool $mustExist = false
+        ?string $executionId = null
     ): StateContract {
-        return $this->coordinator->execute($graph, $state, $options, $useBatch, $executionId, $mustExist);
+        return $this->coordinator->execute($graph, $state, $options, $useBatch, $executionId);
     }
 
     public function executeWithOptions(Graph $graph, StateContract $state, ExecutionOptions $options, ?string $executionId = null): ExecutionHandle
@@ -75,10 +74,9 @@ class GraphExecutor implements ExecutionLoopDelegate
         StateContract $state,
         StreamOptions $options,
         ?string $executionId = null,
-        ?ExecutionOptions $executionOptions = null,
-        bool $mustExist = false
+        ?ExecutionOptions $executionOptions = null
     ): StreamHandle {
-        return $this->coordinator->executeWithStreaming($name, $state, $options, $executionId, $executionOptions, $mustExist);
+        return $this->coordinator->executeWithStreaming($name, $state, $options, $executionId, $executionOptions);
     }
 
     public function executeWithStreamingFromNode(
@@ -88,8 +86,7 @@ class GraphExecutor implements ExecutionLoopDelegate
         string $executionId,
         StreamOptions $options,
         ?LoopMetadata $loopMetadata = null,
-        ?StreamResumePayload $resumePayload = null,
-        bool $mustExist = false
+        ?StreamResumePayload $resumePayload = null
     ): StreamHandle {
         return $this->coordinator->executeWithStreamingFromNode(
             $graph,
@@ -98,8 +95,7 @@ class GraphExecutor implements ExecutionLoopDelegate
             $executionId,
             $options,
             $loopMetadata,
-            $resumePayload,
-            $mustExist
+            $resumePayload
         );
     }
 
@@ -172,8 +168,7 @@ class GraphExecutor implements ExecutionLoopDelegate
         string $executionId,
         bool $useBatch = false,
         ?LoopMetadata $loopMetadata = null,
-        bool $skipInterruptGateForEntry = false,
-        bool $mustExist = false
+        bool $skipInterruptGateForEntry = false
     ): StateContract {
         return $this->coordinator->executeFromNode(
             $graph,
@@ -182,8 +177,7 @@ class GraphExecutor implements ExecutionLoopDelegate
             $executionId,
             $useBatch,
             $loopMetadata,
-            $skipInterruptGateForEntry,
-            $mustExist
+            $skipInterruptGateForEntry
         );
     }
 

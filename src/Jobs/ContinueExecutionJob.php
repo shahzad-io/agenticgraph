@@ -128,18 +128,17 @@ class ContinueExecutionJob implements ShouldQueue
                 );
                 app()->instance(StreamContext::class, new StreamContext($session));
 
-                $executor->executeWithStreamingFromNode(
+                ExecutionRepository::asQueuedRun($this->executionId, fn () => $executor->executeWithStreamingFromNode(
                     $graph,
                     $state,
                     $this->startNode,
                     $this->executionId,
                     $streamOptions,
                     $loopMeta,
-                    $this->resumePayload,
-                    mustExist: true
-                );
+                    $this->resumePayload
+                ));
             } else {
-                $executor->executeFromNode($graph, $state, $this->startNode, $this->executionId, useBatch: true, loopMetadata: $loopMeta, mustExist: true);
+                ExecutionRepository::asQueuedRun($this->executionId, fn () => $executor->executeFromNode($graph, $state, $this->startNode, $this->executionId, useBatch: true, loopMetadata: $loopMeta));
             }
         } catch (ExecutionEndedException) {
             // Ended elsewhere while this worker ran it: nothing more to write, not a failure.

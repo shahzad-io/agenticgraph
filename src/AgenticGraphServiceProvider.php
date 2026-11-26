@@ -22,6 +22,7 @@ use Shahzad\AgenticGraph\Console\CheckpointResumeCommand;
 use Shahzad\AgenticGraph\Console\ExecuteGraphCommand;
 use Shahzad\AgenticGraph\Console\ExecutionsExpireCommand;
 use Shahzad\AgenticGraph\Console\ExecutionsListCommand;
+use Shahzad\AgenticGraph\Console\ExecutionsPruneCommand;
 use Shahzad\AgenticGraph\Console\InterruptExpireCommand;
 use Shahzad\AgenticGraph\Console\ListGraphsCommand;
 use Shahzad\AgenticGraph\Console\ListPromptsCommand;
@@ -118,6 +119,7 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
             ->hasCommand(ExecutionsListCommand::class)
             ->hasCommand(InterruptExpireCommand::class)
             ->hasCommand(ExecutionsExpireCommand::class)
+            ->hasCommand(ExecutionsPruneCommand::class)
             ->hasCommand(SyncModelPricingCommand::class)
             ->hasCommand(ListPromptsCommand::class);
     }
@@ -272,8 +274,7 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
                     string $executionId,
                     bool $useBatch = false,
                     ?LoopMetadata $loopMetadata = null,
-                    bool $skipInterruptGateForEntry = false,
-                    bool $mustExist = false
+                    bool $skipInterruptGateForEntry = false
                 ): StateContract {
                     return $this->container
                         ->make(GraphExecutor::class)
@@ -284,8 +285,7 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
                             $executionId,
                             $useBatch,
                             $loopMetadata,
-                            $skipInterruptGateForEntry,
-                            $mustExist
+                            $skipInterruptGateForEntry
                         );
                 }
             };
