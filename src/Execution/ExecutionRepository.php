@@ -16,7 +16,7 @@ class ExecutionRepository implements ExecutionStore
 
     public const ROOT_SPAN_KEY = 'trace_root_span_id';
 
-    /** Kept in execution_options (no migration) when agenticgraph:*:expire ended the execution: that end is final. */
+    /** Kept in execution_options (no migration): `expiry` (agenticgraph:*:expire) or `skip`. Either end is final. */
     public const ENDED_BY_KEY = 'ended_by';
 
     public const ENDED_REASON_KEY = 'ended_reason';
@@ -89,20 +89,30 @@ class ExecutionRepository implements ExecutionStore
 
     /**
      * @param  array<string, mixed>  $initialState
+     * @param  bool  $mustExist  a queued run: a missing row returns false and creates nothing
      */
     public function started(
         string $id,
         string $graphName,
         array $initialState = [],
         ?string $streamId = null,
-        ?ExecutionOptions $executionOptions = null
+        ?ExecutionOptions $executionOptions = null,
+        bool $mustExist = false
     ): bool {
-        return InstrumentationGate::internal(fn () => $this->db->transaction(function () use ($id, $graphName, $initialState, $streamId, $executionOptions): bool {
+        return InstrumentationGate::internal(fn () => $this->db->transaction(function () use ($id, $graphName, $initialState, $streamId, $executionOptions, $mustExist): bool {
             // Verify the record exists and get current status with lock
             $current = $this->db->table($this->table)
                 ->where('id', $id)
                 ->lockForUpdate()
                 ->first();
+
+            if (! $current && $mustExist) {
+                if ((bool) config('agenticgraph.logging.enabled', true)) {
+                    $this->logger->info('Execution row is gone, not started', ['execution_id' => $id]);
+                }
+
+                return false;
+            }
 
             if (! $current) {
                 // If record doesn't exist, create it first (shouldn't happen in normal flow)
@@ -309,12 +319,41 @@ class ExecutionRepository implements ExecutionStore
     }
 
     /**
+     * Fails a run the skipQueuedRunsUsing() callback skipped. Returns false, and changes nothing, when the row is
+     * missing or already ended. Not failed(): a skip is not an error, so it logs nothing here.
+     */
+    public function skipped(string $id, string $reason): bool
+    {
+        $updated = InstrumentationGate::internal(fn () => $this->db->table($this->table)
+            ->where('id', $id)
+            ->whereNotIn('status', ['completed', 'failed'])
+            ->update(['status' => 'failed', 'error' => 'Skipped: '.$reason, 'updated_at' => now()])) > 0;
+        if ($updated) {
+            $this->markEndedBySkip($id);
+        }
+
+        return $updated;
+    }
+
+    public function markEndedBySkip(string $id): void
+    {
+        $this->mergeOptions($id, [self::ENDED_BY_KEY => 'skip', self::ENDED_REASON_KEY => 'skipped']);
+    }
+
+    /** True when an expiry command or a skip ended the run: no worker or recovery job reopens it. */
+    public function endedForGood(string $id): bool
+    {
+        return in_array($this->storedOptions($id)[self::ENDED_BY_KEY] ?? null, ['expiry', 'skip'], true);
+    }
+
+    /**
      * Brings an ended execution back to running. A worker or recovery job passes nothing and cannot reopen an
-     * execution an expiry command ended; executeFromNode() is an explicit new run and passes `$includeExpired`.
+     * execution an expiry command or a skip ended; executeFromNode() is an explicit new run and passes
+     * `$includeExpired`.
      */
     public function reopen(string $id, bool $includeExpired = false): bool
     {
-        if (! $includeExpired && $this->endedByExpiry($id)) {
+        if (! $includeExpired && $this->endedForGood($id)) {
             return false;
         }
 
@@ -351,6 +390,15 @@ class ExecutionRepository implements ExecutionStore
         }
         InstrumentationGate::internal(fn () => $this->db->table($this->table)->where('id', $id)
             ->update(['execution_options' => json_encode($options, JSON_UNESCAPED_SLASHES)]));
+    }
+
+    /**
+     * True when the run has a row. Reads the write connection: replica lag must not make a queued job skip a run that
+     * was just committed.
+     */
+    public function exists(string $id): bool
+    {
+        return InstrumentationGate::internal(fn () => $this->db->table($this->table)->useWritePdo()->where('id', $id)->exists());
     }
 
     /**

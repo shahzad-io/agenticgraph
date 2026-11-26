@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Bus;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Execution\ExecutionMode;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
+use Shahzad\AgenticGraph\Execution\ExecutionRepository;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
 use Shahzad\AgenticGraph\Facades\AgenticGraph;
@@ -159,9 +160,11 @@ it('ASYNC+BROADCAST broadcasts and writes to store', function () {
     );
     app()->instance(Broadcaster::class, $broadcaster);
 
+    $executionId = uniqid('exec_', true);
+    app(ExecutionRepository::class)->queued($executionId, 'async-broadcast-store');
     $job = new ExecuteGraphJob(
         graphName: 'async-broadcast-store',
-        executionId: uniqid('exec_', true),
+        executionId: $executionId,
         stateData: (new State)->toArray(),
         checkpointId: null,
         rootSpanId: uniqid('span_', true),

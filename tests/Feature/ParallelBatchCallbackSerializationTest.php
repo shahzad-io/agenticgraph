@@ -110,6 +110,7 @@ it('round-trips the batch then callback and dispatches ContinueExecutionJob', fu
 
     registerP14ParallelGraph('p14-serializable-then');
     $executionId = 'exec-p14-then';
+    app(ExecutionRepository::class)->queued($executionId, 'p14-serializable-then');
     Cache::put('agenticgraph:batch:'.$executionId.':branch1', (new State(['branch' => 1]))->toArray());
     Cache::put('agenticgraph:batch:'.$executionId.':branch2', (new State(['branch' => 2]))->toArray());
 
@@ -192,6 +193,7 @@ it('persists a checkpoint when the serialized then callback completes', function
 
     registerP14ParallelGraph('p14-serializable-checkpoint');
     $executionId = 'exec-p14-checkpoint';
+    app(ExecutionRepository::class)->queued($executionId, 'p14-serializable-checkpoint');
     Cache::put('agenticgraph:batch:'.$executionId.':branch1', (new State(['branch' => 1]))->toArray());
     Cache::put('agenticgraph:batch:'.$executionId.':branch2', (new State(['branch' => 2]))->toArray());
 

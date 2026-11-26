@@ -12,6 +12,7 @@ use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
 use Shahzad\AgenticGraph\Events\NodeExecutionStarted;
 use Shahzad\AgenticGraph\Execution\ExecutionMode;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
+use Shahzad\AgenticGraph\Execution\ExecutionRepository;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
 use Shahzad\AgenticGraph\Facades\AgenticGraph;
@@ -152,6 +153,7 @@ it('ExecuteGraphJob sets up tracing context before execution', function () {
     $rootSpanId = uniqid('span_', true);
 
     // Create the job
+    app(ExecutionRepository::class)->queued($executionId, 'job-trace-test');
     $job = new ExecuteGraphJob(
         graphName: 'job-trace-test',
         executionId: $executionId,
@@ -207,9 +209,11 @@ it('ExecuteGraphJob emits to broadcast sink', function () {
     );
     app()->instance(Broadcaster::class, $broadcaster);
 
+    $executionId = uniqid('exec_', true);
+    app(ExecutionRepository::class)->queued($executionId, 'job-stream-broadcast');
     $job = new ExecuteGraphJob(
         graphName: 'job-stream-broadcast',
-        executionId: uniqid('exec_', true),
+        executionId: $executionId,
         stateData: (new State)->toArray(),
         checkpointId: null,
         rootSpanId: uniqid('span_', true),
@@ -237,9 +241,11 @@ it('ExecuteGraphJob writes events to stream store', function () {
     AgenticGraph::register('job-stream-store', $graph);
 
     $streamId = uniqid('stream_', true);
+    $executionId = uniqid('exec_', true);
+    app(ExecutionRepository::class)->queued($executionId, 'job-stream-store');
     $job = new ExecuteGraphJob(
         graphName: 'job-stream-store',
-        executionId: uniqid('exec_', true),
+        executionId: $executionId,
         stateData: (new State)->toArray(),
         checkpointId: null,
         rootSpanId: uniqid('span_', true),
@@ -270,6 +276,7 @@ it('ExecuteGraphJob includes stream id in checkpoints', function () {
 
     $streamId = uniqid('stream_', true);
     $executionId = uniqid('exec_', true);
+    app(ExecutionRepository::class)->queued($executionId, 'job-stream-checkpoint');
     $job = new ExecuteGraphJob(
         graphName: 'job-stream-checkpoint',
         executionId: $executionId,
@@ -307,9 +314,11 @@ it('ExecuteGraphJob handles streaming errors', function () {
 
     AgenticGraph::register('job-stream-error', $graph);
 
+    $executionId = uniqid('exec_', true);
+    app(ExecutionRepository::class)->queued($executionId, 'job-stream-error');
     $job = new ExecuteGraphJob(
         graphName: 'job-stream-error',
-        executionId: uniqid('exec_', true),
+        executionId: $executionId,
         stateData: (new State)->toArray(),
         checkpointId: null,
         rootSpanId: uniqid('span_', true),
@@ -343,6 +352,7 @@ it('recovers from crash by resuming stream from checkpoint', function () {
     $executionId = uniqid('exec_', true);
     $options = new ExecutionOptions(mode: ExecutionMode::ASYNC, streaming: StreamingMode::ITERATOR);
 
+    app(ExecutionRepository::class)->queued($executionId, 'job-stream-crash');
     $job = new ExecuteGraphJob(
         graphName: 'job-stream-crash',
         executionId: $executionId,

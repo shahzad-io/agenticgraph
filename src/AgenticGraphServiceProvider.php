@@ -272,7 +272,8 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
                     string $executionId,
                     bool $useBatch = false,
                     ?LoopMetadata $loopMetadata = null,
-                    bool $skipInterruptGateForEntry = false
+                    bool $skipInterruptGateForEntry = false,
+                    bool $mustExist = false
                 ): StateContract {
                     return $this->container
                         ->make(GraphExecutor::class)
@@ -283,7 +284,8 @@ class AgenticGraphServiceProvider extends PackageServiceProvider
                             $executionId,
                             $useBatch,
                             $loopMetadata,
-                            $skipInterruptGateForEntry
+                            $skipInterruptGateForEntry,
+                            $mustExist
                         );
                 }
             };

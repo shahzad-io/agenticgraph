@@ -28,6 +28,8 @@ class AgenticGraph
 {
     public const STREAM_AUTHORIZER = 'agenticgraph.streams.authorizer';
 
+    public const QUEUED_RUN_SKIPPER = 'agenticgraph.queued_runs.skipper';
+
     /**
      * Adds an app check to the three stream routes. It runs after the stream token check, never instead of it, and
      * returns false to deny (403 `stream_forbidden`). Null removes it.
@@ -37,6 +39,19 @@ class AgenticGraph
     public function authorizeStreamsUsing(?\Closure $callback): void
     {
         app()->instance(self::STREAM_AUTHORIZER, $callback);
+    }
+
+    /**
+     * Asks the app before a queued job runs: all four graph jobs call it after they know the run exists and has not
+     * ended. Null runs the job; a string is the reason to skip it, and the run ends as failed with ended_by=skip. Any
+     * other value throws. If the callback throws, the job fails as usual. It runs on the worker, with no request or
+     * tenant bound. Null removes it.
+     *
+     * @param  (\Closure(StateContract, string, string): ?string)|null  $callback  state, graph name, execution id
+     */
+    public function skipQueuedRunsUsing(?\Closure $callback): void
+    {
+        app()->instance(self::QUEUED_RUN_SKIPPER, $callback);
     }
 
     public function registry(): GraphRegistry

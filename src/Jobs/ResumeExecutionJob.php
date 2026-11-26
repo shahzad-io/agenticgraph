@@ -14,8 +14,10 @@ use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Contracts\InterruptHandlerInterface;
 use Shahzad\AgenticGraph\Contracts\InterruptServiceInterface;
+use Shahzad\AgenticGraph\Contracts\StorageInterface;
 use Shahzad\AgenticGraph\Exceptions\ExecutionEndedException;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
+use Shahzad\AgenticGraph\Execution\ExecutionRepository;
 use Shahzad\AgenticGraph\Execution\ExecutionStore;
 use Shahzad\AgenticGraph\Execution\InterruptRecord;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
@@ -60,7 +62,17 @@ class ResumeExecutionJob implements ShouldBeUnique, ShouldQueue
         }
         $delivery = $metadata['stream_delivery'] ?? null;
 
+        if (! app(ExecutionRepository::class)->exists((string) $interrupt->executionId())) {
+            Log::info('AgenticGraph: job skipped, execution row is gone', ['interrupt_id' => $this->interruptId]);
+
+            return;
+        }
+
         try {
+            if ($this->skipResume($interrupt, $checkpointId, $metadata)) {
+                return;
+            }
+
             if (is_string($delivery) && $delivery !== '') {
                 $executionOptions = new ExecutionOptions;
                 $executionId = $interrupt->executionId();
@@ -76,9 +88,9 @@ class ResumeExecutionJob implements ShouldBeUnique, ShouldQueue
                     delivery: $delivery,
                     resumeFromCheckpointId: $checkpointId,
                 );
-                $streamResumption->resumeStream($checkpointId, $this->humanInput, $streamOptions);
+                $streamResumption->resumeStream($checkpointId, $this->humanInput, $streamOptions, mustExist: true);
             } else {
-                $interrupts->resumeWithInput($checkpointId, $this->humanInput);
+                $interrupts->resumeWithInput($checkpointId, $this->humanInput, mustExist: true);
             }
 
             $resolution = ['input' => $this->humanInput];
@@ -118,6 +130,41 @@ class ResumeExecutionJob implements ShouldBeUnique, ShouldQueue
 
             throw $e;
         }
+    }
+
+    /**
+     * The job carries only the interrupt id, so the callback gets the state of the interrupt checkpoint. A skipped
+     * resume resolves the interrupt as skipped; the interrupt handler is not told.
+     *
+     * @param  array<string, mixed>  $metadata
+     */
+    private function skipResume(InterruptRecord $interrupt, string $checkpointId, array $metadata): bool
+    {
+        $executionId = (string) $interrupt->executionId();
+        if (app(ExecutionRepository::class)->hasEnded($executionId)) {
+            return false;
+        }
+        $checkpoint = app(StorageInterface::class)->load($checkpointId);
+        if ($checkpoint === null) {
+            return false; // The resume reports the missing checkpoint.
+        }
+
+        $delivery = $metadata['stream_delivery'] ?? null;
+        $streamId = $metadata['stream_id'] ?? null;
+        $lastSeq = $metadata['stream_last_seq'] ?? null;
+        $skipped = $this->skipQueuedRun(
+            $checkpoint->state,
+            $checkpoint->graphName,
+            $executionId,
+            is_string($streamId) ? $streamId : null,
+            is_string($delivery) ? StreamingMode::tryFrom($delivery) : null,
+            is_int($lastSeq) ? $lastSeq : null,
+        );
+        if ($skipped) {
+            $interrupt->resolve(['outcome' => 'skipped']);
+        }
+
+        return $skipped;
     }
 
     private function resolveInterruptHandler(): ?InterruptHandlerInterface

@@ -28,7 +28,7 @@ use Shahzad\AgenticGraph\Tracing\TraceContext;
 
 class ContinueExecutionJob implements ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use Dispatchable, EndsFailedExecution, InteractsWithQueue, Queueable, SerializesModels;
 
     /**
      * @param  array<string, mixed>  $stateData
@@ -52,12 +52,27 @@ class ContinueExecutionJob implements ShouldQueue
 
     public function handle(GraphExecutor $executor, GraphRegistry $registry): void
     {
-        // An execution that already ended (expired, or failed by another branch) stays ended: nothing runs and
+        // An execution that already ended (expired, skipped, or failed by another branch) stays ended: nothing runs and
         // nothing is written. Otherwise this is progress, so the expire command leaves the run alone.
         $repo = app(ExecutionRepository::class);
+        if (! $repo->exists($this->executionId)) {
+            Log::info('AgenticGraph: job skipped, execution row is gone', ['execution_id' => $this->executionId]);
+
+            return;
+        }
         // Deliberate crash recovery (a resume payload from a checkpoint) continues a failed run; any other job on an
         // ended execution, for example a branch that outlived an expiry, stays out.
-        if ($this->resumePayload !== null && $repo->getStatus($this->executionId) === 'failed') {
+        $recovers = $this->resumePayload !== null && $repo->getStatus($this->executionId) === 'failed' && ! $repo->endedForGood($this->executionId);
+        if (! $recovers && $repo->hasEnded($this->executionId)) {
+            Log::info('AgenticGraph: job skipped, execution already ended', ['execution_id' => $this->executionId]);
+
+            return;
+        }
+        // Before reopen(): a skipped run must not come back to running.
+        if ($this->skipQueuedRun(State::fromArray($this->stateData), $this->graphName, $this->executionId, $this->streamId, $this->executionOptions?->streaming, $this->streamSeq)) {
+            return;
+        }
+        if ($recovers) {
             $repo->reopen($this->executionId);
         }
         if (! $repo->touch($this->executionId)) {
@@ -120,10 +135,11 @@ class ContinueExecutionJob implements ShouldQueue
                     $this->executionId,
                     $streamOptions,
                     $loopMeta,
-                    $this->resumePayload
+                    $this->resumePayload,
+                    mustExist: true
                 );
             } else {
-                $executor->executeFromNode($graph, $state, $this->startNode, $this->executionId, useBatch: true, loopMetadata: $loopMeta);
+                $executor->executeFromNode($graph, $state, $this->startNode, $this->executionId, useBatch: true, loopMetadata: $loopMeta, mustExist: true);
             }
         } catch (ExecutionEndedException) {
             // Ended elsewhere while this worker ran it: nothing more to write, not a failure.

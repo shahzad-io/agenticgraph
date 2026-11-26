@@ -282,6 +282,13 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
         ?array $loopMetadataArray = null,
         ?string $rootSpanId = null,
     ): void {
+        // A deleted or ended run (skipped, failed, expired) has nothing to join; its missing results are not an error.
+        if (! $this->repo->exists($executionId) || $this->repo->hasEnded($executionId)) {
+            $this->logger->info('Batch completion skipped, execution row is gone or ended', ['execution_id' => $executionId]);
+
+            return;
+        }
+
         $graph = app(GraphRegistry::class)->get($graphName);
         if ($graph === null) {
             throw new \RuntimeException("Graph not found: {$graphName}");

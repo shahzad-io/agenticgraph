@@ -129,7 +129,8 @@ class ExecutionCoordinator
         StateContract $state,
         ExecutionOptions $options = new ExecutionOptions,
         bool $useBatch = false,
-        ?string $executionId = null
+        ?string $executionId = null,
+        bool $mustExist = false
     ): StateContract {
         $state->validate();
 
@@ -138,10 +139,11 @@ class ExecutionCoordinator
         $traceContext = $scope->traceContext;
         $executionContext = $scope->context;
 
-        if (! $this->repo->get($executionId)) {
+        // $mustExist: a queued run. Its row was written at dispatch; a missing one was deleted and stays deleted.
+        if (! $mustExist && ! $this->repo->get($executionId)) {
             $this->repo->queued($executionId, $graph->name, State::toStoragePayload($state), null, $options);
         }
-        if (! $this->repo->started($executionId, $graph->name, State::toStoragePayload($state), null, $options)) {
+        if (! $this->repo->started($executionId, $graph->name, State::toStoragePayload($state), null, $options, $mustExist)) {
             $e = new ExecutionEndedException($executionId); // Ended elsewhere: write nothing.
             $this->contextManager->exitWithException($scope, $e);
 
@@ -363,7 +365,8 @@ class ExecutionCoordinator
         StateContract $state,
         StreamOptions $options,
         ?string $executionId = null,
-        ?ExecutionOptions $executionOptions = null
+        ?ExecutionOptions $executionOptions = null,
+        bool $mustExist = false
     ): StreamHandle {
         $graph = $this->graphRegistry->getOrBuild($name);
         if ($graph === null) {
@@ -375,7 +378,7 @@ class ExecutionCoordinator
 
         $executionId = ExecutionId::resolve($executionId);
 
-        return $this->streamingCoordinator->execute($graph, $state, $options, $executionId, $executionOptions);
+        return $this->streamingCoordinator->execute($graph, $state, $options, $executionId, $executionOptions, $mustExist);
     }
 
     public function executeWithStreamingFromNode(
@@ -385,7 +388,8 @@ class ExecutionCoordinator
         string $executionId,
         StreamOptions $options,
         ?LoopMetadata $loopMetadata = null,
-        ?StreamResumePayload $resumePayload = null
+        ?StreamResumePayload $resumePayload = null,
+        bool $mustExist = false
     ): StreamHandle {
         return $this->streamingCoordinator->executeFromNodeWithResume(
             $graph,
@@ -394,7 +398,8 @@ class ExecutionCoordinator
             $options,
             $executionId,
             $loopMetadata,
-            $resumePayload
+            $resumePayload,
+            $mustExist
         );
     }
 
@@ -445,7 +450,7 @@ class ExecutionCoordinator
             checkpointId: null,
             rootSpanId: $rootSpanId,
             executionOptions: $options,
-        ));
+        ))->afterCommit(); // A worker must not take the job before the row it needs is committed.
 
         return $executionId;
     }
@@ -537,7 +542,8 @@ class ExecutionCoordinator
         string $executionId,
         bool $useBatch = false,
         ?LoopMetadata $loopMetadata = null,
-        bool $skipInterruptGateForEntry = false
+        bool $skipInterruptGateForEntry = false,
+        bool $mustExist = false
     ): StateContract {
         $this->repo->reopen($executionId, includeExpired: true); // An explicit new run, even of an expired execution.
         $options = new ExecutionOptions;
@@ -576,8 +582,13 @@ class ExecutionCoordinator
                     }
 
                     $currentStatus = $this->repo->getStatus($executionId);
+                    if ($mustExist && $currentStatus === null && ! $this->repo->exists($executionId)) {
+                        throw new ExecutionEndedException($executionId); // Deleted: write nothing.
+                    }
                     if ($currentStatus === 'queued' || $currentStatus === 'interrupted') {
-                        $this->repo->started($executionId, $graph->name, State::toStoragePayload($state));
+                        if (! $this->repo->started($executionId, $graph->name, State::toStoragePayload($state), mustExist: $mustExist) && $mustExist) {
+                            throw new ExecutionEndedException($executionId);
+                        }
                     }
 
                     if ($entryAlreadyCounted) {

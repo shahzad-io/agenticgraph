@@ -161,6 +161,7 @@ it('runs global middleware inside ExecuteNodeJob', function (): void {
 
     Event::fake([NodeExecutionTimed::class]);
 
+    app(ExecutionRepository::class)->queued('exec-batch-job-mw', 'batch-job-middleware');
     $job = new ExecuteNodeJob(
         executionId: 'exec-batch-job-mw',
         nodeName: 'branch_one',

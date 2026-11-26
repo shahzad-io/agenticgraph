@@ -26,7 +26,7 @@ final class StreamResumption
         private readonly LoggerInterface $logger
     ) {}
 
-    public function resumeStream(string $checkpointId, mixed $humanInput, StreamOptions $options): StreamHandle
+    public function resumeStream(string $checkpointId, mixed $humanInput, StreamOptions $options, bool $mustExist = false): StreamHandle
     {
         InterruptExpiredException::throwIfExpired($checkpointId);
         $checkpoint = $this->storage->load($checkpointId);
@@ -148,7 +148,8 @@ final class StreamResumption
             $executionId,
             $options,
             $loopMetadata,
-            $resumePayload
+            $resumePayload,
+            $mustExist
         );
     }
 }

@@ -51,7 +51,7 @@ final class AsyncStreamCoordinator
             executionOptions: $options,
             streamId: $streamId,
             streamSeq: 0
-        ));
+        ))->afterCommit(); // A worker must not take the job before the row it needs is committed.
 
         return [
             'executionId' => $executionId,

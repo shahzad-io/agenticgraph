@@ -4,6 +4,7 @@ use Shahzad\AgenticGraph\Contracts\InterruptHandlerInterface;
 use Shahzad\AgenticGraph\Contracts\InterruptServiceInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Execution\CheckpointManager;
+use Shahzad\AgenticGraph\Execution\ExecutionRepository;
 use Shahzad\AgenticGraph\Execution\InterruptRecord;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
 use Shahzad\AgenticGraph\Graph\GraphRegistry;
@@ -157,6 +158,7 @@ it('invokes interrupt handler callbacks on handle and resume', function () {
 
     $manager = app(InterruptServiceInterface::class);
 
+    app(ExecutionRepository::class)->queued('exec-4', 'interrupt-handler-callbacks');
     $result = $manager->handle('exec-4', 'interrupt-handler-callbacks', 'review', new State, null);
 
     expect(InterruptManagerHandler::$handled)->toHaveCount(1);

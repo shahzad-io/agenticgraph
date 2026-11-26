@@ -307,7 +307,7 @@ final class InterruptManager implements InterruptServiceInterface
         );
     }
 
-    public function resumeWithInput(string $checkpointId, mixed $humanInput): StateContract
+    public function resumeWithInput(string $checkpointId, mixed $humanInput, bool $mustExist = false): StateContract
     {
         InterruptExpiredException::throwIfExpired($checkpointId);
         $checkpoint = $this->storage->load($checkpointId);
@@ -390,7 +390,8 @@ final class InterruptManager implements InterruptServiceInterface
             $executionId,
             false,
             $loopMetadata,
-            skipInterruptGateForEntry: true
+            skipInterruptGateForEntry: true,
+            mustExist: $mustExist
         );
     }
 

@@ -101,6 +101,7 @@ beforeEach(function () {
 });
 
 it('continues at the join when a sibling branch finishes more than 300 seconds later', function () {
+    app(ExecutionRepository::class)->queued('exec-pbd-slow', 'pbd');
     pbdRunBranch('exec-pbd-slow', 'a');
     $this->travel(301)->seconds();
     pbdRunBranch('exec-pbd-slow', 'b');
@@ -114,6 +115,7 @@ it('continues at the join when a sibling branch finishes more than 300 seconds l
 });
 
 it('stores a branch result as a row, not in the cache, and deletes the rows when the batch ends', function () {
+    app(ExecutionRepository::class)->queued('exec-pbd-rows', 'pbd');
     pbdRunBranch('exec-pbd-rows', 'a');
     pbdRunBranch('exec-pbd-rows', 'b');
 
@@ -135,6 +137,7 @@ it('keeps the newest result when the same branch runs again in one execution', f
 
 it('reads a result an older job left under the cache key', function () {
     Cache::put('agenticgraph:batch:exec-pbd-old:a', (new State(['a_done' => true]))->toArray(), 300);
+    app(ExecutionRepository::class)->queued('exec-pbd-old', 'pbd');
     pbdRunBranch('exec-pbd-old', 'b');
 
     pbdComplete('exec-pbd-old');

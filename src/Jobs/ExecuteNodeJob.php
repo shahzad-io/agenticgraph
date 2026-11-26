@@ -29,7 +29,7 @@ use Shahzad\AgenticGraph\Tracing\TraceTime;
 class ExecuteNodeJob implements ShouldQueue
 {
     use Batchable;
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use Dispatchable, EndsFailedExecution, InteractsWithQueue, Queueable, SerializesModels;
 
     /**
      * @param  array<string, mixed>  $stateData
@@ -50,6 +50,24 @@ class ExecuteNodeJob implements ShouldQueue
     public function handle(GraphRegistry $registry, NodeMiddlewarePipeline $pipeline): void
     {
         if ($this->batch()?->cancelled()) {
+            return;
+        }
+
+        // A deleted run stays deleted: no branch of it runs.
+        if (! app(ExecutionRepository::class)->exists($this->executionId)) {
+            Log::info('AgenticGraph: job skipped, execution row is gone', ['execution_id' => $this->executionId]);
+
+            return;
+        }
+
+        // A sibling branch, a skip or an expiry already ended the run.
+        if (app(ExecutionRepository::class)->hasEnded($this->executionId)) {
+            Log::info('AgenticGraph: job skipped, execution already ended', ['execution_id' => $this->executionId]);
+
+            return;
+        }
+
+        if ($this->skipQueuedRun(State::fromArray($this->stateData), $this->graphName, $this->executionId)) {
             return;
         }
 

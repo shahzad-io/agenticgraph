@@ -10,6 +10,7 @@ use Shahzad\AgenticGraph\Events\ToolCallCaptured;
 use Shahzad\AgenticGraph\Execution\ExecutionContext;
 use Shahzad\AgenticGraph\Execution\ExecutionContextManager;
 use Shahzad\AgenticGraph\Execution\ExecutionCoordinator;
+use Shahzad\AgenticGraph\Execution\ExecutionRepository;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Execution\InterruptManager;
 use Shahzad\AgenticGraph\Execution\NodeMiddlewarePipeline;
@@ -586,6 +587,7 @@ it('a queued node job sends its node annotations', function () {
     $exporter = anExporter();
     anOrderGraph('an-job');
 
+    app(ExecutionRepository::class)->queued('exec-an-job', 'an-job');
     (new ExecuteNodeJob('exec-an-job', 'answer', ['answer' => 'queued', 'items' => [['name' => 'Cup']]], 'an-job'))
         ->handle(app(GraphRegistry::class), app(NodeMiddlewarePipeline::class));
 

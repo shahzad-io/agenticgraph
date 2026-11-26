@@ -537,6 +537,7 @@ it('an ExecuteNodeJob serialized before loopMetadata existed runs without a loop
     rsFanOutGraph('rs-old-node-job');
     $exporter->startTrace('exec_rs_old_node', 'rs-old-node-job');
 
+    app(ExecutionRepository::class)->queued('exec_rs_old_node', 'rs-old-node-job');
     $serialized = serialize(new ExecuteNodeJob('exec_rs_old_node', 'a', [], 'rs-old-node-job', 'span_rs_root'));
     $serialized = preg_replace('/s:12:"loopMetadata";N;/', '', $serialized);
     $serialized = preg_replace_callback('/^O:(\d+):"([^"]+)":(\d+):/', fn (array $m): string => "O:{$m[1]}:\"{$m[2]}\":".((int) $m[3] - 1).':', $serialized);
@@ -557,6 +558,7 @@ it('an ExecuteNodeJob run inline restores the loop context bound around it', fun
     $outer = new ExecutionContext('exec_rs_inline', microtime(true));
     app()->instance(ExecutionContext::class, $outer);
 
+    app(ExecutionRepository::class)->queued('exec_rs_inline', 'rs-inline-node-job');
     $job = new ExecuteNodeJob('exec_rs_inline', 'a', [], 'rs-inline-node-job', 'span_rs_root', ['node_visit_counts' => ['start' => 1]]);
     app()->call([$job, 'handle']);
 

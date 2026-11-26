@@ -11,6 +11,7 @@ use Shahzad\AgenticGraph\Events\TokensUsed;
 use Shahzad\AgenticGraph\Execution\ExecutionCoordinator;
 use Shahzad\AgenticGraph\Execution\ExecutionMode;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
+use Shahzad\AgenticGraph\Execution\ExecutionRepository;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Execution\ParallelExecutionCoordinator;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
@@ -343,6 +344,7 @@ it('queue: ExecuteNodeJob on one worker emits one span per attempt under the roo
     $executionId = 'exec_ra_queue_'.bin2hex(random_bytes(4));
     $exporter->startTrace($executionId, 'ra-queue');
 
+    app(ExecutionRepository::class)->queued($executionId, 'ra-queue');
     $job = unserialize(serialize(new ExecuteNodeJob($executionId, 'flaky', [], 'ra-queue', 'span_ra_root')));
     try {
         app()->call([$job, 'handle']);
@@ -421,6 +423,7 @@ function raRunPath(RetryAttemptsExporter $exporter, string $path): array
         raGraph($name, RaFlakyNode::class);
         $executionId = 'exec_'.$name;
         $exporter->startTrace($executionId, $name);
+        app(ExecutionRepository::class)->queued($executionId, $name);
         $job = unserialize(serialize(new ExecuteNodeJob($executionId, 'flaky', [], $name, 'span_ra_root')));
         try {
             app()->call([$job, 'handle']);

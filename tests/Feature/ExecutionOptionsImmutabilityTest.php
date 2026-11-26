@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Bus;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Execution\ExecutionMode;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
+use Shahzad\AgenticGraph\Execution\ExecutionRepository;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
 use Shahzad\AgenticGraph\Facades\AgenticGraph;
@@ -233,6 +234,7 @@ it('ContinueExecutionJob serializes readonly executionOptions', function () {
         streaming: StreamingMode::ITERATOR
     );
 
+    app(ExecutionRepository::class)->queued('exec-continue-serialize', 'immutability-continue-serialize');
     $job = new ContinueExecutionJob(
         'immutability-continue-serialize',
         'exec-continue-serialize',
@@ -273,9 +275,11 @@ it('ExecuteGraphJob resolves AUTO to broadcast and emits through the broadcast s
     );
     app()->instance(Broadcaster::class, $broadcaster);
 
+    $executionId = uniqid('exec_', true);
+    app(ExecutionRepository::class)->queued($executionId, 'immutability-job-auto-broadcast');
     $job = new ExecuteGraphJob(
         graphName: 'immutability-job-auto-broadcast',
-        executionId: uniqid('exec_', true),
+        executionId: $executionId,
         stateData: (new State)->toArray(),
         checkpointId: null,
         rootSpanId: uniqid('span_', true),

@@ -537,6 +537,7 @@ it('ExecuteNodeJob queued before C1 still runs and nests under its old parent', 
     $exporter->startTrace('exec_rl_old_node', 'rl-old-node-job');
 
     // Same constructor shape as before C1; the old payload carried the orchestrator span id.
+    app(ExecutionRepository::class)->queued('exec_rl_old_node', 'rl-old-node-job');
     $job = unserialize(serialize(new ExecuteNodeJob('exec_rl_old_node', 'a', [], 'rl-old-node-job', 'span_old_orchestrator')));
     app()->call([$job, 'handle']);
 
