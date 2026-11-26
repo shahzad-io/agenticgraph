@@ -102,6 +102,8 @@ final class NodeMiddlewarePipeline
 
                         return $result;
                     } catch (\Throwable $e) {
+                        // A deleted queued run: no retry and no failure event.
+                        ExecutionRepository::stopIfDeletedQueuedRun($executionId);
                         $durationMs = (microtime(true) - $attemptStart) * 1000;
                         // An execution that ended elsewhere (expired) is never retried: the worker must stop.
                         $willRetry = $attempt <= $max && ! $e instanceof ExecutionEndedException && $node->shouldRetry($e);
@@ -144,10 +146,14 @@ final class NodeMiddlewarePipeline
 
         try {
             $result = $pipeline($state);
+            // Before the caller writes the checkpoint, the batch result or a stream event.
+            ExecutionRepository::stopIfDeletedQueuedRun($executionId);
             $this->reportProgress($executionId);
 
             return $result;
         } catch (\Throwable $e) {
+            ExecutionRepository::stopIfDeletedQueuedRun($executionId);
+
             // A middleware failed outside the retry loop (before $next, or after it returned):
             // record it as a failed attempt so the node still has a span. When the node's own
             // failure was already reported, its span stands; a middleware that rethrows or

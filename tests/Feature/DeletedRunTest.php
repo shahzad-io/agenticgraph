@@ -4,10 +4,16 @@ use Illuminate\Bus\Batch;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Redis;
 use Shahzad\AgenticGraph\Contracts\InterruptServiceInterface;
+use Shahzad\AgenticGraph\Contracts\RouterInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Contracts\StorageInterface;
+use Shahzad\AgenticGraph\Events\GraphExecutionCompleted;
 use Shahzad\AgenticGraph\Events\GraphExecutionFailed;
 use Shahzad\AgenticGraph\Events\InterruptExpired;
+use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
+use Shahzad\AgenticGraph\Events\NodeExecutionFailed;
 use Shahzad\AgenticGraph\Execution\ExecutionMode;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
 use Shahzad\AgenticGraph\Execution\ExecutionRepository;
@@ -68,6 +74,17 @@ class DeletedRunThrowingNode extends DeletedRunNode
     public function execute(StateContract $state): StateContract
     {
         throw new RuntimeException('node failed');
+    }
+}
+
+class DeletedMidRunApproval extends DeletedRunApprovalNode
+{
+    public function execute(StateContract $state): StateContract
+    {
+        $state = parent::execute($state);
+        deletedNow();
+
+        return $state;
     }
 }
 
@@ -371,3 +388,278 @@ it('a synchronous run with no existing row still creates it and completes', func
         ->and(app(ExecutionRepository::class)->getStatus($handle->id()))->toBe('completed')
         ->and(app(ExecutionRepository::class)->getStatus('exec-sync-own-id'))->toBe('completed');
 })->with('deleted streaming');
+
+/*
+ * Deleted while the worker executes it: the node that is running finishes, then the run stops. Nothing is written
+ * after the delete.
+ */
+
+/** Deletes the run row while it executes, then notes what was stored at that moment. */
+function deletedNow(): void
+{
+    $id = (string) DB::table('agenticgraph_executions')->value('id');
+    deletedRunRow($id);
+    DeletedMidRun::$id = $id;
+    DeletedMidRun::$atDelete = deletedStored($id);
+}
+
+/** @return array<string, int> */
+function deletedStored(string $id): array
+{
+    return deletedFootprint($id) + ['stored_checkpoints' => count(app(StorageInterface::class)->listForExecution($id))];
+}
+
+class DeletedMidRun extends DeletedRunNode
+{
+    public static string $id = '';
+
+    /** @var array<string, int> */
+    public static array $atDelete = [];
+
+    public function execute(StateContract $state): StateContract
+    {
+        $state = parent::execute($state);
+        deletedNow();
+
+        return $state;
+    }
+}
+
+class DeletedMidRunThrowing extends DeletedMidRun
+{
+    public function execute(StateContract $state): StateContract
+    {
+        parent::execute($state);
+
+        throw new RuntimeException('node failed after the delete');
+    }
+
+    public function getRetryAttempts(): int
+    {
+        return 2;
+    }
+
+    public function getRetryDelay(): int
+    {
+        return 0;
+    }
+
+    public function shouldRetry(Throwable $e): bool
+    {
+        return true;
+    }
+}
+
+class DeletedRunRouter implements RouterInterface
+{
+    /** @param  list<string>  $routes */
+    public function __construct(private readonly Closure $route, private readonly array $routes) {}
+
+    public function route(StateContract $state): string|array
+    {
+        return ($this->route)();
+    }
+
+    public function getAvailableRoutes(): array
+    {
+        return $this->routes;
+    }
+
+    public function getDefaultRoute(): ?string
+    {
+        return null;
+    }
+
+    public function validateRoute(string $route): bool
+    {
+        return in_array($route, $this->routes, true);
+    }
+}
+
+function deletedTwoNodeGraph(string $first = DeletedMidRun::class, ?Closure $route = null): void
+{
+    $builder = GraphBuilder::create('deleted-run')
+        ->addNode('first', $first)
+        ->addNode('second', DeletedRunNode::class)
+        ->setEntryPoint('first')
+        ->addExitPoint('second');
+    $route === null ? $builder->addEdge('first', 'second') : $builder->addConditionalEdge('first', new DeletedRunRouter($route, ['second']));
+    AgenticGraph::register('deleted-run', $builder->build());
+}
+
+function deletedFanOutGraph(string $first = DeletedMidRun::class, ?Closure $route = null): void
+{
+    $builder = GraphBuilder::create('deleted-run')
+        ->addNode('fan', DeletedRunNode::class)
+        ->addNode('a', $first)
+        ->addNode('b', DeletedRunNode::class)
+        ->addNode('join', DeletedRunNode::class)
+        ->setEntryPoint('fan')
+        ->addExitPoint('join');
+    $route === null
+        ? $builder->addEdge('fan', 'a')->addEdge('fan', 'b')
+        : $builder->addConditionalEdge('fan', new DeletedRunRouter($route, ['a', 'b']));
+    AgenticGraph::register('deleted-run', $builder->addEdge('a', 'join')->addEdge('b', 'join')->build());
+}
+
+function deletedUseStorage(string $storage): void
+{
+    if ($storage === 'redis') {
+        $port = getenv('AGENTICGRAPH_TEST_REDIS_PORT');
+        if ($port === false) {
+            test()->markTestSkipped('Set AGENTICGRAPH_TEST_REDIS_PORT to the port of a disposable Redis.');
+        }
+        config()->set('database.redis.default.port', (int) $port);
+        app()->forgetInstance('redis');
+        Redis::flushdb();
+    }
+    config()->set('agenticgraph.storage', $storage);
+}
+
+/** @return stdClass the failure and completion events seen */
+function deletedWatchEvents(): stdClass
+{
+    $seen = (object) ['events' => []];
+    Event::listen([GraphExecutionFailed::class, NodeExecutionFailed::class, GraphExecutionCompleted::class], function (object $event) use ($seen): void {
+        $seen->events[] = class_basename($event);
+    });
+
+    return $seen;
+}
+
+function deletedExpectStopped(object $job, stdClass $seen, int $runs = 1): void
+{
+    app()->call([$job, 'handle']); // The job does not fail.
+
+    expect(DeletedRunNode::$runs)->toBe($runs)
+        ->and(DeletedMidRun::$id)->not->toBe('')
+        ->and(deletedStored(DeletedMidRun::$id))->toBe(DeletedMidRun::$atDelete)
+        ->and(DeletedMidRun::$atDelete['row'])->toBe(0)
+        ->and($seen->events)->toBe([]);
+}
+
+dataset('checkpoint storage', ['database', 'file', 'redis']);
+
+beforeEach(function () {
+    DeletedMidRun::$id = '';
+    DeletedMidRun::$atDelete = [];
+});
+
+it('stops a queued run deleted while its first node runs', function (StreamingMode $streaming, string $storage) {
+    deletedUseStorage($storage);
+    deletedTwoNodeGraph();
+
+    deletedExpectStopped(deletedQueuedJob($streaming), deletedWatchEvents());
+})->with('deleted streaming')->with('checkpoint storage');
+
+it('stops a queued continuation deleted while its first node runs', function (StreamingMode $streaming, string $storage) {
+    deletedUseStorage($storage);
+    $job = deletedContinueJob($streaming);
+    deletedTwoNodeGraph();
+    $job = new ContinueExecutionJob('deleted-run', $job->executionId, [], 'first', executionOptions: $job->executionOptions, streamId: $job->streamId, streamSeq: 0);
+
+    deletedExpectStopped($job, deletedWatchEvents());
+})->with('deleted streaming')->with('checkpoint storage');
+
+it('stops a queued resume deleted while the resumed node runs', function (StreamingMode $streaming, string $storage) {
+    deletedUseStorage($storage);
+    $job = deletedResumeJob($streaming);
+    AgenticGraph::register('deleted-run', GraphBuilder::create('deleted-run')
+        ->addNode('work', DeletedMidRunApproval::class)
+        ->addNode('second', DeletedRunNode::class)
+        ->setEntryPoint('work')
+        ->addEdge('work', 'second')
+        ->addExitPoint('second')
+        ->build());
+    DeletedRunNode::$runs = 0;
+
+    deletedExpectStopped($job, deletedWatchEvents());
+})->with('deleted streaming')->with('checkpoint storage');
+
+it('reports no failure and does not retry a node that throws after the delete', function (StreamingMode $streaming) {
+    deletedTwoNodeGraph(DeletedMidRunThrowing::class);
+
+    deletedExpectStopped(deletedQueuedJob($streaming), deletedWatchEvents());
+})->with('deleted streaming');
+
+it('does not start the next node of a run deleted during routing', function (StreamingMode $streaming) {
+    deletedUseStorage('file');
+    deletedTwoNodeGraph(DeletedRunNode::class, function (): string {
+        deletedNow();
+
+        return 'second';
+    });
+    DeletedMidRun::$id = '';
+
+    deletedExpectStopped(deletedQueuedJob($streaming), deletedWatchEvents());
+})->with('deleted streaming');
+
+it('reports no failure when routing throws after the delete', function (StreamingMode $streaming) {
+    deletedUseStorage('file');
+    deletedTwoNodeGraph(DeletedRunNode::class, function (): string {
+        deletedNow();
+
+        throw new RuntimeException('routing failed');
+    });
+
+    deletedExpectStopped(deletedQueuedJob($streaming), deletedWatchEvents());
+})->with('deleted streaming');
+
+it('does not complete a run deleted after its last node', function (StreamingMode $streaming) {
+    deletedUseStorage('file');
+    deletedGraph();
+    Event::listen(NodeExecutionCompleted::class, fn () => deletedNow());
+
+    deletedExpectStopped(deletedQueuedJob($streaming), deletedWatchEvents());
+})->with('deleted streaming');
+
+it('does not run the next inline branch of a deleted run', function () {
+    deletedUseStorage('file');
+    deletedFanOutGraph();
+
+    deletedExpectStopped(deletedQueuedJob(StreamingMode::SSE), deletedWatchEvents(), runs: 2);
+});
+
+it('does not fan out a run deleted during routing', function () {
+    deletedUseStorage('file');
+    deletedFanOutGraph(DeletedRunNode::class, function (): array {
+        deletedNow();
+
+        return ['a', 'b'];
+    });
+    $job = deletedQueuedJob(StreamingMode::NONE);
+
+    deletedExpectStopped($job, deletedWatchEvents());
+    Bus::assertNothingBatched();
+});
+
+it('keeps no batch result for a branch of a run deleted while it runs', function () {
+    deletedFanOutGraph();
+    app(ExecutionRepository::class)->queued('exec-deleted-branch', 'deleted-run');
+    app(ExecutionRepository::class)->started('exec-deleted-branch', 'deleted-run');
+
+    deletedExpectStopped(new ExecuteNodeJob('exec-deleted-branch', 'a', [], 'deleted-run'), deletedWatchEvents());
+});
+
+// Control: a synchronous run is not checked. File checkpoints, because database ones need the row.
+it('lets a synchronous run go on when its row is deleted', function () {
+    deletedUseStorage('file');
+    deletedTwoNodeGraph();
+    $seen = deletedWatchEvents();
+
+    $state = app(GraphExecutor::class)->execute(app(GraphRegistry::class)->get('deleted-run'), new State);
+
+    expect(DeletedRunNode::$runs)->toBe(2)
+        ->and($state->get('done'))->toBeTrue()
+        ->and(deletedStored(DeletedMidRun::$id)['stored_checkpoints'])->toBe(2)
+        ->and($seen->events)->toBe(['GraphExecutionCompleted']);
+});
+
+it('keeps no batch result for a branch of a run deleted by a completion listener', function () {
+    deletedFanOutGraph(DeletedRunNode::class);
+    app(ExecutionRepository::class)->queued('exec-deleted-branch', 'deleted-run');
+    app(ExecutionRepository::class)->started('exec-deleted-branch', 'deleted-run');
+    Event::listen(NodeExecutionCompleted::class, fn () => deletedNow());
+
+    deletedExpectStopped(new ExecuteNodeJob('exec-deleted-branch', 'a', [], 'deleted-run'), deletedWatchEvents());
+});

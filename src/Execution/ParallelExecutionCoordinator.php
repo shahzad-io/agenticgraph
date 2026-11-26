@@ -90,6 +90,7 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
         // Resolve before the branches are pushed: the source is the node that fanned out.
         $sourceNode = $this->resolveSourceNode($graph, $parallelNodes);
         foreach ($parallelNodes as $nodeName) {
+            ExecutionRepository::stopIfDeletedQueuedRun($executionId);
             $executionContext = ($this->executionContextProvider)();
             if ($executionContext instanceof ExecutionContext) {
                 $this->container->instance(ExecutionContext::class, $executionContext->pushNode($nodeName));
@@ -172,6 +173,7 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
         StateContract $state,
         string $executionId
     ): ParallelResult {
+        ExecutionRepository::stopIfDeletedQueuedRun($executionId); // Deleted during routing: no fan-out.
         $jobs = [];
         $traceContext = ($this->traceContextProvider)();
         $parentSpanId = $traceContext instanceof TraceContext ? $traceContext->getRootSpanId() : null;

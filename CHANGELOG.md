@@ -13,7 +13,7 @@ A queued run that you delete stays deleted, an app can skip a queued run before 
 
 ### Behavior changes
 
-- **A deleted run stays deleted and runs nothing.** A queued job whose run row is gone logs and returns: no node runs, and no row, stream event, checkpoint or batch result is written. A job's `failed()`, batch completion and `agenticgraph:interrupt:expire` write no stream events for it, and fire no `GraphExecutionFailed` or `InterruptExpired`. Up to 0.3.0 the job could run the node and create the row again. Synchronous runs still create their rows.
+- **A deleted run stays deleted and runs nothing.** A queued job whose run row is gone logs and returns: no node runs, and no row, stream event, checkpoint or batch result is written. A job's `failed()`, batch completion and `agenticgraph:interrupt:expire` write no stream events for it, and fire no `GraphExecutionFailed` or `InterruptExpired`. Up to 0.3.0 the job could run the node and create the row again. A run deleted while a worker runs it stops the same way: the worker checks the row, on the write connection, before each node and again when the node returns or throws. No further node, retry, checkpoint, batch result, stream event, `NodeExecutionFailed` or `GraphExecutionFailed` follows, and the job does not fail. A queued run makes these extra reads of its row. Synchronous runs are not checked and still create their rows.
 - **The first dispatch waits for the commit.** The first job of an async run is dispatched with `afterCommit()`. Inside a database transaction it reaches the queue after the commit, and never after a rollback.
 - **A skip ends a run as `failed`, with `ended_by=skip`.** The row's error is `Skipped: {reason}`. A streamed run gets the usual `graph_failed`, failed `execution_terminal` and, on broadcast, `stream_close`, each with `reason` `skipped`. Your reason text is not sent to the browser. There is no `GraphExecutionFailed` and no failed job, only a log line. A worker or recovery job cannot reopen the run. A skipped resume resolves the interrupt with outcome `skipped` and does not call the interrupt handler. `getStats()` and `isFailed()` count a skip as a failure.
 - **A structured reply that misses a required key is retried, then throws.** The retry sends the failed reply and the key's path (`items.2.price`) back to the model, up to `prism.structured.retries` (default 1), then throws `StructuredHydrationException`. A call that succeeded in 0.3.0 can now cost more or throw. `PrismRouter` is unchanged: it still checks `route` itself.
@@ -25,6 +25,7 @@ A queued run that you delete stays deleted, an app can skip a queued run before 
 ### Fixed
 
 - **A queued job no longer brings a deleted run back**, streamed or not.
+- **A run deleted while a worker runs it stops.** The job threw on the foreign key with database checkpoints. With other checkpoint storage the run went on to the next nodes.
 - **No frames for a deleted run.** A failed job wrote stream events for a run that no longer existed.
 - **A parallel branch job of an ended run does nothing.** It checked only whether its batch was cancelled, so after something outside the batch ended the run (for example `agenticgraph:executions:expire`), the branches still in the queue ran their nodes.
 - **A batch that finishes after its run ended returns quietly**, in place of reporting its missing results as an error.
@@ -65,7 +66,7 @@ Schedule::command('agenticgraph:executions:prune')->daily();
 ### Known limits
 
 - The required-key check is for presence only. It does not check types or enum values, does not reject extra keys, and does not follow `anyOf` or `$ref`.
-- A run deleted while a worker runs it is not stopped. The row is not created again. With database checkpoints the job throws on the foreign key. With checkpoints stored elsewhere the run can go on to the next nodes, and writes checkpoints and stream events for a run with no row. Prune does not find data whose run row is gone.
+- A node that is already running when its run is deleted finishes its own work, including what it writes or streams itself; nothing runs after it. What the run stored before the delete stays unless the database removes it with the row. Prune does not find data whose run row is gone.
 - `agenticgraph:executions:prune` leaves Redis stream events to their TTL. When every delete fails (for example the checkpoint storage is down), one pass tries and logs every due run once.
 - `agenticgraph:executions:expire` does not ask the skip callback: a run no worker picks up still expires as a failure. A skipped resume or continuation can leave its trace open.
 - Stream client 0.2.x passes `reason` `skipped` through, but its `GraphFailedReason` type does not list it yet.

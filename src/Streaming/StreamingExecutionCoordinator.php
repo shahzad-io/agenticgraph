@@ -370,6 +370,8 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                         );
                     }
 
+                    ExecutionRepository::stopIfDeletedQueuedRun($executionId);
+
                     // An interrupted node was counted before it paused; its restored loop context keeps that visit.
                     if ($entryAlreadyCounted) {
                         $entryAlreadyCounted = false;
@@ -456,6 +458,10 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                     );
                     try {
                         $state = $pipeline->execute($state, $node, $executionId, $current, $spanId);
+                    } catch (ExecutionEndedException $e) {
+                        $traceContext->endSpan();
+
+                        throw $e; // Ended elsewhere or deleted: no node_error.
                     } catch (\Throwable $e) {
                         // The pipeline already dispatched NodeExecutionFailed for each attempt.
                         $this->emitLifecycleEvent(
@@ -491,6 +497,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                         $parentSpanId
                     ));
 
+                    ExecutionRepository::stopIfDeletedQueuedRun($executionId); // A slow completion listener ran.
                     $this->delegate->checkpoint($graph, $executionId, $current, $state, $executionContext);
 
                     $nodeCompletePayload = StreamNodeCompletePayloadBuilder::fromConfig(
@@ -569,7 +576,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
             return new StreamHandle($session, $baseSink, $state);
         } catch (\Throwable $e) {
             // An execution that ended elsewhere keeps the status, events and terminal it already has.
-            if ($e instanceof ExecutionEndedException || (! $this->repo->failed($executionId, $e->getMessage()) && $this->repo->hasEnded($executionId))) {
+            if ($e instanceof ExecutionEndedException || (! $this->repo->failed($executionId, $e->getMessage()) && ($this->repo->hasEnded($executionId) || $this->repo->isDeletedQueuedRun($executionId)))) {
                 throw $e instanceof ExecutionEndedException ? $e : new ExecutionEndedException($executionId, $e);
             }
 

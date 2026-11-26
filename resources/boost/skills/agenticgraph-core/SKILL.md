@@ -278,7 +278,7 @@ Docs: `/docs/execution`, `/docs/api/execution`
 Core 0.4.0.
 
 - A deleted run stays deleted: a queued job whose run row is gone runs nothing and writes nothing. A graph job built by hand needs the row first: `app(ExecutionRepository::class)->queued($executionId, $graphName)` (`Shahzad\AgenticGraph\Execution\ExecutionRepository`). `execute()` and `dispatch()` write it.
-- Deleting a run does not stop a worker that already runs it.
+- A queued run deleted while a worker runs it stops: a node that is already running finishes its own work; nothing runs after it.
 - The first job of an async run is dispatched `afterCommit()`: inside a transaction it reaches the queue after the commit, never after a rollback.
 - Skip a queued run that must not run any more. Register once, in a service provider:
 

@@ -6,6 +6,7 @@ namespace Shahzad\AgenticGraph\Execution;
 
 use Illuminate\Database\DatabaseManager;
 use Psr\Log\LoggerInterface;
+use Shahzad\AgenticGraph\Exceptions\ExecutionEndedException;
 use Shahzad\AgenticGraph\Tracing\InstrumentationGate;
 
 class ExecutionRepository implements ExecutionStore
@@ -76,6 +77,21 @@ class ExecutionRepository implements ExecutionStore
     public function isDeletedQueuedRun(string $id): bool
     {
         return isset(self::$queuedRuns[$id]) && ! $this->exists($id);
+    }
+
+    /**
+     * Stops a queued run whose row was deleted while it executes. Called before each node and again when the node
+     * returns or throws, so nothing is written after the running node. Does nothing outside asQueuedRun().
+     *
+     * @internal
+     *
+     * @throws ExecutionEndedException
+     */
+    public static function stopIfDeletedQueuedRun(string $id): void
+    {
+        if (isset(self::$queuedRuns[$id]) && app(self::class)->isDeletedQueuedRun($id)) {
+            throw new ExecutionEndedException($id);
+        }
     }
 
     /**
@@ -234,8 +250,9 @@ class ExecutionRepository implements ExecutionStore
                 'completed_at' => now(),
                 'updated_at' => now(),
             ])) > 0;
-        // A row that does not exist has nothing to protect (a handle-only run); only an ended row is refused.
-        $ok = $updated || $current === null;
+        // A row that does not exist has nothing to protect (a handle-only run); only an ended row, or the deleted row
+        // of a queued run, is refused.
+        $ok = $updated || ($current === null && ! isset(self::$queuedRuns[$id]));
 
         if ((bool) config('agenticgraph.logging.enabled', true)) {
             $ok
@@ -440,6 +457,8 @@ class ExecutionRepository implements ExecutionStore
      * was just committed.
      *
      * @internal
+     *
+     * @phpstan-impure
      */
     public function exists(string $id): bool
     {
