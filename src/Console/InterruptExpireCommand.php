@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Contracts\StorageInterface;
 use Shahzad\AgenticGraph\Events\InterruptExpired;
 use Shahzad\AgenticGraph\Exceptions\InterruptExpiredException;
+use Shahzad\AgenticGraph\Execution\ExecutionRepository;
 use Shahzad\AgenticGraph\Execution\ExecutionStore;
 use Shahzad\AgenticGraph\Execution\InterruptRecord;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
@@ -80,6 +81,9 @@ class InterruptExpireCommand extends Command
     private function endExpiredExecution(InterruptRecord $interrupt): void
     {
         $executionId = (string) $interrupt->executionId();
+        if (! app(ExecutionRepository::class)->exists($executionId)) {
+            return; // A deleted run: the interrupt stays expired, with no stream event and no InterruptExpired.
+        }
         $record = app(ExecutionStore::class)->get($executionId);
         $metadata = $interrupt->metadata();
         $metadata = is_array($metadata) ? $metadata : [];

@@ -168,6 +168,7 @@ class ExecutionCoordinator
                         );
                     }
 
+                    ExecutionRepository::stopIfDeletedQueuedRun($executionId);
                     $executionContext = $this->enterNode($graph, $executionId, $current, $executionContext, $traceContext);
 
                     $node = $graph->getNode($current);
@@ -268,7 +269,7 @@ class ExecutionCoordinator
             return $state;
         } catch (\Throwable $e) {
             // An execution that ended elsewhere keeps the status and events it already has.
-            if ($e instanceof ExecutionEndedException || (! $this->repo->failed($executionId, $e->getMessage()) && $this->repo->hasEnded($executionId))) {
+            if ($e instanceof ExecutionEndedException || (! $this->repo->failed($executionId, $e->getMessage()) && ($this->repo->hasEnded($executionId) || $this->repo->isDeletedQueuedRun($executionId)))) {
                 $this->contextManager->exitWithException($scope, $e);
                 throw $e instanceof ExecutionEndedException ? $e : new ExecutionEndedException($executionId, $e);
             }
@@ -445,7 +446,7 @@ class ExecutionCoordinator
             checkpointId: null,
             rootSpanId: $rootSpanId,
             executionOptions: $options,
-        ));
+        ))->afterCommit(); // A worker must not take the job before the row it needs is committed.
 
         return $executionId;
     }
@@ -575,9 +576,12 @@ class ExecutionCoordinator
                         throw new \RuntimeException("Failed to acquire lock for execution {$executionId}");
                     }
 
+                    ExecutionRepository::stopIfDeletedQueuedRun($executionId);
                     $currentStatus = $this->repo->getStatus($executionId);
                     if ($currentStatus === 'queued' || $currentStatus === 'interrupted') {
-                        $this->repo->started($executionId, $graph->name, State::toStoragePayload($state));
+                        if (! $this->repo->started($executionId, $graph->name, State::toStoragePayload($state)) && $this->repo->isDeletedQueuedRun($executionId)) {
+                            throw new ExecutionEndedException($executionId);
+                        }
                     }
 
                     if ($entryAlreadyCounted) {
@@ -671,7 +675,7 @@ class ExecutionCoordinator
             return $state;
         } catch (\Throwable $e) {
             // An execution that ended elsewhere keeps the status and events it already has.
-            if ($e instanceof ExecutionEndedException || (! $this->repo->failed($executionId, $e->getMessage()) && $this->repo->hasEnded($executionId))) {
+            if ($e instanceof ExecutionEndedException || (! $this->repo->failed($executionId, $e->getMessage()) && ($this->repo->hasEnded($executionId) || $this->repo->isDeletedQueuedRun($executionId)))) {
                 $this->contextManager->exitWithException($scope, $e);
                 throw $e instanceof ExecutionEndedException ? $e : new ExecutionEndedException($executionId, $e);
             }

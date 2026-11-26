@@ -3,6 +3,7 @@
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Execution\ExecutionMode;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
+use Shahzad\AgenticGraph\Execution\ExecutionRepository;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
 use Shahzad\AgenticGraph\Graph\GraphBuilder;
@@ -55,6 +56,7 @@ it('continues execution from a node', function () {
         ->addExitPoint('end')
         ->build();
     app(GraphRegistry::class)->register('ce-graph', $graph);
+    app(ExecutionRepository::class)->queued('exec-2', 'ce-graph');
     $job = new ContinueExecutionJob('ce-graph', 'exec-2', (new State)->toArray(), 'a');
     $job->handle(new GraphExecutor, app(GraphRegistry::class));
     $list = (new DatabaseStorage)->list('ce-graph');
@@ -74,6 +76,7 @@ it('uses provided stream id for streaming', function () {
     $streamId = uniqid('stream_', true);
     $options = new ExecutionOptions(mode: ExecutionMode::ASYNC, streaming: StreamingMode::ITERATOR);
 
+    app(ExecutionRepository::class)->queued('exec-3', 'ce-stream-id');
     $job = new ContinueExecutionJob(
         'ce-stream-id',
         'exec-3',
@@ -106,6 +109,7 @@ it('continues sequence correctly', function () {
     $streamId = uniqid('stream_', true);
     $options = new ExecutionOptions(mode: ExecutionMode::ASYNC, streaming: StreamingMode::ITERATOR);
 
+    app(ExecutionRepository::class)->queued('exec-4', 'ce-seq');
     $job = new ContinueExecutionJob(
         'ce-seq',
         'exec-4',
@@ -144,6 +148,7 @@ it('emits stream resume event', function () {
         checkpointId: 'checkpoint-1'
     );
 
+    app(ExecutionRepository::class)->queued('exec-5', 'ce-resume');
     $job = new ContinueExecutionJob(
         'ce-resume',
         'exec-5',

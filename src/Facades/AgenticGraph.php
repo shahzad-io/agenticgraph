@@ -22,6 +22,7 @@ use Illuminate\Support\Facades\Facade;
  * @method static \Shahzad\AgenticGraph\Execution\InterruptStatus interruptDetails(string $executionId)
  * @method static \Shahzad\AgenticGraph\Graph\Graph|null getOrBuild(string $name)
  * @method static void authorizeStreamsUsing((\Closure(\Illuminate\Http\Request, string, string|null): bool)|null $callback)
+ * @method static void skipQueuedRunsUsing((\Closure(\Shahzad\AgenticGraph\Contracts\StateContract, string, string): (string|null))|null $callback)
  *
  * @see \Shahzad\AgenticGraph\AgenticGraph
  */

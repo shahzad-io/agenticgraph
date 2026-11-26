@@ -170,7 +170,7 @@ class PrismRouter extends AbstractRouter implements LoopAwareRouterInterface, Ro
      */
     private function routingCall(StateContract $state, ?LoopContext $loop): array
     {
-        $settings = ['schema' => $this->buildRoutingSchema(), 'cache' => false, 'stream' => false, 'structuredTraceAsJson' => true, 'structuredRetries' => 0];
+        $settings = ['schema' => $this->buildRoutingSchema(), 'cache' => false, 'stream' => false, 'structuredTraceAsJson' => true, 'structuredRetries' => 0, 'requireKeys' => false];
         if ($this->prompt === null) {
             return [new LlmCall(...$settings, prompt: $this->buildPromptWithLoop($state, $loop)), []];
         }

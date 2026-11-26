@@ -24,6 +24,7 @@ it('stores node job output', function () {
         ->addExitPoint('n')
         ->build();
     app(GraphRegistry::class)->register('test-graph', $graph);
+    app(ExecutionRepository::class)->queued('exec-1', 'test-graph');
     $job = new ExecuteNodeJob('exec-1', 'n', (new State)->toArray(), 'test-graph');
     $job->handle(app(GraphRegistry::class), app(NodeMiddlewarePipeline::class));
     $cached = app(ExecutionRepository::class)->batchResults('exec-1')['n'] ?? null;

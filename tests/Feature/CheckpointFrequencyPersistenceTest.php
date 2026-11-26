@@ -148,6 +148,7 @@ function runCadenceGraphAcrossBatchBoundary(string $graphName, string $execution
 {
     Bus::fake();
 
+    app(ExecutionRepository::class)->queued($executionId, $graphName);
     $job = new ExecuteGraphJob(
         graphName: $graphName,
         executionId: $executionId,

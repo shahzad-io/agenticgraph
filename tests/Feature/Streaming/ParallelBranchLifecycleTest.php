@@ -7,6 +7,7 @@ use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
 use Shahzad\AgenticGraph\Execution\ExecutionMode;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
+use Shahzad\AgenticGraph\Execution\ExecutionRepository;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Execution\NodeMiddlewarePipeline;
 use Shahzad\AgenticGraph\Execution\ParallelExecutionCoordinator;
@@ -320,6 +321,7 @@ it('defers stream lifecycle for batch parallel while Laravel NodeExecutionComple
 
     Event::fake([NodeExecutionCompleted::class]);
 
+    app(ExecutionRepository::class)->queued('exec-batch-job', 'parallel-lifecycle-batch-deferred');
     $job = new ExecuteNodeJob(
         'exec-batch-job',
         'branch1',

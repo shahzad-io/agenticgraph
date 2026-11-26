@@ -233,6 +233,7 @@ it('warns on batch-completion merge when branches clobber the same key', functio
     app(GraphRegistry::class)->register('pmc-batch-clobber', $graph);
 
     $executionId = 'exec-pmc-batch-clobber';
+    app(ExecutionRepository::class)->queued($executionId, 'pmc-batch-clobber');
     $base = new State(['topic' => 'demo']);
     Cache::put('agenticgraph:batch:'.$executionId.':input', $base->toArray(), 300);
     Cache::put('agenticgraph:batch:'.$executionId.':branch_a', (new State(['topic' => 'demo', 'result' => 'alpha']))->toArray(), 300);

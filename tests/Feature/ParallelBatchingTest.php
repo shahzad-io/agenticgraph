@@ -79,6 +79,7 @@ it('uses Bus::batch for parallel execution', function () {
         ->addExitPoint('end')
         ->build();
     app(GraphRegistry::class)->register('parallel-batch', $graph);
+    app(ExecutionRepository::class)->queued('exec-batch', 'parallel-batch');
     $job = new ExecuteGraphJob('parallel-batch', 'exec-batch', (new State)->toArray());
     $job->handle(new GraphExecutor, app(GraphRegistry::class));
     Bus::assertBatched(fn ($batch) => $batch->jobs->count() === 2);
@@ -125,6 +126,7 @@ it('dispatches continuation job after batch completion', function () {
     app(GraphRegistry::class)->register('parallel-batch-complete', $graph);
 
     $executionId = 'exec-batch-complete';
+    app(ExecutionRepository::class)->queued($executionId, 'parallel-batch-complete');
     Cache::put('agenticgraph:batch:'.$executionId.':branch1', (new State(['branch' => 1]))->toArray());
     Cache::put('agenticgraph:batch:'.$executionId.':branch2', (new State(['branch' => 2]))->toArray());
 

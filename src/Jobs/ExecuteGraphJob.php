@@ -62,11 +62,22 @@ class ExecuteGraphJob implements ShouldBeUnique, ShouldQueue
 
     public function handle(GraphExecutor $executor, GraphRegistry $registry): void
     {
+        // A deleted run stays deleted.
+        if (! app(ExecutionRepository::class)->exists($this->executionId)) {
+            Log::info('AgenticGraph: job skipped, execution row is gone', ['execution_id' => $this->executionId]);
+
+            return;
+        }
+
         // An execution that already ended (expired while this job waited, or while an earlier attempt ran) must not
         // run again. A retry while the row is still running proceeds normally.
         if (app(ExecutionRepository::class)->hasEnded($this->executionId)) {
             Log::info('AgenticGraph: job skipped, execution already ended', ['execution_id' => $this->executionId]);
 
+            return;
+        }
+
+        if ($this->skipQueuedRun(State::fromArray($this->stateData), $this->graphName, $this->executionId, $this->streamId, $this->executionOptions?->streaming, $this->streamSeq)) {
             return;
         }
 
@@ -119,9 +130,9 @@ class ExecuteGraphJob implements ShouldBeUnique, ShouldQueue
                 );
                 app()->instance(StreamContext::class, new StreamContext($session));
 
-                $executor->executeWithStreaming($graph->name, $state, $streamOptions, $this->executionId, $options);
+                ExecutionRepository::asQueuedRun($this->executionId, fn () => $executor->executeWithStreaming($graph->name, $state, $streamOptions, $this->executionId, $options));
             } else {
-                $executor->execute($graph, $state, $options, useBatch: true, executionId: $this->executionId);
+                ExecutionRepository::asQueuedRun($this->executionId, fn () => $executor->execute($graph, $state, $options, useBatch: true, executionId: $this->executionId));
             }
         } catch (ExecutionEndedException) {
             // Ended elsewhere (for example expired) while this worker ran it: nothing more to write, not a failure.

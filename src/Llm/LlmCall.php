@@ -39,6 +39,7 @@ final readonly class LlmCall
      * @param  bool  $structuredTraceAsJson  TokensUsed response is the JSON of the structured data (PrismRouter parity)
      * @param  array{as: string, text: string, items: list<array{id: string|int, content: string, metadata: array<string, mixed>, score: float|null}>}|null  $context  set by context(): the variable, its text and the items
      * @param  array{name: string, version: string, hash: string}|null  $promptFile  set when chat() got a prompt file
+     * @param  bool  $requireKeys  reject a structured reply, live or cached, that misses a key the schema requires (PrismRouter turns it off and checks route itself)
      */
     public function __construct(
         public ?string $prompt = null,
@@ -70,6 +71,7 @@ final readonly class LlmCall
         public ?int $connectTimeout = null,
         public array $terminalTools = [],
         public bool $holdStepText = false,
+        public bool $requireKeys = true,
     ) {}
 
     /**

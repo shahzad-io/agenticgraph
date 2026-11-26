@@ -36,7 +36,7 @@ it('writes the faked text onto state', function () {
 });
 ```
 
-A queued array is structured data, a `Throwable` is a failed attempt (retry tests), a Prism `TextResponseFake` passes through (tool calls, usage). A structured retry or a tool step takes the next entry. A queued tool call for a request with `tools()` runs its handler, sends the result back and takes the next entry (as a provider loop, up to `maxSteps`); a handler that throws gives its error as the tool result. A `TextResponseFake` with its own steps or tool results passes through without running handlers; `Llm::fake($responses, runTools: false)` never runs them. Routers are recorded too (`node` is `PrismRouter`). `$llm->prism()` is the Prism fake underneath.
+A queued array is structured data, and it must hold every key the schema requires: since core 0.4.0 a partial reply is retried (taking the next queued entry), then throws. A `Throwable` is a failed attempt (retry tests), a Prism `TextResponseFake` passes through (tool calls, usage). A structured retry or a tool step takes the next entry. A queued tool call for a request with `tools()` runs its handler, sends the result back and takes the next entry (as a provider loop, up to `maxSteps`); a handler that throws gives its error as the tool result. A `TextResponseFake` with its own steps or tool results passes through without running handlers; `Llm::fake($responses, runTools: false)` never runs them. Routers are recorded too (`node` is `PrismRouter`). `$llm->prism()` is the Prism fake underneath.
 
 ## A graph
 

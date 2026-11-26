@@ -5,9 +5,14 @@ declare(strict_types=1);
 namespace Shahzad\AgenticGraph\Jobs;
 
 use Illuminate\Support\Facades\Log;
+use Shahzad\AgenticGraph\AgenticGraph;
+use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\GraphExecutionFailed;
+use Shahzad\AgenticGraph\Exceptions\QueuedRunSkippedException;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
 use Shahzad\AgenticGraph\Execution\ExecutionRepository;
+use Shahzad\AgenticGraph\Execution\ExecutionStore;
+use Shahzad\AgenticGraph\Execution\GraphExecutor;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
@@ -21,9 +26,10 @@ use Shahzad\AgenticGraph\Streaming\StreamStatus;
 use Shahzad\AgenticGraph\Streaming\StreamTerminalStatus;
 
 /**
- * Job failed() handling shared by ExecuteGraphJob and ResumeExecutionJob. Each step is
- * idempotent: a failure the coordinator already handled (row failed, terminal written,
- * event fired) is left as it is.
+ * How a job or command ends a run from outside its coordinator: job failed() handling (ExecuteGraphJob,
+ * ResumeExecutionJob), the expire commands, and the skip check of all four graph jobs. Each step is
+ * idempotent: a failure the coordinator already handled (row failed, terminal written, event fired)
+ * is left as it is.
  */
 trait EndsFailedExecution
 {
@@ -42,6 +48,12 @@ trait EndsFailedExecution
         ?int $fallbackSeq = null,
         ?string $reason = null,
     ): void {
+        if (! app(ExecutionRepository::class)->exists($executionId)) {
+            Log::info('AgenticGraph: failure not recorded, execution row is gone', ['execution_id' => $executionId]);
+
+            return; // No row, stream event or failure event for a deleted run.
+        }
+
         $changed = app(ExecutionRepository::class)->failed($executionId, $e->getMessage());
         if ($changed && $reason !== null) {
             // An expiry command (stale_queued, stale_running, interrupt_expired) ended it: final, see reopen().
@@ -58,6 +70,49 @@ trait EndsFailedExecution
     }
 
     /**
+     * Asks the skipQueuedRunsUsing() callback. True: it skipped the run, which now ends as failed with ended_by=skip,
+     * with the usual failed frames (reason `skipped`) and no GraphExecutionFailed. The caller stops. The stream values
+     * of the job are used where the row has none.
+     */
+    protected function skipQueuedRun(
+        StateContract $state,
+        string $graphName,
+        string $executionId,
+        ?string $streamId = null,
+        ?StreamingMode $streaming = null,
+        ?int $fallbackSeq = null,
+    ): bool {
+        $callback = app()->bound(AgenticGraph::QUEUED_RUN_SKIPPER) ? app(AgenticGraph::QUEUED_RUN_SKIPPER) : null;
+        $reason = $callback instanceof \Closure ? $callback($state, $graphName, $executionId) : null;
+        if ($reason === null) {
+            return false;
+        }
+        if (! is_string($reason)) {
+            throw new \UnexpectedValueException('The skipQueuedRunsUsing() callback must return null or a string reason, got '.get_debug_type($reason).'.');
+        }
+
+        $repo = app(ExecutionRepository::class);
+        if ($repo->skipped($executionId, $reason)) {
+            $record = app(ExecutionStore::class)->get($executionId);
+            $options = $record !== null ? $record->executionOptions ?? new ExecutionOptions : new ExecutionOptions;
+            $streaming ??= $options->streaming;
+            if ($streaming === StreamingMode::AUTO) {
+                $streaming = app(GraphExecutor::class)->resolveStreamingMode($options);
+            }
+            $streamId = $record->streamId ?? $streamId;
+            if ($streamId !== null && $streaming !== StreamingMode::NONE) {
+                $this->appendFailedTerminalIfMissing(new QueuedRunSkippedException($executionId), $executionId, State::toStoragePayload($state), $streamId, $streaming, $options, $fallbackSeq, QueuedRunSkippedException::REASON, reasonOnTerminal: true);
+            }
+        } elseif ($repo->getStatus($executionId) === 'failed') {
+            $repo->markEndedBySkip($executionId); // Crash recovery of a failed run: it keeps its error and terminal.
+        }
+
+        Log::info('AgenticGraph: queued run skipped', ['execution_id' => $executionId, 'graph_name' => $graphName, 'reason' => $reason]);
+
+        return true;
+    }
+
+    /**
      * @param  array<string, mixed>  $stateData
      */
     private function appendFailedTerminalIfMissing(
@@ -69,6 +124,7 @@ trait EndsFailedExecution
         ExecutionOptions $executionOptions,
         ?int $fallbackSeq,
         ?string $reason = null,
+        bool $reasonOnTerminal = false,
     ): void {
         // execution_terminal is always the last stored event, so checking the last one is enough.
         // An `interrupted` terminal ends only the run before a resume, not the execution.
@@ -92,6 +148,9 @@ trait EndsFailedExecution
             seq: $lastSeq ?? $fallbackSeq ?? 0,
         );
         $error = StreamEventEnvelope::clientError($e);
+        $withReason = $reason !== null ? $error + ['reason' => $reason] : $error; // reason is optional, e.g. interrupt_expired
+        // A skip also names itself on the terminal and stream_close: a broadcast client gets no graph_failed live.
+        $closing = $reasonOnTerminal ? $withReason : $error;
 
         $store->append(new StreamEventImpl(
             $streamId,
@@ -100,7 +159,7 @@ trait EndsFailedExecution
             null,
             null,
             StreamLifecycleEventTypes::GRAPH_FAILED,
-            $reason !== null ? $error + ['reason' => $reason] : $error, // reason is optional, e.g. interrupt_expired
+            $withReason,
             ++$session->seq,
             null,
             new \DateTimeImmutable,
@@ -109,7 +168,7 @@ trait EndsFailedExecution
             $session,
             StreamTerminalStatus::FAILED,
             $stateData,
-            $error,
+            $closing,
         )->toStreamEvent();
         $store->append($terminal);
 
@@ -119,7 +178,7 @@ trait EndsFailedExecution
             try {
                 $sink = app(StreamSinkFactory::class)->broadcastSink($streamId);
                 $sink->emit($terminal);
-                $sink->close(StreamStatus::ERROR, $error + ['final_state' => $stateData]);
+                $sink->close(StreamStatus::ERROR, $closing + ['final_state' => $stateData]);
             } catch (\Throwable $broadcastError) {
                 Log::warning('AgenticGraph: stream close broadcast failed', [
                     'execution_id' => $executionId,

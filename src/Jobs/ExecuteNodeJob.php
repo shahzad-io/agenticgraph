@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Events\NodeExecutionCompleted;
 use Shahzad\AgenticGraph\Events\NodeExecutionStarted;
+use Shahzad\AgenticGraph\Exceptions\ExecutionEndedException;
 use Shahzad\AgenticGraph\Execution\ExecutionContext;
 use Shahzad\AgenticGraph\Execution\ExecutionRepository;
 use Shahzad\AgenticGraph\Execution\NodeMiddlewarePipeline;
@@ -29,7 +30,7 @@ use Shahzad\AgenticGraph\Tracing\TraceTime;
 class ExecuteNodeJob implements ShouldQueue
 {
     use Batchable;
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use Dispatchable, EndsFailedExecution, InteractsWithQueue, Queueable, SerializesModels;
 
     /**
      * @param  array<string, mixed>  $stateData
@@ -50,6 +51,24 @@ class ExecuteNodeJob implements ShouldQueue
     public function handle(GraphRegistry $registry, NodeMiddlewarePipeline $pipeline): void
     {
         if ($this->batch()?->cancelled()) {
+            return;
+        }
+
+        // A deleted run stays deleted: no branch of it runs.
+        if (! app(ExecutionRepository::class)->exists($this->executionId)) {
+            Log::info('AgenticGraph: job skipped, execution row is gone', ['execution_id' => $this->executionId]);
+
+            return;
+        }
+
+        // A sibling branch, a skip or an expiry already ended the run.
+        if (app(ExecutionRepository::class)->hasEnded($this->executionId)) {
+            Log::info('AgenticGraph: job skipped, execution already ended', ['execution_id' => $this->executionId]);
+
+            return;
+        }
+
+        if ($this->skipQueuedRun(State::fromArray($this->stateData), $this->graphName, $this->executionId)) {
             return;
         }
 
@@ -122,7 +141,7 @@ class ExecuteNodeJob implements ShouldQueue
                 $this->parentSpanId
             ));
 
-            $result = $pipeline->execute($state, $node, $this->executionId, $this->nodeName, $spanId);
+            $result = ExecutionRepository::asQueuedRun($this->executionId, fn () => $pipeline->execute($state, $node, $this->executionId, $this->nodeName, $spanId));
             $duration = microtime(true) - $attemptStart;
             // After retries, the completed span describes the successful attempt only.
             $attempt = $pipeline->lastAttempt();
@@ -141,7 +160,10 @@ class ExecuteNodeJob implements ShouldQueue
             ));
 
             // Kept until the batch ends, however long the sibling branches take (a cache TTL would lose it).
-            app(ExecutionRepository::class)->putBatchResult($this->executionId, $this->nodeName, $result->toArray());
+            // Checked again: a slow completion listener ran since the node returned.
+            if (app(ExecutionRepository::class)->exists($this->executionId)) {
+                app(ExecutionRepository::class)->putBatchResult($this->executionId, $this->nodeName, $result->toArray());
+            }
 
             $endMicrotime = microtime(true);
             Log::debug('ExecuteNodeJob completed', [
@@ -152,6 +174,9 @@ class ExecuteNodeJob implements ShouldQueue
                 'attempt_end' => $endMicrotime,
                 'started_at' => $startedAt->format(DATE_ATOM),
             ]);
+        } catch (ExecutionEndedException) {
+            // Deleted or ended while the branch ran: no batch result, not a failure.
+            Log::info('AgenticGraph: worker stopped, execution already ended', ['execution_id' => $this->executionId]);
         } catch (\Throwable $e) {
             // The pipeline already dispatched NodeExecutionFailed and called onError for each attempt.
             Log::error('ExecuteNodeJob failed', [
