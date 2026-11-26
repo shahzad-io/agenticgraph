@@ -357,6 +357,8 @@ class ExecutionRepository implements ExecutionStore
     /**
      * Fails a run the skipQueuedRunsUsing() callback skipped. Returns false, and changes nothing, when the row is
      * missing or already ended. Not failed(): a skip is not an error, so it logs nothing here.
+     *
+     * @internal
      */
     public function skipped(string $id, string $reason): bool
     {
@@ -371,12 +373,17 @@ class ExecutionRepository implements ExecutionStore
         return $updated;
     }
 
+    /** @internal */
     public function markEndedBySkip(string $id): void
     {
         $this->mergeOptions($id, [self::ENDED_BY_KEY => 'skip', self::ENDED_REASON_KEY => 'skipped']);
     }
 
-    /** True when an expiry command or a skip ended the run: no worker or recovery job reopens it. */
+    /**
+     * True when an expiry command or a skip ended the run: no worker or recovery job reopens it.
+     *
+     * @internal
+     */
     public function endedForGood(string $id): bool
     {
         return in_array($this->storedOptions($id)[self::ENDED_BY_KEY] ?? null, ['expiry', 'skip'], true);
@@ -431,6 +438,8 @@ class ExecutionRepository implements ExecutionStore
     /**
      * True when the run has a row. Reads the write connection: replica lag must not make a queued job skip a run that
      * was just committed.
+     *
+     * @internal
      */
     public function exists(string $id): bool
     {

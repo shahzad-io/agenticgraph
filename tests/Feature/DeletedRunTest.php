@@ -63,6 +63,14 @@ class DeletedRunApprovalNode extends DeletedRunNode
     }
 }
 
+class DeletedRunThrowingNode extends DeletedRunNode
+{
+    public function execute(StateContract $state): StateContract
+    {
+        throw new RuntimeException('node failed');
+    }
+}
+
 function deletedGraph(string $node = DeletedRunNode::class): void
 {
     AgenticGraph::register('deleted-run', GraphBuilder::create('deleted-run')
@@ -338,6 +346,20 @@ it('never dispatches a queued run after a rollback', function (StreamingMode $st
 
     expect(DeletedRunNode::$runs)->toBe(0)
         ->and(array_sum(deletedFootprint($handle->id())))->toBe(0);
+})->with('deleted streaming');
+
+// A worker process goes on after a failed job: the job must not leave its run marked as queued.
+it('clears the queued-run mark when the job throws, so a later queued() behaves as normal', function (StreamingMode $streaming) {
+    deletedGraph(DeletedRunThrowingNode::class);
+    $job = deletedQueuedJob($streaming);
+    expect(fn () => app()->call([$job, 'handle']))->toThrow(RuntimeException::class, 'node failed');
+    deletedRunRow($job->executionId);
+    $repo = app(ExecutionRepository::class);
+
+    expect($repo->isDeletedQueuedRun($job->executionId))->toBeFalse();
+    $repo->queued($job->executionId, 'deleted-run');
+
+    expect($repo->getStatus($job->executionId))->toBe('queued');
 })->with('deleted streaming');
 
 // Control: synchronous runs keep creating their rows.

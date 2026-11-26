@@ -2,9 +2,11 @@
 
 use Illuminate\Database\Query\Builder;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Log\Events\MessageLogged;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Shahzad\AgenticGraph\Contracts\InterruptServiceInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
@@ -325,6 +327,86 @@ it('prunes an app that has no stream events table', function () {
 
     expect(DB::table('agenticgraph_executions')->count())->toBe(0);
 });
+
+/** A foreign key without cascade: the database refuses to delete these rows. */
+function pruneHold(string ...$ids): void
+{
+    Schema::create('prune_hold', function (Blueprint $table) {
+        $table->string('execution_id');
+        $table->foreign('execution_id')->references('id')->on('agenticgraph_executions');
+    });
+    foreach ($ids as $id) {
+        DB::table('prune_hold')->insert(['execution_id' => $id]);
+    }
+}
+
+/** @return ArrayObject<int, array<string, mixed>> the context of each prune failure logged from now on */
+function pruneFailureLog(): ArrayObject
+{
+    $logged = new ArrayObject;
+    Log::listen(function (MessageLogged $message) use ($logged): void {
+        if ($message->level === 'error' && str_contains($message->message, 'execution prune failed')) {
+            $logged[] = $message->context;
+        }
+    });
+
+    return $logged;
+}
+
+it('walks past runs it cannot delete, so they do not use up --limit', function () {
+    foreach ([1, 2, 3] as $n) {
+        pruneRun("stuck-{$n}", 'completed', 100 - $n);
+    }
+    foreach ([1, 2, 3, 4, 5] as $n) {
+        pruneRun("free-{$n}", 'completed', 60 - $n);
+    }
+    pruneHold('stuck-1', 'stuck-2', 'stuck-3');
+    $logged = pruneFailureLog();
+
+    $this->artisan('agenticgraph:executions:prune --limit=3')
+        ->expectsOutputToContain('Pruned 3 execution(s).')
+        ->expectsOutputToContain('3 execution(s) could not be pruned')
+        ->assertFailed();
+
+    expect(array_column($logged->getArrayCopy(), 'execution_id'))->toBe(['stuck-1', 'stuck-2', 'stuck-3'])
+        ->and($logged[0]['message'])->toContain('FOREIGN KEY constraint failed');
+    foreach (['free-1', 'free-2', 'free-3'] as $id) {
+        expect(pruneFootprint($id))->toBe(PRUNE_NONE);
+    }
+    // The failed delete is rolled back as one, and --limit still caps the deletes.
+    foreach (['stuck-1', 'stuck-2', 'stuck-3', 'free-4', 'free-5'] as $id) {
+        expect(pruneFootprint($id))->toBe(PRUNE_FULL);
+    }
+});
+
+it('ends the pass, with each failure logged once, when runs of the same age cannot be deleted', function () {
+    $this->freezeTime();
+    foreach (['a', 'b', 'c', 'd', 'e'] as $id) {
+        pruneRun($id, 'completed', 90);
+    }
+    pruneHold('a', 'b', 'd');
+    $logged = pruneFailureLog();
+
+    $this->artisan('agenticgraph:executions:prune --limit=1')->expectsOutputToContain('Pruned 1 execution(s).')->assertFailed();
+
+    expect(array_column($logged->getArrayCopy(), 'execution_id'))->toBe(['a', 'b'])
+        ->and(pruneFootprint('c'))->toBe(PRUNE_NONE)
+        ->and(pruneFootprint('e'))->toBe(PRUNE_FULL);
+
+    $logged->exchangeArray([]);
+    $this->artisan('agenticgraph:executions:prune --limit=500')->expectsOutputToContain('Pruned 1 execution(s).')->assertFailed();
+
+    expect(array_column($logged->getArrayCopy(), 'execution_id'))->toBe(['a', 'b', 'd']);
+});
+
+it('skips a table the app does not have', function (string $table) {
+    pruneRun('old', 'completed', 90);
+    Schema::drop($table);
+
+    $this->artisan('agenticgraph:executions:prune')->expectsOutputToContain('Pruned 1 execution(s).')->assertSuccessful();
+
+    expect(DB::table('agenticgraph_executions')->count())->toBe(0);
+})->with(['agenticgraph_batch_results', 'agenticgraph_interrupts', 'agenticgraph_checkpoints']);
 
 it('keeps the run row after a partial failure, goes on to the next run, and a rerun finishes', function () {
     pruneRun('broken', 'completed', 90);

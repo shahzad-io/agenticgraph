@@ -25,7 +25,7 @@ Other skills, use them when installed: `agenticgraph-streaming` for `stream()`, 
 ## Task: install and configure
 
 ```bash
-composer require agenticgraph/agenticgraph
+composer require agenticgraph/agenticgraph:^0.4
 php artisan vendor:publish --tag=agenticgraph-config
 php artisan vendor:publish --tag=agenticgraph-migrations
 php artisan migrate
@@ -51,6 +51,7 @@ AGENTICGRAPH_QUEUE_NAME=agenticgraph
 - `AGENTICGRAPH_STORAGE`: `database` (default), `redis` or `file`. Same value in every environment, or resume cannot find snapshots.
 - `AGENTICGRAPH_QUEUE_CONNECTION` defaults to `redis`. It matters only for async runs, async fan-out and async resume. Run a worker on the graph queue: `php artisan queue:work --queue=agenticgraph`. Schedule `agenticgraph:executions:expire` every minute (0.2.1), so an async run no worker took ends as `failed` instead of staying `queued`; see the `agenticgraph-streaming` skill.
 - `AGENTICGRAPH_MAX_ITERATIONS` (1000) caps a run.
+- Run data is kept until it is pruned. See "Task: keep or delete run data".
 
 Docs: `/docs/getting-started`
 
@@ -157,7 +158,7 @@ final class SummaryNode extends PrismNode
 - Inputs: `prompt($stringOrPromptTemplate)` or `chat(ChatPromptTemplate)`, plus `vars()`. Templates interpolate; `system()`, `user()`, `assistant()` and `history()` are literal. Rules 2, 3 and 5 apply.
 - `prompt()` with `history()` (0.2.1): the history messages come first, then the prompt as the latest user message; `system()` stays first and `explain()` shows the final order. History text is never interpolated. `user()` and `assistant()` append after `chat()` and throw with `prompt()`; use `chat()` for those. `attach($media)` adds media to the last user turn.
 - Retrieved documents go through `context($items, as: 'context', format: ?PromptTemplate, separator: "\n\n")`, never through a hand-built string in `vars()`. `$items`: a list of `id`/`content`/`metadata`/`score` arrays, or any object with `toContextItems()` (a vector `SearchResult`; core never imports vector). `format:` renders each item from its metadata plus `id`, `content`, `score` (missing key throws). The joined text is a value for `{context}`, never interpolated; the same name in `vars()` throws. `run()->sources()` returns the items (`id`, `metadata`, `score`); the llm span gets `context.count` and `context.ids` (first 20); `explain()['context']` shows the text and count. Store `toContextItems()` (plain arrays) on state when retrieval and generation are separate nodes.
-- `schema($schema)` then `structured(): array`; the root schema should be an `ObjectSchema`. A schema with tools throws. `->as(Dto::class)->data()` hydrates the reply into a class (reflection; `#[ListOf]` for lists; errors name the path). Constrain values in the schema first (enums, required fields; measured 3 of 20 calls retried without the enum, 0 of 20 with it); the retry (`agenticgraph.prism.structured.retries`, default `1`, error fed back; `->structuredRetries($n)` for one call) is a safety net. `->structuredMode('json')` is OpenAI only and throws elsewhere. `run()->usage` sums every attempt and is null when one attempt's usage is unknown.
+- `schema($schema)` then `structured(): array`; the root schema should be an `ObjectSchema`. A schema with tools throws. `->as(Dto::class)->data()` hydrates the reply into a class (reflection; `#[ListOf]` for lists; errors name the path). Constrain values in the schema first (enums, required fields; measured 3 of 20 calls retried without the enum, 0 of 20 with it); the retry (`agenticgraph.prism.structured.retries`, default `1`, error fed back; `->structuredRetries($n)` for one call) is a safety net. A reply that misses a key the schema requires (nested objects and array items too) is retried the same way, then throws `StructuredHydrationException` (core 0.4.0); a cached reply that misses one is a cache miss. Presence only: no types, enum values, extra keys, `anyOf` or `$ref`. List a key in `requiredFields` only when the reply must have it; a nullable required key must be present and may be null. `->structuredMode('json')` is OpenAI only and throws elsewhere. `run()->usage` sums every attempt and is null when one attempt's usage is unknown.
 - `tools()`, `mcp($server)`, `toolChoice()`, `maxSteps()`: one step and Prism's tool choice by default. Raise `maxSteps` for a tool loop. `run()` returns an `LlmResponse` with the tool calls and results of every step and `steps` (each step's text, tool calls, results, usage, finish reason); `text` is the final step's.
 - `terminalTools(['name'], holdStepText: false)`: when that tool returns without an error, the run ends with no further model call and `text` is the tool's text, word for word (also as `text_delta` in a streamed run). The steps keep the call and the result; `LlmResponse::$terminalTool` names the tool. A handler can return `TerminalResult::reply($text, $data)` (`Shahzad\AgenticGraph\Tools`) to add `$terminalData`. Model text before the call in the same step stays in `steps[n]->text`; in a streamed run it has already been sent unless `holdStepText: true`, which holds each step's text until the step ends and drops it when the step calls a terminal tool. Supported providers: openai, anthropic, deepseek, gemini, groq, mistral, ollama, openrouter, xai, z; any other throws a `LogicException` before the request. An unknown tool name throws.
 - Settings: config, then node properties (`$model`, `$maxTokens`, `$temperature`, `$providerOptions`, `$trackTokens`), then the call. Provider options have no config layer. `->temperature($value)` (0 to 2, else `InvalidArgumentException`) is over `$temperature` and `agenticgraph.prism.temperature` (default null: none sent), applies on every path and is in the cache key; it is not checked against the model: some reasoning models accept a temperature only with reasoning off, otherwise the provider rejects the call and it appears as a failed LLM call. `->timeout($seconds, $connectSeconds)` overrides `agenticgraph.api.timeout` / `connect_timeout` for one call (no node layer); each tool step and structured retry is its own HTTP request, and a streamed reply must finish within it. `reasoning()` (level or `budget:`) resolves node, then call, with no config layer; it throws when the provider cannot apply it (the DeepSeek provider, a budget on OpenAI or Ollama, Anthropic with a forced tool choice, an Anthropic level without `agenticgraph.prism.reasoning.budgets.*`, `off` on OpenAI without `agenticgraph.prism.reasoning.off.openai`, whose value is model-specific: `none`, `minimal`; for one node use raw `providerOptions(['reasoning' => ['effort' => ...]])`). `thoughtTokens` is null when the provider does not report it. `explain()` shows each setting with its source, the stream and cache decisions, the cache key and the `context()` text, without calling the model.
@@ -272,6 +273,43 @@ $handle = AgenticGraph::execute('content', new State, new ExecutionOptions(mode:
 
 Docs: `/docs/execution`, `/docs/api/execution`
 
+## Task: control queued runs
+
+Core 0.4.0.
+
+- A deleted run stays deleted: a queued job whose run row is gone runs nothing and writes nothing. A graph job built by hand needs the row first: `app(ExecutionRepository::class)->queued($executionId, $graphName)` (`Shahzad\AgenticGraph\Execution\ExecutionRepository`). `execute()` and `dispatch()` write it.
+- Deleting a run does not stop a worker that already runs it.
+- The first job of an async run is dispatched `afterCommit()`: inside a transaction it reaches the queue after the commit, never after a rollback.
+- Skip a queued run that must not run any more. Register once, in a service provider:
+
+```php
+use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Facades\AgenticGraph;
+
+AgenticGraph::skipQueuedRunsUsing(function (StateContract $state, string $graphName, string $executionId): ?string {
+    return \App\Models\Brand::whereKey($state->get('brand_id'))->exists() ? null : 'brand deleted';
+});
+```
+
+- Null runs the job; a string skips it; any other value throws. All four graph jobs ask it, before they run. Sync runs and `agenticgraph:executions:expire` do not. It runs on the worker with no request or tenant bound. A resume gets the state of the interrupt checkpoint.
+- A skipped run is `failed` with error `Skipped: {reason}`, cannot be reopened by a worker, and fires no `GraphExecutionFailed`. `isFailed()` and `getStats()` count it as a failure. A streamed run ends with `reason` `skipped`; your reason text is not sent to the browser. A skipped resume resolves the interrupt as skipped without calling the interrupt handler.
+
+Docs: `/docs/execution`, `/docs/parallel`
+
+## Task: keep or delete run data
+
+- `php artisan agenticgraph:executions:prune` (core 0.4.0) is the only way to delete runs. It deletes `completed` and `failed` runs older than `AGENTICGRAPH_EXECUTION_RETENTION_DAYS` (`execution.retention_days`) with their stream events, interrupts, batch results and checkpoints. Off by default; `--days=` wins over config. A published config must have the `retention_days` key.
+- `--limit` (500) is the most runs one pass deletes. A run that cannot be deleted stays, is logged, does not count, and the command exits with a failure. Redis stream events are left to their TTL.
+- Schedule it:
+
+```php
+use Illuminate\Support\Facades\Schedule;
+
+Schedule::command('agenticgraph:executions:prune')->daily();
+```
+
+Docs: `/docs/execution`
+
 ## Task: pause for a human
 
 - A gate is a `PrismNode` that overrides `shouldInterrupt()`. It is checked before `execute()`, so the gate pauses on data earlier nodes wrote. `AbstractNode` gates are never asked.
@@ -346,6 +384,8 @@ Docs: `/docs/guide-events`
 | `agenticgraph:execute {name} --state='{...}'` | Sync. Prints the final state as JSON. Uses `get`, so a never-built config graph is "not found". Bad JSON becomes `[]`. |
 | `agenticgraph:visualize {name} --output=` | Mermaid only. `--format` is ignored. |
 | `agenticgraph:executions --graph= --status= --limit=` | Recent runs |
+| `agenticgraph:executions:expire --limit=` | Fails async runs no worker is running. Schedule every minute. |
+| `agenticgraph:executions:prune --days= --limit=` | Deletes old completed and failed runs with all their data. Off until retention is set. |
 | `agenticgraph:checkpoint:list`, `:delete {id}`, `:cleanup --days=30` | Snapshots |
 | `agenticgraph:checkpoint:resume {id}` | Replays from a snapshot. Not human-in-the-loop resume. |
 | `agenticgraph:pricing:sync` | Rewrites package model pricing. Not a daily command. |
@@ -372,6 +412,8 @@ Docs: `/docs/guide-testing`
 | Run stops with `Max iterations reached` | A loop has no reachable exit or no cap |
 | One parallel branch's output missing | Same key written by two branches |
 | Async run never finishes | No worker on the graph queue and connection |
+| Hand-built graph job does nothing | No run row. Call `ExecutionRepository`'s `queued()` first |
+| `the required key [...] is missing` | The reply or the `Llm::fake()` reply lacks a key the schema requires |
 | Resume finds nothing after deploy | Different `AGENTICGRAPH_STORAGE`, or persistence off |
 
 Docs: `/docs/guide-troubleshooting`

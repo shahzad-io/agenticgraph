@@ -129,7 +129,7 @@ Docs: `/docs/streaming#filters`
 
 ## Task: error details on the wire
 
-- Since 0.2.1 the browser gets generic errors by default. `graph_failed`, `node_error`, the failed `execution_terminal` `meta` and broadcast `stream_close` `meta` carry `error_type: ExecutionFailed` and `message: Execution failed`. `stream_error` carries `StreamError` and `Stream error`. A failed `tool_result` carries `Tool failed`. `reason` (`interrupt_expired`, `stale_queued`, `stale_running`) is always sent.
+- Since 0.2.1 the browser gets generic errors by default. `graph_failed`, `node_error`, the failed `execution_terminal` `meta` and broadcast `stream_close` `meta` carry `error_type: ExecutionFailed` and `message: Execution failed`. `stream_error` carries `StreamError` and `Stream error`. A failed `tool_result` carries `Tool failed`. `reason` (`interrupt_expired`, `stale_queued`, `stale_running`, and `skipped` since core 0.4.0) is always sent. For `skipped` it is also on the failed `execution_terminal` `meta` and on broadcast `stream_close` `meta`; the client 0.2.x type does not list it yet.
 - A node failed by a model provider exception shows a category instead: `rate_limited`, `provider_unavailable` or `provider_error`, with a fixed message. The Prism `error` event carries the same categories and `metadata: null`. The package picks the category from the exception type, never from the provider's text, which can hold keys, account ids or internal URLs.
 - `AGENTICGRAPH_STREAM_EXPOSE_ERROR_DETAILS=true` (default `false`) sends the real exception or provider type, the message (cut to `AGENTICGRAPH_CAPTURE_MAX_LENGTH`; `AGENTICGRAPH_CAPTURE_ERRORS=class` still removes it) and the metadata. Turn it on only for a trusted audience, such as an internal tool.
 - The stored execution `error` and the logs always keep the real message. Look there, not in the browser, when a run fails.
@@ -150,6 +150,7 @@ Schedule::command('agenticgraph:interrupt:expire')->everyMinute();
 ```
 
 - The scheduler must run (`php artisan schedule:work`, or the `schedule:run` cron entry). Without it nothing expires.
+- Expiry ends runs; it deletes nothing. `agenticgraph:executions:prune` (core 0.4.0, off by default) deletes old runs with their stored stream events; see the `agenticgraph-core` skill.
 
 Docs: `/docs/streaming`
 

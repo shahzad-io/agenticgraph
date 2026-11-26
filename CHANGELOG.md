@@ -1,5 +1,75 @@
 # Changelog
 
+## 0.4.0 - unreleased
+
+A queued run that you delete stays deleted, an app can skip a queued run before it runs, old runs can be pruned, and a structured reply without a required key is no longer accepted. This is a breaking release. The stream client does not change: use 0.2.x.
+
+### Added
+
+- **`AgenticGraph::skipQueuedRunsUsing(fn (StateContract $state, string $graphName, string $executionId): ?string)`.** All four graph jobs (`ExecuteGraphJob`, `ContinueExecutionJob`, `ResumeExecutionJob`, `ExecuteNodeJob`) ask it before they run, after they know the run exists and has not ended. Null runs the job; a string is the reason to skip it. Any other value throws `UnexpectedValueException`. If the callback throws, the job fails as usual. It runs on the worker, with no request or tenant bound. A resume job carries only the interrupt id, so the callback gets the state of the interrupt checkpoint. Synchronous runs do not ask it. Null removes it.
+- **`agenticgraph:executions:prune {--days=} {--limit=500}`.** Deletes `completed` and `failed` runs older than the retention limit, with their stream events, interrupts, batch results, checkpoints (through `StorageInterface`, so Redis and file storage too) and, last, the run row. A run's age is `completed_at`, else `updated_at`. Each run is deleted under its row lock, and only if it still qualifies. A table the app does not have is skipped. `--limit` is the most runs one pass deletes. A run that fails to delete stays, is logged once in the pass with its id and the error, does not count toward `--limit`, and the command exits with a failure.
+- **Config key `execution.retention_days`** (`AGENTICGRAPH_EXECUTION_RETENTION_DAYS`). Null or 0, the default, is off. `--days` wins over it. A value that is not a whole number of 1 or more fails the command and deletes nothing.
+- **Required-key check for structured replies.** The core checks that every key the schema requires is in the reply, also in nested objects and array items. Prism does not check a reply against its schema. A cached reply gets the same check; one that fails it counts as a cache miss, and the new reply replaces it.
+
+### Behavior changes
+
+- **A deleted run stays deleted and runs nothing.** A queued job whose run row is gone logs and returns: no node runs, and no row, stream event, checkpoint or batch result is written. A job's `failed()`, batch completion and `agenticgraph:interrupt:expire` write no stream events for it, and fire no `GraphExecutionFailed` or `InterruptExpired`. Up to 0.3.0 the job could run the node and create the row again. Synchronous runs still create their rows.
+- **The first dispatch waits for the commit.** The first job of an async run is dispatched with `afterCommit()`. Inside a database transaction it reaches the queue after the commit, and never after a rollback.
+- **A skip ends a run as `failed`, with `ended_by=skip`.** The row's error is `Skipped: {reason}`. A streamed run gets the usual `graph_failed`, failed `execution_terminal` and, on broadcast, `stream_close`, each with `reason` `skipped`. Your reason text is not sent to the browser. There is no `GraphExecutionFailed` and no failed job, only a log line. A worker or recovery job cannot reopen the run. A skipped resume resolves the interrupt with outcome `skipped` and does not call the interrupt handler. `getStats()` and `isFailed()` count a skip as a failure.
+- **A structured reply that misses a required key is retried, then throws.** The retry sends the failed reply and the key's path (`items.2.price`) back to the model, up to `prism.structured.retries` (default 1), then throws `StructuredHydrationException`. A call that succeeded in 0.3.0 can now cost more or throw. `PrismRouter` is unchanged: it still checks `route` itself.
+
+### Removed
+
+- **`ExecutionRepository::cleanup()`.** `agenticgraph:executions:prune` is the only way to delete runs. The package never called `cleanup()`, and it filtered on `completed_at`, which a normally failed run does not have.
+
+### Fixed
+
+- **A queued job no longer brings a deleted run back**, streamed or not.
+- **No frames for a deleted run.** A failed job wrote stream events for a run that no longer existed.
+- **A parallel branch job of an ended run does nothing.** It checked only whether its batch was cancelled, so after something outside the batch ended the run (for example `agenticgraph:executions:expire`), the branches still in the queue ran their nodes.
+- **A batch that finishes after its run ended returns quietly**, in place of reporting its missing results as an error.
+
+### Upgrade
+
+Do these steps in order. The full guide is [Upgrading to 0.4](https://agenticgraph.dev/docs/upgrading-to-0-4). From 0.2.x, upgrade once, to `^0.4`: do the 0.3.0 steps below (stream token, private channel, stream client 0.2.0) in the same upgrade.
+
+1. `composer require agenticgraph/agenticgraph:^0.4`.
+2. Published config: an app that published `config/agenticgraph.php` must add `retention_days` to the `execution` block, or `AGENTICGRAPH_EXECUTION_RETENTION_DAYS` has no effect (`--days` still works).
+
+```php
+'execution' => [
+    // ...
+    'retention_days' => env('AGENTICGRAPH_EXECUTION_RETENTION_DAYS'),
+],
+```
+
+3. Publish the migrations again and run them. 0.4.0 adds no migration; this brings an app that comes from an older version up to date.
+
+```bash
+php artisan vendor:publish --tag=agenticgraph-migrations
+php artisan migrate
+```
+
+4. Restart the queue workers (`php artisan queue:restart`).
+5. Jobs built by hand need a queued row. If your code or tests construct a graph job and dispatch or call it, write the row first: `app(ExecutionRepository::class)->queued($executionId, $graphName)`. Without it the job does nothing. `AgenticGraph::execute()` and `dispatch()` already write it.
+6. Structured replies: a partial `Llm::fake()` reply now fails, so give every required key in your fakes. In your schemas, take out of `requiredFields` any key the model may leave out. A nullable key that stays required must be present, and may be null.
+7. If you called `ExecutionRepository::cleanup()`, use the prune command.
+8. To prune, set `AGENTICGRAPH_EXECUTION_RETENTION_DAYS` and schedule the command. It is off until you do.
+
+```php
+use Illuminate\Support\Facades\Schedule;
+
+Schedule::command('agenticgraph:executions:prune')->daily();
+```
+
+### Known limits
+
+- The required-key check is for presence only. It does not check types or enum values, does not reject extra keys, and does not follow `anyOf` or `$ref`.
+- A run deleted while a worker runs it is not stopped. The row is not created again. With database checkpoints the job throws on the foreign key. With checkpoints stored elsewhere the run can go on to the next nodes, and writes checkpoints and stream events for a run with no row. Prune does not find data whose run row is gone.
+- `agenticgraph:executions:prune` leaves Redis stream events to their TTL. When every delete fails (for example the checkpoint storage is down), one pass tries and logs every due run once.
+- `agenticgraph:executions:expire` does not ask the skip callback: a run no worker picks up still expires as a failure. A skipped resume or continuation can leave its trace open.
+- Stream client 0.2.x passes `reason` `skipped` through, but its `GraphFailedReason` type does not list it yet.
+
 ## 0.3.0 - 2026-11-25
 
 The broadcast path keeps the SSE contract: the same events, in the same order, with no loss and no duplicates, after a drop, a reconnect and a late join. The channel is private. Use stream client 0.2.0 (`BroadcastTransport`) with it.

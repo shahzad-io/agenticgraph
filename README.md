@@ -42,7 +42,7 @@ AgenticGraph is the first open-source Laravel AI orchestration package, bringing
 Requirements: PHP 8.3+, Laravel 12.61.1+ or 13.12+.
 
 ```bash
-composer require agenticgraph/agenticgraph
+composer require agenticgraph/agenticgraph:^0.4
 ```
 
 Publish the config and the migrations, then migrate:
@@ -65,16 +65,34 @@ Prism and Relay are dependencies and work without publishing their configs. Publ
 
 If you run async graphs, schedule `agenticgraph:executions:expire` every minute, next to `agenticgraph:interrupt:expire`, so a run no worker picked up (or whose worker died) ends with a failed stream instead of waiting forever.
 
+Run data is kept until you prune it. Set `AGENTICGRAPH_EXECUTION_RETENTION_DAYS` and schedule `agenticgraph:executions:prune` to delete old completed and failed runs with everything stored for them.
+
 ### AI assistants
 
 Run `php artisan boost:update`. It finds the AgenticGraph packages and asks which skills to add; tick `agenticgraph-core`, `agenticgraph-streaming` and `agenticgraph-tracing`, so your coding assistant knows how to build, stream and trace graphs with this package. A first-time Boost setup is `php artisan boost:install`.
 
-### Upgrading from 0.2.x
+### Upgrading from 0.3.x
 
-Core 0.3.0 guards the stream routes with a stream token and makes the broadcast channel private. Do these steps in order. The full guide is [Upgrading to 0.3](https://agenticgraph.dev/docs/stream-upgrading-to-0-3), and the full list of changes is in [CHANGELOG.md](CHANGELOG.md).
+Core 0.4.0 is a breaking release. Do these steps in order. The full guide is [Upgrading to 0.4](https://agenticgraph.dev/docs/upgrading-to-0-4), and the full list of changes is in [CHANGELOG.md](CHANGELOG.md).
 
 ```bash
-composer require agenticgraph/agenticgraph:^0.3
+composer require agenticgraph/agenticgraph:^0.4
+```
+
+1. **Published config.** Add `'retention_days' => env('AGENTICGRAPH_EXECUTION_RETENTION_DAYS'),` to the `execution` block, or the environment value has no effect.
+2. **Migrations.** Publish them again and run them (0.4.0 adds none; this brings an older install up to date). Then run `php artisan queue:restart`.
+3. **Jobs built by hand.** A graph job you construct yourself needs a queued row first (`ExecutionRepository::queued()`), or it does nothing.
+4. **Structured replies.** A reply that misses a required key is retried, then throws. Partial `Llm::fake()` structured replies now fail.
+5. **Removed.** `ExecutionRepository::cleanup()` is gone; use `agenticgraph:executions:prune`.
+
+Also check: a deleted run now stays deleted, and inside a database transaction the first job is dispatched after the commit.
+
+### Upgrading from 0.2.x
+
+Upgrade once, to 0.4: do these steps and the steps in "Upgrading from 0.3.x" above together. Core 0.3.0 guards the stream routes with a stream token and makes the broadcast channel private. Do these steps in order. The full guide is [Upgrading to 0.3](https://agenticgraph.dev/docs/stream-upgrading-to-0-3), and the full list of changes is in [CHANGELOG.md](CHANGELOG.md).
+
+```bash
+composer require agenticgraph/agenticgraph:^0.4
 ```
 
 1. **Stream URL.** Pass `$handle->stream()->streamUrl` to the browser: it now carries a stream token. If you build the URL yourself, add `token=$handle->streamToken()`. Without it the SSE route returns 403 `stream_token_invalid`. If your middleware signs the URL, ignore `token` in the signature check, or sign after you add it.
@@ -86,12 +104,12 @@ composer require agenticgraph/agenticgraph:^0.3
 
 ### Upgrading from 0.1.0
 
-Do these steps in order, then the steps in "Upgrading from 0.2.x" above. The full list of changes is in [CHANGELOG.md](CHANGELOG.md).
+Do these steps in order, then the steps in "Upgrading from 0.2.x" and "Upgrading from 0.3.x" above. The full list of changes is in [CHANGELOG.md](CHANGELOG.md).
 
 1. **Platform.** Use PHP 8.3+ and Laravel 12.61.1+ or 13.12+. Older PHP and Laravel versions are no longer supported. The package requires `prism-php/prism` `^0.102.0`, which sends Anthropic structured output in native mode (Claude Sonnet 4.5 or newer; for an older model set `$providerOptions = ['use_tool_calling' => true]` on the node):
 
    ```bash
-   composer require agenticgraph/agenticgraph:^0.3 prism-php/prism:^0.102 -W
+   composer require agenticgraph/agenticgraph:^0.4 prism-php/prism:^0.102 -W
    ```
 
 2. **Migrations.** Publish the migrations again and run them. Files you already published keep their names. The new tables and the `zzzz_*` upgrade migrations are added, and each upgrade checks the schema first:
@@ -116,9 +134,9 @@ The three packages are released together:
 
 | Package | Version | Works with |
 |---|---|---|
-| `agenticgraph/agenticgraph` (core) | 0.3.x | PHP 8.3+, Laravel 12.61.1+ or 13.12+, Prism 0.102 |
-| `agenticgraph/vector` | 0.1.x | PHP 8.3+, Laravel 12.61.1+ or 13.12+, Prism 0.102, PostgreSQL with pgvector (0.8+ for iterative scan). Core 0.2.x or 0.3.x is optional (tracing) |
-| `@agenticgraph/stream-client`, `@agenticgraph/stream-react`, `@agenticgraph/stream-vue` | 0.2.x | Core 0.3.x on the server (stream wire contract v1.1; `BroadcastTransport` needs core 0.3.0; `SSETransport` also works with core 0.2.x), Node.js 18+, React 18+ or Vue 3.4+ for the adapters |
+| `agenticgraph/agenticgraph` (core) | 0.4.x | PHP 8.3+, Laravel 12.61.1+ or 13.12+, Prism 0.102 |
+| `agenticgraph/vector` | 0.1.x | PHP 8.3+, Laravel 12.61.1+ or 13.12+, Prism 0.102, PostgreSQL with pgvector (0.8+ for iterative scan). Core 0.2.x, 0.3.x or 0.4.x is optional (tracing) |
+| `@agenticgraph/stream-client`, `@agenticgraph/stream-react`, `@agenticgraph/stream-vue` | 0.2.x | Core 0.3.x or 0.4.x on the server (stream wire contract v1.1; `BroadcastTransport` needs core 0.3.0 or later; `SSETransport` also works with core 0.2.x), Node.js 18+, React 18+ or Vue 3.4+ for the adapters |
 
 ## Quick Start
 
@@ -260,6 +278,8 @@ Configure global node middleware in `config/agenticgraph.php` under `middleware.
 - `agenticgraph:checkpoint:delete {id}`
 - `agenticgraph:checkpoint:cleanup [--days=30]`
 - `agenticgraph:executions [--graph=] [--status=] [--limit=20]`
+- `agenticgraph:executions:expire [--limit=500]` - fail async runs no worker is running
+- `agenticgraph:executions:prune [--days=] [--limit=500]` - delete old completed and failed runs with all their data
 
 ## License
 
