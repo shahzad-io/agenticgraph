@@ -5,7 +5,7 @@ description: "Stream AgenticGraph output: the stream and broadcast presets, Exec
 
 # AgenticGraph Streaming
 
-docs-sha: 068bc93
+docs-sha: cc320c6
 
 Condensed from the AgenticGraph docs (`/docs/...` paths below) at that commit. When a detail here and the package source disagree, the source wins.
 
