@@ -5,7 +5,7 @@ description: "Stream AgenticGraph output: the stream and broadcast presets, Exec
 
 # AgenticGraph Streaming
 
-docs-sha: cc320c6
+docs-sha: 4fa43a6
 
 Condensed from the AgenticGraph docs (`/docs/...` paths below) at that commit. When a detail here and the package source disagree, the source wins.
 
@@ -273,7 +273,7 @@ Docs: `/docs/stream-getting-started`, `/docs/stream-core`, `/docs/stream-react`,
 With Vite, use `import { AgenticStream, createStreamTransport } from '@agenticgraph/stream-client'` in `resources/js/app.js` and `@vite('resources/js/app.js')` in the Blade view. Without a bundler, load the pinned CDN build, `https://cdn.jsdelivr.net/npm/@agenticgraph/stream-client@<version>/dist/index.global.js`. It sets `window.AgenticGraphStream`, with the same exports as the module build:
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/@agenticgraph/stream-client@0.2.0/dist/index.global.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@agenticgraph/stream-client@0.2.1/dist/index.global.js"></script>
 <script>
   const { AgenticStream, createStreamTransport } = window.AgenticGraphStream;
   AgenticStream.connect({ transport: createStreamTransport(descriptor) });
