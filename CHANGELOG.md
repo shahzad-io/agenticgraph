@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.1 - Unreleased
+## 0.4.1 - 2026-11-27
 
 An app can now react when `skipQueuedRunsUsing()` skips a queued run. Nothing else changes. Stream client 0.2.x and the 0.4.0 upgrade steps are unchanged.
 
