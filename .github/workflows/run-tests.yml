@@ -8,6 +8,8 @@ on:
       - 'phpunit.xml.dist'
       - 'composer.json'
       - 'composer.lock'
+      - 'resources/boost/**'
+      - 'README.md'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -85,4 +87,5 @@ jobs:
           REDIS_PORT: 6379
           REDIS_CLIENT: phpredis
           REDIS_PERSISTENT: false
+          AGENTICGRAPH_TEST_REDIS_PORT: 6379
         run: vendor/bin/pest --ci

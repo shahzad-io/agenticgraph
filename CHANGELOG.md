@@ -69,7 +69,6 @@ Schedule::command('agenticgraph:executions:prune')->daily();
 - A node that is already running when its run is deleted finishes its own work, including what it writes or streams itself; nothing runs after it. What the run stored before the delete stays unless the database removes it with the row. Prune does not find data whose run row is gone.
 - `agenticgraph:executions:prune` leaves Redis stream events to their TTL. When every delete fails (for example the checkpoint storage is down), one pass tries and logs every due run once.
 - `agenticgraph:executions:expire` does not ask the skip callback: a run no worker picks up still expires as a failure. A skipped resume or continuation can leave its trace open.
-- Stream client 0.2.x passes `reason` `skipped` through, but its `GraphFailedReason` type does not list it yet.
 
 ## 0.3.0 - 2026-11-25
 
