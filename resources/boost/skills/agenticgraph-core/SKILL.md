@@ -5,7 +5,7 @@ description: "Build AgenticGraph agent graphs in Laravel: GraphBuilder, nodes (A
 
 # AgenticGraph Core
 
-docs-sha: d61ba53
+docs-sha: 00f8a70
 
 Condensed from the AgenticGraph docs (`/docs/...` paths below) at that commit. When a detail here and the package source disagree, the source wins.
 
@@ -292,7 +292,7 @@ AgenticGraph::skipQueuedRunsUsing(function (StateContract $state, string $graphN
 ```
 
 - Null runs the job; a string skips it; any other value throws. All four graph jobs ask it, before they run. Sync runs and `agenticgraph:executions:expire` do not. It runs on the worker with no request or tenant bound. A resume gets the state of the interrupt checkpoint.
-- A skipped run is `failed` with error `Skipped: {reason}`, cannot be reopened by a worker, and fires no `GraphExecutionFailed`. It fires `GraphExecutionSkipped` (`executionId`, `graphName`, `reason`) once, after the row update: listen to it to react to a skip, for example to close your own record. It is not broadcast. `isFailed()` and `getStats()` count it as a failure. A streamed run ends with `reason` `skipped`; your reason text is not sent to the browser. A skipped resume resolves the interrupt as skipped without calling the interrupt handler.
+- A skipped run is `failed` with error `Skipped: {reason}`, cannot be reopened by a worker, and fires no `GraphExecutionFailed`. It fires `GraphExecutionSkipped` (`executionId`, `graphName`, `reason`, the string your callback returned) once per run, after the row update: listen to it to react to a skip, for example to close your own record. It is server side only: not broadcast. `isFailed()` and `getStats()` count it as a failure. A streamed run ends with `reason` `skipped`; your reason text is not sent to the browser. A skipped resume resolves the interrupt as skipped without calling the interrupt handler.
 
 Docs: `/docs/execution`, `/docs/parallel`
 

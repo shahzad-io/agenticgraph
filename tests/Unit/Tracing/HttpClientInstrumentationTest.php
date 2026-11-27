@@ -186,12 +186,14 @@ it('redacts sensitive query values in url.full and keeps the rest', function (st
 it('guard: emits no url.full unless http url capture is full', function (string $mode) {
     [$instrumentation, $exporter] = bindHttpInstrumentationContext();
     config()->set('agenticgraph.tracing.capture.http_urls', $mode);
-    $request = new Request(new \GuzzleHttp\Psr7\Request('GET', 'https://api.example.com/v1/rates?key=abc'));
+    $request = new Request(new \GuzzleHttp\Psr7\Request('GET', 'https://api.example.com/v1/rates?key=zz-secret-zz'));
 
     $instrumentation->onResponseReceived(new ResponseReceived($request, makeBufferedHttpResponse()));
+    // A span id is hex from uniqid(), so it can hold 'abc' but never 'zz-secret-zz'. A fixed id with 'abc' keeps the test honest.
+    $exporter->spans[0]['id'] = 'span_6b09abcad194c2.28';
 
     expect($exporter->spans[0]['attributes'])->not->toHaveKey('url.full')
-        ->and(json_encode($exporter->spans[0]))->not->toContain('abc');
+        ->and(json_encode($exporter->spans[0]))->not->toContain('zz-secret-zz');
 })->with(['summary', 'none']);
 
 it('does not drain streamed sse bodies when execution clock is active', function () {
