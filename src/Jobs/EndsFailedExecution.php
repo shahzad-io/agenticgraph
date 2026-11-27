@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\AgenticGraph;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\GraphExecutionFailed;
+use Shahzad\AgenticGraph\Events\GraphExecutionSkipped;
 use Shahzad\AgenticGraph\Exceptions\QueuedRunSkippedException;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
 use Shahzad\AgenticGraph\Execution\ExecutionRepository;
@@ -71,8 +72,8 @@ trait EndsFailedExecution
 
     /**
      * Asks the skipQueuedRunsUsing() callback. True: it skipped the run, which now ends as failed with ended_by=skip,
-     * with the usual failed frames (reason `skipped`) and no GraphExecutionFailed. The caller stops. The stream values
-     * of the job are used where the row has none.
+     * with the usual failed frames (reason `skipped`) and no GraphExecutionFailed, and GraphExecutionSkipped fires once,
+     * from the call that changed the row. The caller stops. The stream values of the job are used where the row has none.
      */
     protected function skipQueuedRun(
         StateContract $state,
@@ -92,7 +93,8 @@ trait EndsFailedExecution
         }
 
         $repo = app(ExecutionRepository::class);
-        if ($repo->skipped($executionId, $reason)) {
+        $changed = $repo->skipped($executionId, $reason);
+        if ($changed) {
             $record = app(ExecutionStore::class)->get($executionId);
             $options = $record !== null ? $record->executionOptions ?? new ExecutionOptions : new ExecutionOptions;
             $streaming ??= $options->streaming;
@@ -108,6 +110,11 @@ trait EndsFailedExecution
         }
 
         Log::info('AgenticGraph: queued run skipped', ['execution_id' => $executionId, 'graph_name' => $graphName, 'reason' => $reason]);
+
+        if ($changed) {
+            // Like GraphExecutionFailed: after the row update and the stream frames, and a listener that throws fails the job.
+            event(new GraphExecutionSkipped($executionId, $graphName, $reason));
+        }
 
         return true;
     }

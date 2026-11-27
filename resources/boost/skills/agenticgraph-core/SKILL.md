@@ -275,7 +275,7 @@ Docs: `/docs/execution`, `/docs/api/execution`
 
 ## Task: control queued runs
 
-Core 0.4.0.
+Core 0.4.0. `GraphExecutionSkipped`: core 0.4.1.
 
 - A deleted run stays deleted: a queued job whose run row is gone runs nothing and writes nothing. A graph job built by hand needs the row first: `app(ExecutionRepository::class)->queued($executionId, $graphName)` (`Shahzad\AgenticGraph\Execution\ExecutionRepository`). `execute()` and `dispatch()` write it.
 - A queued run deleted while a worker runs it stops: a node that is already running finishes its own work; nothing runs after it.
@@ -292,7 +292,7 @@ AgenticGraph::skipQueuedRunsUsing(function (StateContract $state, string $graphN
 ```
 
 - Null runs the job; a string skips it; any other value throws. All four graph jobs ask it, before they run. Sync runs and `agenticgraph:executions:expire` do not. It runs on the worker with no request or tenant bound. A resume gets the state of the interrupt checkpoint.
-- A skipped run is `failed` with error `Skipped: {reason}`, cannot be reopened by a worker, and fires no `GraphExecutionFailed`. `isFailed()` and `getStats()` count it as a failure. A streamed run ends with `reason` `skipped`; your reason text is not sent to the browser. A skipped resume resolves the interrupt as skipped without calling the interrupt handler.
+- A skipped run is `failed` with error `Skipped: {reason}`, cannot be reopened by a worker, and fires no `GraphExecutionFailed`. It fires `GraphExecutionSkipped` (`executionId`, `graphName`, `reason`) once, after the row update: listen to it to react to a skip, for example to close your own record. It is not broadcast. `isFailed()` and `getStats()` count it as a failure. A streamed run ends with `reason` `skipped`; your reason text is not sent to the browser. A skipped resume resolves the interrupt as skipped without calling the interrupt handler.
 
 Docs: `/docs/execution`, `/docs/parallel`
 
@@ -368,7 +368,7 @@ Docs: `/docs/guide-middleware`
 Ordinary Laravel events in `Shahzad\AgenticGraph\Events`. Not stream events, not spans.
 
 - The ones to listen for: `GraphExecutionFailed` (`exception`), `TokensUsed` (`model`, `inputTokens()`, `completionTokens`, `callType`), `InterruptPending` (`interruptId`, `checkpointId`, `payload`).
-- Also: `GraphExecutionStarted`, `GraphExecutionCompleted`, `NodeExecutionStarted`, `NodeExecutionCompleted`, `NodeExecutionFailed` (each attempt), `NodeInterrupted`, `NodeResumed`, `CheckpointCreated`, `RouteDecided`, `ToolCallCaptured`, `CycleCompleted`.
+- Also: `GraphExecutionSkipped` (`executionId`, `graphName`, `reason`), `GraphExecutionStarted`, `GraphExecutionCompleted`, `NodeExecutionStarted`, `NodeExecutionCompleted`, `NodeExecutionFailed` (each attempt), `NodeInterrupted`, `NodeResumed`, `CheckpointCreated`, `RouteDecided`, `ToolCallCaptured`, `CycleCompleted`.
 - `TokensUsed::$totalTokens` is `promptTokens + completionTokens` and leaves out cached input. Full usage is `inputTokens() + completionTokens` (`inputTokens()` adds `cacheReadTokens` and `cacheWriteTokens` to `promptTokens`). With a repeated long prompt most input is cached, so `totalTokens` can be a small part of it.
 - Listeners run in the process that dispatched the event. To queue one, put `ShouldQueue` on the listener; on the event class it does nothing.
 - `InterruptPending` needs interrupt persistence. `AGENTICGRAPH_INTERRUPT_BROADCAST` only toggles whether it is dispatched. It is not Echo.
