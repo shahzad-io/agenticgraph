@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.1 - Unreleased
+
+An app can now react when `skipQueuedRunsUsing()` skips a queued run. Nothing else changes. Stream client 0.2.x and the 0.4.0 upgrade steps are unchanged.
+
+### Added
+
+- **`GraphExecutionSkipped(executionId, graphName, reason)`.** Fires once for a run that `skipQueuedRunsUsing()` skipped, from the job call that changed the row to `failed` with `ended_by=skip`. It fires for all four graph jobs, so for execute, continue, resume and a parallel branch. It fires after the row update and the stream frames, like `GraphExecutionFailed`, and a listener that throws fails the job in the same way. The row stays skipped, and the event does not fire again on a retry. `reason` is the string your callback returned. A call that does not change the row fires nothing: a run that has already ended, a sibling branch that lost the race, or a failed run that a recovery job marks as skipped. The event is a plain Laravel event. It is not broadcast, and the reason does not reach the stream or the browser. `GraphExecutionFailed` still does not fire for a skip.
+
 ## 0.4.0 - 2026-11-27
 
 A queued run that you delete stays deleted, an app can skip a queued run before it runs, old runs can be pruned, and a structured reply without a required key is no longer accepted. This is a breaking release. Stream client 0.2.x works with it. Client 0.2.1 adds `skipped` to the `GraphFailedReason` type; 0.2.0 already passes the value through.

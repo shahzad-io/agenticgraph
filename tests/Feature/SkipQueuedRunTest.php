@@ -1,6 +1,8 @@
 <?php
 
+use Illuminate\Broadcasting\BroadcastEvent;
 use Illuminate\Bus\Batch;
+use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
@@ -10,6 +12,7 @@ use Shahzad\AgenticGraph\Contracts\InterruptHandlerInterface;
 use Shahzad\AgenticGraph\Contracts\InterruptServiceInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\GraphExecutionFailed;
+use Shahzad\AgenticGraph\Events\GraphExecutionSkipped;
 use Shahzad\AgenticGraph\Events\InterruptExpired;
 use Shahzad\AgenticGraph\Execution\ExecutionMode;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
@@ -399,3 +402,204 @@ it('throws on a return value that is not null or a string', function (mixed $val
         ->and(SkipRunNode::$runs)->toBe(0)
         ->and(skipRow($job->executionId)->status)->toBe('queued');
 })->with(['false' => [false], 'true' => [true], 'int' => [1]]);
+
+/**
+ * Records every GraphExecutionSkipped with the row as the listener sees it: the update has committed by then.
+ *
+ * @return ArrayObject<int, array{id: string, graph: string, reason: string, status: string, ended_by: ?string, event: object}>
+ */
+function recordSkips(): ArrayObject
+{
+    $seen = new ArrayObject;
+    Event::listen(GraphExecutionSkipped::class, function (GraphExecutionSkipped $event) use ($seen) {
+        $row = skipRow($event->executionId);
+        $seen[] = [
+            'id' => $event->executionId,
+            'graph' => $event->graphName,
+            'reason' => $event->reason,
+            'status' => $row->status,
+            'ended_by' => json_decode((string) $row->execution_options, true)['ended_by'] ?? null,
+            'event' => $event,
+        ];
+    });
+
+    return $seen;
+}
+
+function expectSkipEvent(ArrayObject $seen, string $id): void
+{
+    expect($seen)->toHaveCount(1)
+        ->and(array_diff_key($seen[0], ['event' => 1]))->toBe([
+            'id' => $id, 'graph' => 'skip-run', 'reason' => 'brand deleted', 'status' => 'failed', 'ended_by' => 'skip',
+        ]);
+}
+
+it('fires GraphExecutionSkipped once for ExecuteGraphJob, not GraphExecutionFailed', function (StreamingMode $streaming) {
+    Event::fake([GraphExecutionFailed::class]);
+    $job = skipQueuedJob($streaming);
+    skipWith();
+    $seen = recordSkips();
+
+    app()->call([$job, 'handle']);
+
+    expectSkipEvent($seen, $job->executionId);
+    Event::assertNotDispatched(GraphExecutionFailed::class);
+})->with('skip streaming');
+
+it('fires GraphExecutionSkipped once for ContinueExecutionJob', function (StreamingMode $streaming) {
+    Event::fake([GraphExecutionFailed::class]);
+    $job = skipContinueJob('exec-skip-continue', $streaming);
+    skipWith();
+    $seen = recordSkips();
+
+    app()->call([$job, 'handle']);
+
+    expectSkipEvent($seen, 'exec-skip-continue');
+    Event::assertNotDispatched(GraphExecutionFailed::class);
+})->with('skip streaming');
+
+it('fires GraphExecutionSkipped once for ResumeExecutionJob', function (StreamingMode $streaming) {
+    [$job, $id] = skipResumeJob($streaming);
+    Event::fake([GraphExecutionFailed::class]);
+    skipWith();
+    $seen = recordSkips();
+
+    $job->handle(app(InterruptServiceInterface::class), app(StreamResumption::class));
+
+    expectSkipEvent($seen, $id);
+    Event::assertNotDispatched(GraphExecutionFailed::class);
+})->with('skip streaming');
+
+it('fires GraphExecutionSkipped once for a parallel branch, and not again for a sibling or the batch', function () {
+    Bus::fake();
+    Event::fake([GraphExecutionFailed::class]);
+    $repo = app(ExecutionRepository::class);
+    $repo->queued('exec-skip-branch', 'skip-run');
+    $repo->started('exec-skip-branch', 'skip-run');
+    skipWith();
+    $seen = recordSkips();
+    $branch = fn () => app()->call([new ExecuteNodeJob('exec-skip-branch', 'work', (new State(['topic' => 'demo']))->toArray(), 'skip-run'), 'handle']);
+
+    $branch();
+    $branch();
+    $batch = Mockery::mock(Batch::class);
+    $batch->id = 'batch-skip';
+    app(ParallelExecutionCoordinator::class)->handleBatchCompletion($batch, 'skip-run', 'exec-skip-branch', 'work', ['work']);
+
+    expectSkipEvent($seen, 'exec-skip-branch');
+    Event::assertNotDispatched(GraphExecutionFailed::class);
+});
+
+it('fires GraphExecutionSkipped once when two parallel branches skip at the same time, from the call that changed the row', function () {
+    Bus::fake();
+    $repo = app(ExecutionRepository::class);
+    $repo->queued('exec-skip-race', 'skip-run');
+    $repo->started('exec-skip-race', 'skip-run');
+    $branch = fn () => app()->call([new ExecuteNodeJob('exec-skip-race', 'work', (new State(['topic' => 'demo']))->toArray(), 'skip-run'), 'handle']);
+    $asked = 0;
+    $callers = [];
+    // The first branch is inside its callback when the second branch starts: both passed the "has ended" check.
+    AgenticGraph::skipQueuedRunsUsing(function () use (&$asked, &$callers, $branch) {
+        $asked++;
+        $me = $asked;
+        if ($me === 1) {
+            $branch();
+        }
+        $callers[] = $me;
+
+        return 'brand deleted';
+    });
+    $seen = recordSkips();
+    $callersWhenFired = null;
+    Event::listen(GraphExecutionSkipped::class, function () use (&$callers, &$callersWhenFired) {
+        $callersWhenFired = $callers;
+    });
+
+    $branch();
+
+    expectSkipEvent($seen, 'exec-skip-race');
+    expect($asked)->toBe(2)
+        ->and($callersWhenFired)->toBe([2]); // Fired while the first branch was still in its callback: by the second.
+    expectSkipped('exec-skip-race', StreamingMode::NONE);
+});
+
+it('fires no GraphExecutionSkipped when the skip does not change the row', function (string $ending) {
+    $job = skipQueuedJob(StreamingMode::SSE);
+    AgenticGraph::skipQueuedRunsUsing(function (StateContract $state, string $graph, string $id) use ($ending) {
+        // The run ends between the "has ended" check and the skip.
+        $ending === 'failed'
+            ? app(ExecutionRepository::class)->failed($id, 'worker died')
+            : DB::table('agenticgraph_executions')->where('id', $id)->update(['status' => 'completed']);
+
+        return 'brand deleted';
+    });
+    $seen = recordSkips();
+
+    app()->call([$job, 'handle']);
+
+    expect($seen)->toHaveCount(0)
+        ->and(skipRow($job->executionId)->status)->toBe($ending)
+        ->and(SkipRunNode::$runs)->toBe(0);
+})->with(['already failed' => ['failed'], 'already completed' => ['completed']]);
+
+it('fires no GraphExecutionSkipped for a run that is deleted or already ended', function () {
+    $ended = skipQueuedJob(StreamingMode::NONE);
+    app(ExecutionRepository::class)->failed($ended->executionId, 'expired');
+    $deleted = skipQueuedJob(StreamingMode::NONE);
+    DB::table('agenticgraph_executions')->where('id', $deleted->executionId)->delete();
+    skipWith();
+    $seen = recordSkips();
+
+    app()->call([$ended, 'handle']);
+    app()->call([$deleted, 'handle']);
+
+    expect($seen)->toHaveCount(0);
+});
+
+it('does not broadcast GraphExecutionSkipped, and the reason never reaches the stream or the browser', function () {
+    config()->set('agenticgraph.streaming.expose_error_details', true);
+    $appBroadcaster = frameRecorder();
+    $stream = frameRecorder();
+    useStreamBroadcaster($appBroadcaster, $stream);
+    $job = skipQueuedJob(StreamingMode::BROADCAST);
+    skipWith('tenant acme-42 is suspended');
+    $seen = recordSkips();
+
+    app()->call([$job, 'handle']);
+
+    expect($seen)->toHaveCount(1)
+        ->and($seen[0]['reason'])->toBe('tenant acme-42 is suspended')
+        ->and($seen[0]['event'])->not->toBeInstanceOf(ShouldBroadcast::class)
+        ->and($appBroadcaster->frames)->toBe([])
+        ->and(json_encode($stream->frames))->not->toContain('acme-42')
+        ->and(json_encode(array_map(fn (StreamEvent $e) => $e->payload(), skipEvents($job->executionId))))->not->toContain('acme-42');
+    Bus::assertNotDispatched(BroadcastEvent::class);
+});
+
+it('lets a listener failure out of the job after the run is skipped, and fires neither event again', function () {
+    $failedFired = new ArrayObject;
+    Event::listen(GraphExecutionFailed::class, fn () => $failedFired[] = true);
+    $job = skipQueuedJob(StreamingMode::SSE);
+    skipWith();
+    Event::listen(GraphExecutionSkipped::class, fn () => throw new RuntimeException('listener broke'));
+
+    expect(fn () => app()->call([$job, 'handle']))->toThrow(RuntimeException::class, 'listener broke');
+    $job->failed(new RuntimeException('listener broke'));
+    app()->call([$job, 'handle']); // a retry: the run has ended
+
+    expectSkipped($job->executionId, StreamingMode::SSE);
+    expect($failedFired)->toHaveCount(0);
+});
+
+it('fires no GraphExecutionSkipped when a recovery job marks an already failed run as skipped', function () {
+    $resume = new StreamResumePayload(fromSeq: 0, resumedAtSeq: 1, gapEvents: [], checkpointId: 'checkpoint-1');
+    $job = skipContinueJob('exec-skip-recovery-event', StreamingMode::NONE, $resume);
+    app(ExecutionRepository::class)->failed('exec-skip-recovery-event', 'worker died');
+    skipWith();
+    $seen = recordSkips();
+
+    app()->call([$job, 'handle']);
+
+    expect($seen)->toHaveCount(0)
+        ->and(app(ExecutionRepository::class)->endedForGood('exec-skip-recovery-event'))->toBeTrue();
+});
