@@ -104,6 +104,12 @@ class ResumeExecutionJob implements ShouldBeUnique, ShouldQueue
             // The execution ended elsewhere (for example expired) while this worker ran it: nothing to write or retry.
             Log::info('AgenticGraph: worker stopped, execution already ended', ['interrupt_id' => $this->interruptId]);
         } catch (\Throwable $e) {
+            // A skip has stored its whole end, interrupt included, so only what came after it failed (for example a
+            // GraphExecutionSkipped listener): the job fails, and the interrupt stays resolved as skipped.
+            if (($interrupt->getAttribute('resolution')['outcome'] ?? null) === 'skipped') {
+                throw $e;
+            }
+
             $interrupt->markPending([
                 'last_error' => [
                     'message' => $e->getMessage(),
@@ -152,19 +158,16 @@ class ResumeExecutionJob implements ShouldBeUnique, ShouldQueue
         $delivery = $metadata['stream_delivery'] ?? null;
         $streamId = $metadata['stream_id'] ?? null;
         $lastSeq = $metadata['stream_last_seq'] ?? null;
-        $skipped = $this->skipQueuedRun(
+
+        return $this->skipQueuedRun(
             $checkpoint->state,
             $checkpoint->graphName,
             $executionId,
             is_string($streamId) ? $streamId : null,
             is_string($delivery) ? StreamingMode::tryFrom($delivery) : null,
             is_int($lastSeq) ? $lastSeq : null,
+            fn () => $interrupt->resolve(['outcome' => 'skipped']),
         );
-        if ($skipped) {
-            $interrupt->resolve(['outcome' => 'skipped']);
-        }
-
-        return $skipped;
     }
 
     private function resolveInterruptHandler(): ?InterruptHandlerInterface
@@ -212,17 +215,18 @@ class ResumeExecutionJob implements ShouldBeUnique, ShouldQueue
             is_string($delivery) ? StreamingMode::tryFrom($delivery) : null,
             $record?->executionOptions,
             fallbackSeq: is_int($lastSeq) ? $lastSeq : null,
+            // The execution is failed, so the interrupt must not stay pending: a later resolve
+            // attempt then gets the existing "already resolved" result instead of a new run.
+            onEnded: function () use ($interrupt, $metadata, $e): void {
+                if ($interrupt->status() !== 'resolved') {
+                    $interrupt->update(['metadata' => array_merge($metadata, ['resume_error' => [
+                        'type' => $e::class,
+                        'message' => $e->getMessage(),
+                        'occurred_at' => now()->toIsoString(),
+                    ]])]);
+                    $interrupt->resolve(['outcome' => 'failed']);
+                }
+            },
         );
-
-        // The execution is failed, so the interrupt must not stay pending: a later resolve
-        // attempt then gets the existing "already resolved" result instead of a new run.
-        if ($interrupt->status() !== 'resolved') {
-            $interrupt->update(['metadata' => array_merge($metadata, ['resume_error' => [
-                'type' => $e::class,
-                'message' => $e->getMessage(),
-                'occurred_at' => now()->toIsoString(),
-            ]])]);
-            $interrupt->resolve(['outcome' => 'failed']);
-        }
     }
 }

@@ -603,3 +603,24 @@ it('fires no GraphExecutionSkipped when a recovery job marks an already failed r
     expect($seen)->toHaveCount(0)
         ->and(app(ExecutionRepository::class)->endedForGood('exec-skip-recovery-event'))->toBeTrue();
 });
+
+it('keeps a skipped resume skipped when the GraphExecutionSkipped listener throws, and still fails the job', function () {
+    config()->set('agenticgraph.interrupts.handler', SkipInterruptHandler::class);
+    [$job, $id] = skipResumeJob(StreamingMode::SSE);
+    skipWith();
+    $fired = new ArrayObject;
+    Event::listen(GraphExecutionSkipped::class, function () use ($fired, $job): void {
+        $fired[] = InterruptRecord::find($job->interruptId)->status();
+        throw new RuntimeException('listener broke');
+    });
+
+    expect(fn () => $job->handle(app(InterruptServiceInterface::class), app(StreamResumption::class)))->toThrow(RuntimeException::class, 'listener broke');
+    $job->failed(new RuntimeException('listener broke'));
+
+    $interrupt = InterruptRecord::find($job->interruptId);
+    expect($fired->getArrayCopy())->toBe(['resolved']) // once, with the end already stored
+        ->and(skipRow($id)->status)->toBe('failed')
+        ->and($interrupt->status())->toBe('resolved')
+        ->and($interrupt->getAttribute('resolution'))->toBe(['outcome' => 'skipped'])
+        ->and(SkipInterruptHandler::$calls)->toBe([]);
+});

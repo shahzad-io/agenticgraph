@@ -232,3 +232,24 @@ it('resolves the interrupt as failed so a later resume returns already resolved'
 
     Bus::assertNotDispatched(ResumeExecutionJob::class);
 });
+
+it('resolves the interrupt when a GraphExecutionFailed listener throws in failed(), which still throws', function () {
+    $run = resumeFailureInterruptedRun('resume-fail-listener');
+    app(GraphRegistry::class)->unregister('resume-fail-listener');
+    Event::swap(Event::getFacadeRoot()->dispatcher); // undo the file's Event::fake(), so the listener runs
+    $fired = new ArrayObject;
+    Event::listen(GraphExecutionFailed::class, function () use ($fired, $run): void {
+        $fired[] = InterruptRecord::find($run['job']->interruptId)->status();
+        throw new RuntimeException('listener broke');
+    });
+
+    expect(fn () => resumeFailureRunJob($run['job']))->toThrow(RuntimeException::class, 'listener broke');
+    $run['job']->failed(new RuntimeException('again'));
+
+    $interrupt = InterruptRecord::find($run['job']->interruptId);
+    expect(DB::table('agenticgraph_executions')->where('id', $run['execution_id'])->value('status'))->toBe('failed')
+        ->and(resumeFailureEventsAfter($run['stream_id'], $run['interrupted_seq']))->toBe(['graph_failed', 'execution_terminal'])
+        ->and($fired->getArrayCopy())->toBe(['resolved']) // once, with the end already stored
+        ->and($interrupt->status())->toBe('resolved')
+        ->and($interrupt->getAttribute('resolution'))->toBe(['outcome' => 'failed']);
+});

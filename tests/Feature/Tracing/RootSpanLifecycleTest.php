@@ -8,12 +8,10 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Event;
 use Shahzad\AgenticGraph\Contracts\RouterInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Contracts\StorageInterface;
 use Shahzad\AgenticGraph\Events\GraphExecutionFailed;
-use Shahzad\AgenticGraph\Events\InterruptExpired;
 use Shahzad\AgenticGraph\Events\TokensUsed;
 use Shahzad\AgenticGraph\Execution\ExecutionContext;
 use Shahzad\AgenticGraph\Execution\ExecutionContextManager;
@@ -836,7 +834,14 @@ it('interrupt:expire sends no final segment when the expiry rolls back, and exac
     $interrupt->update(['expires_at' => now()->subMinute()]);
 
     rlNewProcess($exporter);
-    Event::listen(InterruptExpired::class, fn () => throw new RuntimeException('listener failed'));
+    // Fails after the row is written and before the commit. A listener cannot roll an expiry back any more.
+    app()->instance(ExecutionRepository::class, new class extends ExecutionRepository
+    {
+        public function markEndedByExpiry(string $id, string $reason): void
+        {
+            throw new RuntimeException('database went away');
+        }
+    });
     Artisan::call('agenticgraph:interrupt:expire');
 
     expect($exporter->sent)->toHaveCount(1)
@@ -844,7 +849,7 @@ it('interrupt:expire sends no final segment when the expiry rolls back, and exac
         ->and(DB::table('agenticgraph_executions')->where('id', $traceId)->value('status'))->toBe('interrupted');
 
     rlNewProcess($exporter);
-    Event::forget(InterruptExpired::class);
+    app()->forgetInstance(ExecutionRepository::class);
     Artisan::call('agenticgraph:interrupt:expire');
 
     $finals = array_filter($exporter->sent, fn (array $payload): bool => $payload['segment']['final']);

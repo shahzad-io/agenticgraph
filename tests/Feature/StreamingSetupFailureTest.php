@@ -156,3 +156,21 @@ it('closes the stream sink with ERROR when setup fails during graph_start emit',
     expect($streamCloseStatuses)->not->toBeEmpty()
         ->and(end($streamCloseStatuses))->toBe('error');
 });
+
+it('ends the row before GraphExecutionFailed when setup fails, so a throwing listener cannot leave it open', function () {
+    config()->set('agenticgraph.streaming.store.driver', 'database');
+    config()->set('agenticgraph.streaming.errors.store_fatal', true);
+    bindSetupThrowingStreamStore();
+    registerSetupFailureStreamGraph('stream-setup-listener');
+    $seen = new ArrayObject;
+    Event::listen(GraphExecutionFailed::class, function (GraphExecutionFailed $e) use ($seen): void {
+        $seen[] = DB::table('agenticgraph_executions')->where('id', $e->executionId)->value('status');
+        throw new RuntimeException('listener broke');
+    });
+
+    expect(fn () => AgenticGraph::execute('stream-setup-listener', new State, new ExecutionOptions(mode: ExecutionMode::SYNC, streaming: StreamingMode::ITERATOR)))
+        ->toThrow(RuntimeException::class, 'listener broke');
+
+    expect($seen->getArrayCopy())->toBe(['failed'])
+        ->and(DB::table('agenticgraph_executions')->where('graph_name', 'stream-setup-listener')->value('status'))->toBe('failed');
+});

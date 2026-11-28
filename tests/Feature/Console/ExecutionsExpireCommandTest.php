@@ -2,12 +2,14 @@
 
 use Illuminate\Bus\PendingBatch;
 use Illuminate\Contracts\Broadcasting\Broadcaster;
+use Illuminate\Database\Events\TransactionCommitted;
 use Illuminate\Queue\Jobs\FakeJob;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Exceptions;
 use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Contracts\RouterInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
@@ -28,7 +30,9 @@ use Shahzad\AgenticGraph\Nodes\AbstractNode;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamEvent;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
+use Shahzad\AgenticGraph\Streaming\StreamDescriptor;
 use Shahzad\AgenticGraph\Streaming\StreamResumePayload;
+use Shahzad\AgenticGraph\Streaming\StreamToken;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
 use Shahzad\AgenticGraph\Tracing\PulseExporter;
 use Shahzad\AgenticGraph\Tracing\TraceSegmentMerger;
@@ -321,10 +325,12 @@ it('ends the trace with one failed segment on the original root span, naming the
 
 it('sends no trace segment when the expiry rolls back, and exactly one on the next run', function () {
     [$exporter, $run] = staleTracedRun('stale-trace-rollback');
-    $fail = true;
-    Event::listen(GraphExecutionFailed::class, function () use (&$fail) {
-        if ($fail) {
-            throw new RuntimeException('listener failed');
+    // Fails after the row is written and before the commit.
+    app()->instance(ExecutionRepository::class, new class extends ExecutionRepository
+    {
+        public function markEndedByExpiry(string $id, string $reason): void
+        {
+            throw new RuntimeException('database went away');
         }
     });
 
@@ -333,8 +339,8 @@ it('sends no trace segment when the expiry rolls back, and exactly one on the ne
     expect($exporter->sent)->toBe([])
         ->and(staleStatus($run['id']))->toBe('queued');
 
+    app()->forgetInstance(ExecutionRepository::class);
     $exporter->reset();
-    $fail = false;
     Artisan::call('agenticgraph:executions:expire');
 
     expect($exporter->sent)->toHaveCount(1)
@@ -653,3 +659,174 @@ it('never lets a continue job, even with a resume payload, reopen an expired exe
         ->and(staleStatus($run['id']))->toBe('failed')
         ->and(count(staleEvents($run['stream_id'])))->toBe($eventsBefore);
 });
+
+/**
+ * Two queued runs past the timeout, in the order the command takes them.
+ *
+ * @return list<array{id: string, stream_id: string}>
+ */
+function staleTwoRuns(string $name): array
+{
+    $runs = [staleRun($name.'-one', 'queued', 400), staleRun($name.'-two', 'queued', 400)];
+    usort($runs, fn (array $a, array $b) => strcmp($a['id'], $b['id']));
+
+    return $runs;
+}
+
+/** @return list<string> */
+function staleTypes(string $streamId): array
+{
+    return array_map(fn (StreamEvent $e) => $e->type(), staleEvents($streamId));
+}
+
+/**
+ * What a GraphExecutionFailed listener sees; it throws for the execution ids in $broken.
+ *
+ * @param  list<string>  $broken
+ * @param  list<array{id: string, stream_id: string}>  $runs
+ */
+function staleListener(array $broken, array $runs): ArrayObject
+{
+    $seen = new ArrayObject;
+    $streams = array_column($runs, 'stream_id', 'id');
+    Event::listen(GraphExecutionFailed::class, function (GraphExecutionFailed $e) use ($broken, $streams, $seen): void {
+        $seen[] = [$e->executionId, DB::transactionLevel(), staleStatus($e->executionId), staleTypes($streams[$e->executionId])];
+        if (in_array($e->executionId, $broken, true)) {
+            throw new RuntimeException('listener broke');
+        }
+    });
+
+    return $seen;
+}
+
+/**
+ * Runs the command and returns its output line and the status of each run.
+ *
+ * @param  list<array{id: string, stream_id: string}>  $runs
+ * @param  array<string, mixed>  $options
+ * @return array{0: string, 1: list<?string>}
+ */
+function staleExpirePass(array $runs, array $options = []): array
+{
+    Artisan::call('agenticgraph:executions:expire', $options);
+
+    return [trim(Artisan::output()), array_map(fn (array $run) => staleStatus($run['id']), $runs)];
+}
+
+dataset('stale stream stores', ['database', 'redis']);
+
+it('ends each run on the first pass when its GraphExecutionFailed listener throws', function (string $store, int $brokenRuns) {
+    useStreamStoreDriver($store);
+    Exceptions::fake();
+    $runs = staleTwoRuns('stale-listener');
+    $seen = staleListener(array_slice(array_column($runs, 'id'), 0, $brokenRuns), $runs);
+
+    $passes = [staleExpirePass($runs), staleExpirePass($runs)];
+
+    expect($passes)->toBe([
+        ['Expired 2 execution(s).', ['failed', 'failed']],
+        ['Expired 0 execution(s).', ['failed', 'failed']],
+    ]);
+    foreach ($runs as $run) {
+        expect(staleTypes($run['stream_id']))->toBe(['graph_failed', 'execution_terminal']);
+    }
+    // Once per run, after the commit and after the stream frames.
+    expect($seen->getArrayCopy())->toBe(array_map(
+        fn (array $run) => [$run['id'], 0, 'failed', ['graph_failed', 'execution_terminal']],
+        $runs,
+    ));
+    Exceptions::assertReportedCount($brokenRuns);
+    Exceptions::assertReported(fn (RuntimeException $e) => $e->getMessage() === 'listener broke');
+})->with('stale stream stores')->with(['the first run' => 1, 'every run' => 2]);
+
+it('does not let a throwing listener hold the --limit slot, so the next stuck run expires', function () {
+    Exceptions::fake();
+    $runs = staleTwoRuns('stale-listener-limit');
+    staleListener([$runs[0]['id']], $runs);
+
+    expect([staleExpirePass($runs, ['--limit' => 1]), staleExpirePass($runs, ['--limit' => 1])])->toBe([
+        ['Expired 1 execution(s).', ['failed', 'queued']],
+        ['Expired 1 execution(s).', ['failed', 'failed']],
+    ]);
+});
+
+it('keeps the stream and the row in agreement when the listener throws', function (string $store) {
+    useStreamStoreDriver($store);
+    Exceptions::fake();
+    $run = staleRun('stale-agree', 'queued', 400);
+    staleListener([$run['id']], [$run]);
+
+    Artisan::call('agenticgraph:executions:expire');
+
+    expect([staleStatus($run['id']), staleTypes($run['stream_id'])])->toBe(['failed', ['graph_failed', 'execution_terminal']]);
+})->with('stale stream stores');
+
+it('still fires the event, and ends the next run, when the stream store fails after the commit', function () {
+    Exceptions::fake();
+    $runs = staleTwoRuns('stale-store-down');
+    $seen = new ArrayObject;
+    Event::listen(GraphExecutionFailed::class, fn (GraphExecutionFailed $e) => $seen[] = $e->executionId);
+    app()->instance(StreamStoreInterface::class, Mockery::mock(StreamStoreInterface::class, function ($store) {
+        $store->shouldReceive('lastSeq')->andThrow(new RuntimeException('stream store down'));
+    }));
+
+    expect(staleExpirePass($runs))->toBe(['Expired 2 execution(s).', ['failed', 'failed']])
+        ->and($seen->getArrayCopy())->toBe(array_column($runs, 'id'));
+    Exceptions::assertReportedCount(2);
+});
+
+it('gives one event when a second pass overlaps the first', function () {
+    $run = staleRun('stale-overlap', 'queued', 400);
+    Event::fake([GraphExecutionFailed::class]);
+    $overlapped = null;
+    DB::listen(function ($query) use (&$overlapped) {
+        if ($overlapped === null && str_contains($query->sql, 'limit') && str_contains($query->sql, 'agenticgraph_executions')) {
+            $overlapped = false;
+            Artisan::call('agenticgraph:executions:expire'); // the whole second pass, after the first read its candidates
+            $overlapped = trim(Artisan::output());
+        }
+    });
+
+    Artisan::call('agenticgraph:executions:expire');
+
+    expect(trim(Artisan::output()))->toBe('Expired 0 execution(s).')
+        ->and($overlapped)->toBe('Expired 1 execution(s).')
+        ->and(staleTypes($run['stream_id']))->toBe(['graph_failed', 'execution_terminal']);
+    Event::assertDispatchedTimes(GraphExecutionFailed::class, 1);
+});
+
+// Known gap: nothing repairs this yet. Change this test when a later release does.
+it('leaves a stream with no end when the process dies after the commit and before the stream write', function (StreamingMode $streaming) {
+    $app = frameRecorder();
+    $live = frameRecorder();
+    useStreamBroadcaster($app, $live);
+    $run = staleRun('stale-crash', 'queued', 400, null, $streaming);
+    Event::fake([GraphExecutionFailed::class]);
+    $crashed = false;
+    // Right after the outermost commit, before anything else of the command runs.
+    Event::listen(TransactionCommitted::class, function (TransactionCommitted $e) use (&$crashed): void {
+        if (! $crashed && $e->connection->transactionLevel() === 0) {
+            $crashed = true;
+            throw new RuntimeException('process died');
+        }
+    });
+
+    Artisan::call('agenticgraph:executions:expire');
+    $next = staleExpirePass([$run]); // the next scheduled pass
+
+    expect($crashed)->toBeTrue()
+        ->and($next)->toBe(['Expired 0 execution(s).', ['failed']])
+        ->and(staleTypes($run['stream_id']))->toBe([]);
+    Event::assertNotDispatched(GraphExecutionFailed::class);
+
+    // What a client gets. SSE: no event and no terminal, only the planned reconnect, so it connects again and again.
+    config()->set('agenticgraph.streaming.sse.max_duration_seconds', 0.2);
+    $sse = $this->get(streamUrlFor($run['stream_id']))->assertOk()->streamedContent();
+    // Broadcast: no live frame, and the replay it polls with stays empty.
+    $replay = $this->getJson(route(StreamDescriptor::REPLAY_ROUTE_NAME, ['streamId' => $run['stream_id'], 'token' => StreamToken::issue($run['stream_id'], null, 3600)]))->assertOk();
+
+    expect($sse)->toContain('event: stream_reconnect')->not->toContain('execution_terminal')->not->toContain('graph_failed')
+        ->and($replay->json())->toBe(['events' => [], 'last_seq' => 0, 'more' => false, 'gone' => false])
+        ->and($live->frames)->toBe([])
+        ->and($app->frames)->toBe([]);
+})->with(['sse' => [StreamingMode::SSE], 'broadcast' => [StreamingMode::BROADCAST]]);
