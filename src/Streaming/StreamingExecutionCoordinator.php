@@ -667,13 +667,17 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
             return; // The execution ended elsewhere and already has its terminal.
         }
 
+        // The row first, so a listener that throws cannot leave the run open. An execution that ended elsewhere keeps
+        // the status, events and terminal it already has.
+        if (! $this->repo->failed($executionId, $e->getMessage()) && ($this->repo->hasEnded($executionId) || $this->repo->isDeletedQueuedRun($executionId))) {
+            return;
+        }
+
         $duration = microtime(true) - $start;
         if ($sink !== null && $session !== null) {
             $this->endFailedStream($sink, $session, $traceContext, $e, $state);
         }
         $this->events->dispatch(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000, $traceContext->getRootSpanId()));
-
-        $this->repo->failed($executionId, $e->getMessage());
     }
 
     private function cleanupStreamContext(): void

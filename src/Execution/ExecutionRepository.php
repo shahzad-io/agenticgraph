@@ -300,13 +300,12 @@ class ExecutionRepository implements ExecutionStore
                 return false;
             }
 
-            $this->db->table($this->table)->where('id', $id)->update([
+            // Conditional too: a database that ignores lockForUpdate() (SQLite) still lets only one call end the run.
+            return $this->db->table($this->table)->where('id', $id)->whereNotIn('status', ['completed', 'failed'])->update([
                 'status' => 'failed',
                 'error' => $error,
                 'updated_at' => now(),
-            ]);
-
-            return true;
+            ]) > 0;
         }));
 
         if ($updated && (bool) config('agenticgraph.logging.enabled', true)) {

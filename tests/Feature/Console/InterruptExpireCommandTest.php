@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Exceptions;
 use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\GraphExecutionFailed;
@@ -307,4 +308,126 @@ it('expires each interrupt completely or not at all, independently of the others
         ->and(expiryStatus($healthy['execution_id']))->toBe('failed');
     Event::assertDispatchedTimes(InterruptExpired::class, 1);
     Event::assertDispatched(InterruptExpired::class, fn (InterruptExpired $event) => $event->executionId === $healthy['execution_id']);
+});
+
+/**
+ * Two interrupted runs with due interrupts, in the order the command takes them. Events are real again.
+ *
+ * @return list<array<string, mixed>>
+ */
+function expiryTwoDueRuns(string $name): array
+{
+    $runs = [expiryInterruptedAsyncRun($name.'-one'), expiryInterruptedAsyncRun($name.'-two')];
+    foreach ($runs as $run) {
+        $run['interrupt']->update(['expires_at' => now()->subMinute()]);
+    }
+    Event::swap(Event::getFacadeRoot()->dispatcher); // undo the file's Event::fake(), so listeners run
+
+    return $runs;
+}
+
+/**
+ * Records both expiry events; the listener on $event throws for the execution ids in $broken.
+ *
+ * @param  list<string>  $broken
+ * @param  list<array<string, mixed>>  $runs
+ */
+function expiryListener(string $event, array $broken, array $runs): ArrayObject
+{
+    $seen = new ArrayObject;
+    $byId = array_column($runs, null, 'execution_id');
+    foreach ([GraphExecutionFailed::class, InterruptExpired::class] as $class) {
+        Event::listen($class, function (object $e) use ($class, $event, $broken, $byId, $seen): void {
+            $run = $byId[$e->executionId];
+            $seen[] = [
+                $e->executionId, class_basename($class), DB::transactionLevel(), expiryStatus($e->executionId),
+                $run['interrupt']->fresh()->status(),
+                array_map(fn (StreamEvent $frame) => $frame->type(), expiryEventsAfter($run['stream_id'], $run['interrupted_seq'])),
+            ];
+            if ($class === $event && in_array($e->executionId, $broken, true)) {
+                throw new RuntimeException('listener broke');
+            }
+        });
+    }
+
+    return $seen;
+}
+
+/**
+ * @param  list<array<string, mixed>>  $runs
+ * @param  array<string, mixed>  $options
+ * @return array{0: string, 1: list<string>} the output line, and "interrupt status/run status" per run
+ */
+function expiryPass(array $runs, array $options = []): array
+{
+    Artisan::call('agenticgraph:interrupt:expire', $options);
+
+    return [trim(Artisan::output()), array_map(fn (array $run) => $run['interrupt']->fresh()->status().'/'.expiryStatus($run['execution_id']), $runs)];
+}
+
+it('expires each interrupt on the first pass when a listener throws', function (string $store, string $event, int $brokenRuns) {
+    useStreamStoreDriver($store);
+    Exceptions::fake();
+    $runs = expiryTwoDueRuns('expiry-listener');
+    $seen = expiryListener($event, array_slice(array_column($runs, 'execution_id'), 0, $brokenRuns), $runs);
+
+    expect([expiryPass($runs), expiryPass($runs)])->toBe([
+        ['Expired 2 interrupt(s).', ['expired/failed', 'expired/failed']],
+        ['Expired 0 interrupt(s).', ['expired/failed', 'expired/failed']],
+    ]);
+    $expected = [];
+    foreach ($runs as $run) {
+        $frames = array_map(fn (StreamEvent $frame) => $frame->type(), expiryEventsAfter($run['stream_id'], $run['interrupted_seq']));
+        expect($frames)->toBe(['graph_failed', 'execution_terminal']);
+        // Once per run each, after the commit and after the stream frames.
+        foreach (['GraphExecutionFailed', 'InterruptExpired'] as $name) {
+            $expected[] = [$run['execution_id'], $name, 0, 'failed', 'expired', $frames];
+        }
+    }
+    expect($seen->getArrayCopy())->toBe($expected);
+    Exceptions::assertReportedCount($brokenRuns);
+})->with(['database', 'redis'])->with([GraphExecutionFailed::class, InterruptExpired::class])->with(['the first run' => 1, 'every run' => 2]);
+
+it('does not let a throwing listener hold the --limit slot, so the next interrupt expires', function () {
+    Exceptions::fake();
+    $runs = expiryTwoDueRuns('expiry-listener-limit');
+    expiryListener(InterruptExpired::class, [$runs[0]['execution_id']], $runs);
+
+    expect([expiryPass($runs, ['--limit' => 1]), expiryPass($runs, ['--limit' => 1])])->toBe([
+        ['Expired 1 interrupt(s).', ['expired/failed', 'pending/interrupted']],
+        ['Expired 1 interrupt(s).', ['expired/failed', 'expired/failed']],
+    ]);
+});
+
+it('gives one event of each kind when a second interrupt pass overlaps the first', function () {
+    $run = expiryInterruptedAsyncRun('expiry-overlap');
+    $run['interrupt']->update(['expires_at' => now()->subMinute()]);
+    $overlapped = null;
+    DB::listen(function ($query) use (&$overlapped) {
+        if ($overlapped === null && str_contains($query->sql, 'limit') && str_contains($query->sql, 'agenticgraph_interrupts')) {
+            $overlapped = false;
+            Artisan::call('agenticgraph:interrupt:expire');
+            $overlapped = trim(Artisan::output());
+        }
+    });
+
+    Artisan::call('agenticgraph:interrupt:expire');
+
+    expect(trim(Artisan::output()))->toBe('Expired 0 interrupt(s).')
+        ->and($overlapped)->toBe('Expired 1 interrupt(s).');
+    Event::assertDispatchedTimes(GraphExecutionFailed::class, 1);
+    Event::assertDispatchedTimes(InterruptExpired::class, 1);
+});
+
+it('writes no frames and fires no GraphExecutionFailed for a run that had already ended', function () {
+    $run = expiryInterruptedAsyncRun('expiry-ended-run');
+    $run['interrupt']->update(['expires_at' => now()->subMinute()]);
+    DB::table('agenticgraph_executions')->where('id', $run['execution_id'])->update(['status' => 'completed']);
+
+    $this->artisan('agenticgraph:interrupt:expire')->expectsOutput('Expired 1 interrupt(s).')->assertSuccessful();
+
+    expect(expiryStatus($run['execution_id']))->toBe('completed')
+        ->and(expiryEventsAfter($run['stream_id'], $run['interrupted_seq']))->toBe([]);
+    Event::assertNotDispatched(GraphExecutionFailed::class);
+    Event::assertDispatchedTimes(InterruptExpired::class, 1);
 });

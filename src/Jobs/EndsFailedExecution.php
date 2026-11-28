@@ -25,17 +25,25 @@ use Shahzad\AgenticGraph\Streaming\StreamSession;
 use Shahzad\AgenticGraph\Streaming\StreamSinkFactory;
 use Shahzad\AgenticGraph\Streaming\StreamStatus;
 use Shahzad\AgenticGraph\Streaming\StreamTerminalStatus;
+use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
+use Shahzad\AgenticGraph\Tracing\Exporters\BufferedTraceExporter;
 
 /**
  * How a job or command ends a run from outside its coordinator: job failed() handling (ExecuteGraphJob,
  * ResumeExecutionJob), the expire commands, and the skip check of all four graph jobs. Each step is
  * idempotent: a failure the coordinator already handled (row failed, terminal written, event fired)
  * is left as it is.
+ *
+ * The order is fixed: the row's end is stored first, then the stream frames, then the event. No app listener runs
+ * before the end is committed, so a listener that throws cannot undo it.
  */
 trait EndsFailedExecution
 {
     /**
+     * A job's failed(). An exception from the event's listener goes to the caller; the run stays ended.
+     *
      * @param  array<string, mixed>  $stateData
+     * @param  (\Closure(): mixed)|null  $onEnded  the caller's own part of the end, stored before the event fires
      */
     protected function endFailedExecution(
         \Throwable $e,
@@ -47,33 +55,91 @@ trait EndsFailedExecution
         ?ExecutionOptions $executionOptions,
         ?string $rootSpanId = null,
         ?int $fallbackSeq = null,
-        ?string $reason = null,
+        ?\Closure $onEnded = null,
     ): void {
         if (! app(ExecutionRepository::class)->exists($executionId)) {
             Log::info('AgenticGraph: failure not recorded, execution row is gone', ['execution_id' => $executionId]);
+            $onEnded?->__invoke();
 
             return; // No row, stream event or failure event for a deleted run.
         }
 
         $changed = app(ExecutionRepository::class)->failed($executionId, $e->getMessage());
-        if ($changed && $reason !== null) {
-            // An expiry command (stale_queued, stale_running, interrupt_expired) ended it: final, see reopen().
-            app(ExecutionRepository::class)->markEndedByExpiry($executionId, $reason);
-        }
+        $onEnded?->__invoke();
 
         if ($streamId !== null && $streaming !== null && $streaming !== StreamingMode::NONE) {
-            $this->appendFailedTerminalIfMissing($e, $executionId, $stateData, $streamId, $streaming, $executionOptions ?? new ExecutionOptions, $fallbackSeq, $reason);
+            $this->appendFailedTerminalIfMissing($e, $executionId, $stateData, $streamId, $streaming, $executionOptions ?? new ExecutionOptions, $fallbackSeq);
         }
 
         if ($changed) {
-            event(new GraphExecutionFailed($executionId, $graphName, State::fromArray($stateData), $e, 0.0, $rootSpanId, $reason));
+            event(new GraphExecutionFailed($executionId, $graphName, State::fromArray($stateData), $e, 0.0, $rootSpanId));
         }
+    }
+
+    /**
+     * The stored part of an expiry, inside the command's transaction. True only for the call that changed the row;
+     * ended_by commits with the status.
+     */
+    protected function failExpiredExecution(\Throwable $e, string $executionId, string $reason): bool
+    {
+        $repo = app(ExecutionRepository::class);
+        $changed = $repo->failed($executionId, $e->getMessage());
+        if ($changed) {
+            $repo->markEndedByExpiry($executionId, $reason); // stale_queued, stale_running or interrupt_expired: final, see reopen().
+        }
+
+        return $changed;
+    }
+
+    /**
+     * The rest of an expiry, after the commit and only for the call that changed the row: the trace segment is opened,
+     * then the stream frames, then GraphExecutionFailed. The end is stored by now, so what throws here is reported once
+     * and the command goes on.
+     *
+     * @param  array<string, mixed>  $stateData
+     */
+    protected function announceExpiredExecution(
+        \Throwable $e,
+        string $executionId,
+        string $graphName,
+        array $stateData,
+        ?string $streamId,
+        ?StreamingMode $streaming,
+        ?ExecutionOptions $executionOptions,
+        ?string $rootSpanId,
+        ?int $fallbackSeq,
+        string $reason,
+    ): void {
+        // One failed segment that continues the original trace: its root span id, the graph name, timestamps after
+        // every earlier segment. Inside a caller's own transaction it is sent only after that commit.
+        rescue(function () use ($executionId, $graphName): void {
+            $exporter = $this->boundTraceExporter();
+            if ($exporter?->isEnabled()) {
+                $exporter->resumeTrace($executionId, $graphName, 'continued');
+                if ($exporter instanceof BufferedTraceExporter) {
+                    $exporter->sendAfterCommit($executionId);
+                }
+            }
+        });
+
+        if ($streamId !== null && $streaming !== null && $streaming !== StreamingMode::NONE) {
+            rescue(fn () => $this->appendFailedTerminalIfMissing($e, $executionId, $stateData, $streamId, $streaming, $executionOptions ?? new ExecutionOptions, $fallbackSeq, $reason));
+        }
+
+        rescue(fn () => event(new GraphExecutionFailed($executionId, $graphName, State::fromArray($stateData), $e, 0.0, $rootSpanId, $reason)));
+    }
+
+    private function boundTraceExporter(): ?TracerExporter
+    {
+        return app()->bound(TracerExporter::class) ? app(TracerExporter::class) : null;
     }
 
     /**
      * Asks the skipQueuedRunsUsing() callback. True: it skipped the run, which now ends as failed with ended_by=skip,
      * with the usual failed frames (reason `skipped`) and no GraphExecutionFailed, and GraphExecutionSkipped fires once,
      * from the call that changed the row. The caller stops. The stream values of the job are used where the row has none.
+     *
+     * @param  (\Closure(): mixed)|null  $onEnded  the caller's own part of the end, stored before the event fires
      */
     protected function skipQueuedRun(
         StateContract $state,
@@ -82,6 +148,7 @@ trait EndsFailedExecution
         ?string $streamId = null,
         ?StreamingMode $streaming = null,
         ?int $fallbackSeq = null,
+        ?\Closure $onEnded = null,
     ): bool {
         $callback = app()->bound(AgenticGraph::QUEUED_RUN_SKIPPER) ? app(AgenticGraph::QUEUED_RUN_SKIPPER) : null;
         $reason = $callback instanceof \Closure ? $callback($state, $graphName, $executionId) : null;
@@ -94,6 +161,7 @@ trait EndsFailedExecution
 
         $repo = app(ExecutionRepository::class);
         $changed = $repo->skipped($executionId, $reason);
+        $onEnded?->__invoke(); // The caller's own part of the end, stored before the event fires.
         if ($changed) {
             $record = app(ExecutionStore::class)->get($executionId);
             $options = $record !== null ? $record->executionOptions ?? new ExecutionOptions : new ExecutionOptions;

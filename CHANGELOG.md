@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.4.2 - unreleased
+
+The end of a run is now stored before your listeners run. No migration, config or API change. Stream client 0.2.x works unchanged.
+
+### Fixed
+
+- **A listener that throws no longer keeps a stale run open.** `agenticgraph:executions:expire` fired `GraphExecutionFailed` inside the transaction that failed the run. A listener that threw rolled it back: the run stayed `queued` or `running`, and the next pass did the same again. A broadcast client got the end frames each time, and with the Redis stream store the stored stream ended while the row did not. Such a run also kept its `--limit` slot, and when the listener threw for every run, none expired.
+- **The same for `agenticgraph:interrupt:expire`**, with a `GraphExecutionFailed` or `InterruptExpired` listener: the interrupt stayed `pending` and its run `interrupted`.
+- **A failed resume job now resolves its interrupt when a `GraphExecutionFailed` listener throws.** The interrupt stayed `pending` or `resolving` next to a failed run.
+- **A skipped resume stays skipped when a `GraphExecutionSkipped` listener throws.** The interrupt was resolved as `failed`, and the interrupt handler's `failed()` was called. It is now resolved as `skipped`, and the handler is not called.
+- **A streaming run that fails during setup stores the failed row first.** It wrote the stream frames and fired `GraphExecutionFailed` before the row update, so a listener that threw left the run `running` with an ended stream.
+- **`ExecutionRepository::failed()` cannot overwrite a run that ended after it read the row.** The update is now conditional too, for a database that ignores row locks.
+
+### Behavior changes
+
+- **A listener exception no longer aborts or undoes the end of a run.** In the two expire commands it is caught and passed to `report()` once, the run counts as expired, and the command goes on with the next one. In a job it is as in 0.4.1: the job fails, the run stays ended, and the event does not fire again. `report()` follows your exception handler, and Laravel does not report some exceptions by default, for example `ModelNotFoundException`.
+- **The expiry events fire after the commit,** with the row stored, the stream frames written and no transaction of the command open. A listener that wrote to the database was rolled back with a failed expiry before; its writes now commit on their own. An event is not sent again by a later pass.
+- **A stream store failure during an expiry no longer rolls it back.** It is reported, the run stays failed and `GraphExecutionFailed` still fires. A later pass does not write the missing frames.
+- **`agenticgraph:interrupt:expire` writes no stream frames and fires no `GraphExecutionFailed` for a run that had already ended.** The interrupt expires and `InterruptExpired` fires, as before.
+
+### Known limitations
+
+- A `GraphExecutionCompleted` listener that throws in a queued job is not reported: the job succeeds and the run stays `completed`. During a resume the interrupt also stays `resolving`. As before; catch and report inside such a listener.
+- If the process dies after an expiry commits and before its stream write, the run is `failed`, the stream has no end and `GraphExecutionFailed` is not sent. An SSE client keeps reconnecting and a broadcast client keeps replaying. No later pass repairs this yet.
+
 ## 0.4.1 - 2026-11-27
 
 An app can now react when `skipQueuedRunsUsing()` skips a queued run. Nothing else changes. Stream client 0.2.x and the 0.4.0 upgrade steps are unchanged.

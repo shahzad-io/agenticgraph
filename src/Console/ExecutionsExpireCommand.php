@@ -17,8 +17,6 @@ use Shahzad\AgenticGraph\Execution\ExecutionStore;
 use Shahzad\AgenticGraph\Execution\InterruptRecord;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
 use Shahzad\AgenticGraph\Jobs\EndsFailedExecution;
-use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
-use Shahzad\AgenticGraph\Tracing\Exporters\BufferedTraceExporter;
 
 /**
  * Fails async executions no worker is running, so the visitor's stream gets a terminal event:
@@ -28,9 +26,10 @@ use Shahzad\AgenticGraph\Tracing\Exporters\BufferedTraceExporter;
  * Progress is `updated_at`, which a running execution refreshes whenever a node completes. Interrupted executions have
  * their own expiry (agenticgraph:interrupt:expire) and sync executions have no worker, so neither is touched.
  *
- * Each execution is ended in its own transaction, as a failed job ends it (status failed, graph_failed, the failed
- * execution_terminal, GraphExecutionFailed with a reason, a final trace segment on the original root span); one that
- * fails stays as it was for the next run, and its trace segment is sent only after the commit.
+ * Each execution is ended in its own transaction: status failed and ended_by. One whose transaction fails stays as it
+ * was for the next run. Only after the commit, and only for the call that changed the row: graph_failed, the failed
+ * execution_terminal, GraphExecutionFailed with a reason, and a final trace segment on the original root span. A
+ * stream write or a listener that throws there is reported; the run stays failed and the command goes on.
  *
  * ponytail: a single queued branch job (ExecuteNodeJob) that outlives timeout + grace without completing a node
  * reads as dead; give those jobs a $timeout from execution.timeout if that matters.
@@ -60,13 +59,20 @@ class ExecutionsExpireCommand extends Command
         $expired = 0;
         foreach ($due as $executionId) {
             try {
-                $expired += DB::transaction(fn (): int => $this->expire((string) $executionId));
+                $announce = DB::transaction(fn (): ?\Closure => $this->expire((string) $executionId));
             } catch (\Throwable $e) {
                 Log::error('AgenticGraph: execution expiry failed, left as is', [
                     'execution_id' => (string) $executionId,
                     'error_type' => $e::class,
                     'message' => $e->getMessage(),
                 ]);
+
+                continue;
+            }
+
+            if ($announce !== null) {
+                $expired++;
+                $announce();
             }
         }
 
@@ -108,63 +114,63 @@ class ExecutionsExpireCommand extends Command
         });
     }
 
-    private function expire(string $executionId): int
+    /**
+     * @return (\Closure(): void)|null what to do after the commit; null when this call did not end the run
+     */
+    private function expire(string $executionId): ?\Closure
     {
         // Re-read under the lock: a run that started, made progress or ended since the candidate query keeps its row.
         $row = $this->staleQuery()->where('id', $executionId)->lockForUpdate()->first();
         if ($row === null) {
-            return 0;
+            return null;
         }
 
         $options = ExecutionOptions::fromStored($row->execution_options ?? null);
         if ($options->mode !== ExecutionMode::ASYNC) {
-            return 0;
+            return null;
         }
 
         $queued = $row->status === 'queued';
-        $this->endStaleExecution(
+
+        return $this->endStaleExecution(
             $executionId,
             $options,
             $queued ? StaleExecutionException::REASON_QUEUED : StaleExecutionException::REASON_RUNNING,
             $queued ? $this->queuedAfter : $this->runningAfter,
             $this->storedRootSpanId($row->execution_options ?? null),
         );
-
-        return 1;
     }
 
-    private function endStaleExecution(string $executionId, ExecutionOptions $options, string $reason, int $seconds, ?string $rootSpanId): void
+    /**
+     * @return (\Closure(): void)|null
+     */
+    private function endStaleExecution(string $executionId, ExecutionOptions $options, string $reason, int $seconds, ?string $rootSpanId): ?\Closure
     {
         $record = app(ExecutionStore::class)->get($executionId);
         if ($record === null) {
-            return;
+            return null;
         }
 
         $state = $record->finalState ?? $record->initialState;
         $streaming = $options->streaming === StreamingMode::AUTO ? StreamingMode::SSE : $options->streaming;
         $rootSpanId ??= $this->interruptedRootSpanId($executionId);
 
-        // One failed segment that continues the original trace: its root span id, the graph name, timestamps after
-        // every earlier segment, sent after the commit (a rollback drops it).
-        /** @var TracerExporter|null $exporter */
-        $exporter = app()->bound(TracerExporter::class) ? app(TracerExporter::class) : null;
-        if ($exporter?->isEnabled()) {
-            $exporter->resumeTrace($executionId, $record->graphName, 'continued');
-            if ($exporter instanceof BufferedTraceExporter) {
-                $exporter->sendAfterCommit($executionId);
-            }
+        $error = new StaleExecutionException($executionId, $reason, $seconds);
+        if (! $this->failExpiredExecution($error, $executionId, $reason)) {
+            return null;
         }
 
-        $this->endFailedExecution(
-            new StaleExecutionException($executionId, $reason, $seconds),
+        return fn () => $this->announceExpiredExecution(
+            $error,
             $executionId,
             $record->graphName,
             is_array($state) ? $state : [],
             $record->streamId,
             $streaming,
             $options,
-            rootSpanId: $rootSpanId,
-            reason: $reason,
+            $rootSpanId,
+            null,
+            $reason,
         );
     }
 

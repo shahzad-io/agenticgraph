@@ -264,3 +264,19 @@ it('ignores a second failed() after an inner catch already marked the execution 
     expect($record?->status)->toBe(ExecutionStatus::FAILED)
         ->and($record?->error)->toBe('Loop limit exceeded');
 });
+
+it('does not overwrite a run that ends between the read and the write of failed()', function () {
+    $repo = app(ExecutionRepository::class);
+    $repo->queued('exec-conditional', 'conditional');
+    $ended = false;
+    // Another process completes the run right after failed() has read it. SQLite ignores the row lock.
+    DB::listen(function ($query) use (&$ended): void {
+        if (! $ended && str_starts_with($query->sql, 'select') && str_contains($query->sql, 'agenticgraph_executions')) {
+            $ended = true;
+            DB::table('agenticgraph_executions')->where('id', 'exec-conditional')->update(['status' => 'completed']);
+        }
+    });
+
+    expect($repo->failed('exec-conditional', 'late'))->toBeFalse()
+        ->and($repo->getStatus('exec-conditional'))->toBe('completed');
+});

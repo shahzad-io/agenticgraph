@@ -2,6 +2,7 @@
 
 use Illuminate\Broadcasting\Broadcasters\PusherBroadcaster;
 use Illuminate\Contracts\Broadcasting\Broadcaster;
+use Illuminate\Support\Facades\Redis;
 use Pusher\ApiErrorException;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
 use Shahzad\AgenticGraph\Streaming\RetentionPolicyFactory;
@@ -152,4 +153,23 @@ function fakePusherClientBroadcaster(array $codes = []): PusherBroadcaster
             };
         }
     };
+}
+
+/**
+ * Selects the stream store. `redis` needs a disposable Redis in AGENTICGRAPH_TEST_REDIS_PORT: it is flushed.
+ */
+function useStreamStoreDriver(string $driver): void
+{
+    if ($driver === 'redis') {
+        $port = getenv('AGENTICGRAPH_TEST_REDIS_PORT');
+        if ($port === false) {
+            test()->markTestSkipped('Set AGENTICGRAPH_TEST_REDIS_PORT to the port of a disposable Redis.');
+        }
+        config()->set('database.redis.default.port', (int) $port);
+        app()->forgetInstance('redis');
+        Redis::clearResolvedInstance('redis');
+        Redis::flushdb();
+    }
+    config()->set('agenticgraph.streaming.store.driver', $driver);
+    app()->forgetInstance(StreamStoreInterface::class);
 }
