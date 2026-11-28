@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.2 - unreleased
+## 0.4.2 - 2026-11-28
 
 The end of a run is now stored before your listeners run. No migration, config or API change. Stream client 0.2.x works unchanged.
 
