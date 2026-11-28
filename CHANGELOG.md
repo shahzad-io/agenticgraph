@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.3 (unreleased)
+## 0.4.3 - 2026-11-29
 
 A run-ending event listener that throws no longer hides an error, changes an ended run or leaves a worker in a bad state. No migration, config or public signature change. The run-ending events are `GraphExecutionCompleted`, `GraphExecutionFailed`, `GraphExecutionSkipped` and `InterruptExpired`.
 
