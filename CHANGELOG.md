@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.4.3 (unreleased)
+
+A run-ending event listener that throws no longer hides an error, changes an ended run or leaves a worker in a bad state. No migration, config or public signature change. The run-ending events are `GraphExecutionCompleted`, `GraphExecutionFailed`, `GraphExecutionSkipped` and `InterruptExpired`.
+
+### Fixed
+
+- **Wrong results after a failure listener threw: a later run could get another run's graph or loop counts.** The run's scope bindings stayed on the worker (or in the process of a sync caller). The next run then used the old graph, or continued the old visit and iteration counts. Both coordinators now clean up in a `finally`, and all four graph jobs remove their scope bindings at the end of every job, on every path. A job that runs inside another run on the `sync` queue now also leaves that run its bindings. A successful job did not leak.
+- **A `GraphExecutionStarted` listener that throws in a non-streaming sync `execute()` no longer leaves the run's scope bindings behind.** The next run in that process could get the old graph or old loop counts. The bindings are now as they were before the call, also when the run cannot be stored as started.
+- **A failed sync resume resolves its interrupt as `failed`,** as a failed queued resume does, before the failure listeners run, with `resume_error` and `last_error`. The interrupt stayed `pending` on a failed run. A sync resume still does not call the interrupt handler. A sync resume that throws before the run starts still leaves the interrupt `pending`, so you can resume again.
+- **A job's `failed()` that writes the end frames of a skipped run again gives them the reason `skipped`,** as the skip does. They carried the job's own error with no reason.
+- **A `GraphExecutionCompleted` listener that throws is no longer lost.** In a queued job it was logged as "execution already ended" and the job succeeded.
+- **A resumed run that completed has its interrupt resolved before the completion listeners run.** With a listener that threw, a queued resume left the interrupt `resolving` without calling the handler's `resolved()`, and a sync resume left it `pending` on a completed run, where `agenticgraph:interrupt:expire` could later fire `InterruptExpired`.
+- **A queued resume never sets the interrupt of an ended run back to `pending`,** also when the interrupt handler's `resolved()` throws.
+- **`failed()` of a job whose run completed writes no failed frames and does not resolve the interrupt as `failed`,** for example after a timeout inside a completion listener.
+- **A completion frame that fails no longer drops `GraphExecutionCompleted`.** When `graph_complete` or the terminal throws (a fatal stream error), the other one is still written, the event fires, and the job fails with the frame error. Before, the event never fired and the job succeeded.
+- **A stream store that is down in a job's `failed()` or in a skip no longer drops `GraphExecutionFailed` or `GraphExecutionSkipped`.** The event fires once, then the store error is thrown.
+- **A parallel batch failure writes its `Batch execution failed` log line before the event,** and sends its trace segment when a listener throws.
+- **Every error of a run-ending event listener is logged** as `AgenticGraph: run-ending event listener failed`, with `execution_id`, `graph_name`, `event`, `error_type` and `message`. It uses the default logger and is written also with `logging.enabled` off. Before, an error that Laravel does not report, such as `ModelNotFoundException`, left no trace in the expire commands.
+
+### Behavior changes
+
+- **A queued job with a completion listener that throws now fails.** Up to 0.4.2 it succeeded silently, so some apps may see new failed jobs. A completion or skip listener error fails the job at once through `$this->fail()`, so it is recorded also when the job has tries left. The run keeps its status.
+- **A sync caller gets the listener error on completion,** not `ExecutionEndedException`.
+- **On a run failure the caller gets the run's own error,** not the listener error, which is passed to `report()`. A failed queued resume stores that error in `last_error` and `resume_error`, and gives it to the handler's `failed()`. The interrupt is now already resolved as `failed` when the failure listeners and the handler run.
+- **A job's `failed()` reports a `GraphExecutionFailed` listener error and no longer throws it.** The job keeps its own error.
+
+### Known limitations
+
+- Laravel stops at the first listener that throws, so the later listeners of that event do not run.
+- If the process dies after a run's end commits and before its stream write or event, nothing repairs it yet (see 0.4.2). A repair is planned for 0.5.
+
 ## 0.4.2 - 2026-11-28
 
 The end of a run is now stored before your listeners run. No migration, config or API change. Stream client 0.2.x works unchanged.
@@ -22,7 +53,7 @@ The end of a run is now stored before your listeners run. No migration, config o
 
 ### Known limitations
 
-- A `GraphExecutionCompleted` listener that throws in a queued job is not reported: the job succeeds and the run stays `completed`. During a resume the interrupt also stays `resolving`. As before; catch and report inside such a listener.
+- A `GraphExecutionCompleted` listener that throws in a queued job is not reported: the job succeeds and the run stays `completed`. During a resume the interrupt also stays `resolving`. As before; catch and report inside such a listener. Fixed in 0.4.3.
 - If the process dies after an expiry commits and before its stream write, the run is `failed`, the stream has no end and `GraphExecutionFailed` is not sent. An SSE client keeps reconnecting and a broadcast client keeps replaying. No later pass repairs this yet.
 
 ## 0.4.1 - 2026-11-27

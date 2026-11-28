@@ -6,6 +6,8 @@ namespace Shahzad\AgenticGraph\Execution;
 
 use Illuminate\Support\Facades\Route;
 use Shahzad\AgenticGraph\Contracts\StateContract;
+use Shahzad\AgenticGraph\Events\GraphExecutionCompleted;
+use Shahzad\AgenticGraph\Events\GraphExecutionFailed;
 use Shahzad\AgenticGraph\Exceptions\InterruptExpiredException;
 use Shahzad\AgenticGraph\Exceptions\InterruptPersistenceDisabledException;
 use Shahzad\AgenticGraph\Jobs\ResumeExecutionJob;
@@ -20,6 +22,8 @@ use Shahzad\AgenticGraph\Streaming\StreamToken;
 
 final class ExecutionHandle
 {
+    use ResolvesFailedInterrupt;
+
     private ExecutionStatus $status;
 
     private ?StateContract $finalState;
@@ -359,8 +363,21 @@ final class ExecutionHandle
             throw new \RuntimeException('No interrupt checkpoint found for execution.');
         }
 
+        // The run's end is stored with its interrupt before any listener of that end runs, as in a queued resume.
+        $resolveBeforeListeners = function (GraphExecutionCompleted|GraphExecutionFailed $event) use ($checkpoint, $input): void {
+            if ($event instanceof GraphExecutionCompleted) {
+                $this->resolvePendingInterruptForCheckpoint($checkpoint->id, $input);
+
+                return;
+            }
+            $interrupt = $this->openInterruptForCheckpoint($checkpoint->id);
+            if ($interrupt !== null) {
+                $this->resolveAsFailed($interrupt, $event->exception);
+            }
+        };
+
         if ($this->options->streaming === StreamingMode::NONE) {
-            $state = $this->executor->resumeWithInput($checkpoint->id, $input);
+            $state = RunEndEvent::beforeListeners($checkpoint->executionId, $resolveBeforeListeners, fn () => $this->executor->resumeWithInput($checkpoint->id, $input));
             $this->resolvePendingInterruptForCheckpoint($checkpoint->id, $input);
             $status = $state->hasInterrupt() ? ExecutionStatus::INTERRUPTED : ExecutionStatus::COMPLETED;
 
@@ -380,7 +397,7 @@ final class ExecutionHandle
             $this->options,
             delivery: $this->options->streaming->value,
         );
-        $handle = app(StreamResumption::class)->resumeStream($checkpoint->id, $input, $streamOptions);
+        $handle = RunEndEvent::beforeListeners($checkpoint->executionId, $resolveBeforeListeners, fn () => app(StreamResumption::class)->resumeStream($checkpoint->id, $input, $streamOptions));
         $this->resolvePendingInterruptForCheckpoint($checkpoint->id, $input);
         $state = $handle->getFinalState();
         $status = $state->hasInterrupt() ? ExecutionStatus::INTERRUPTED : ExecutionStatus::COMPLETED;
@@ -430,11 +447,7 @@ final class ExecutionHandle
 
     private function resolvePendingInterruptForCheckpoint(string $checkpointId, mixed $input): void
     {
-        $interrupt = InterruptRecord::query()
-            ->where('checkpoint_id', $checkpointId)
-            ->whereIn('status', ['pending', 'resolving'])
-            ->latest('id')
-            ->first();
+        $interrupt = $this->openInterruptForCheckpoint($checkpointId);
 
         if ($interrupt === null) {
             return;
@@ -442,6 +455,15 @@ final class ExecutionHandle
 
         $metadata = $interrupt->metadata();
         $interrupt->resolve(['input' => $input], $metadata['user_id'] ?? null);
+    }
+
+    private function openInterruptForCheckpoint(string $checkpointId): ?InterruptRecord
+    {
+        return InterruptRecord::query()
+            ->where('checkpoint_id', $checkpointId)
+            ->whereIn('status', ['pending', 'resolving'])
+            ->latest('id')
+            ->first();
     }
 
     private function loadPersistedFinalState(): ?StateContract

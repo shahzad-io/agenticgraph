@@ -139,7 +139,7 @@ class InterruptExpireCommand extends Command
                 );
             }
 
-            rescue(fn () => event($expired));
+            $this->fireAndReport($expired);
         };
     }
 }

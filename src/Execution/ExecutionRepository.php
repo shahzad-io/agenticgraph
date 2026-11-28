@@ -370,6 +370,12 @@ class ExecutionRepository implements ExecutionStore
         return ($this->storedOptions($id)[self::ENDED_BY_KEY] ?? null) === 'expiry';
     }
 
+    /** @internal */
+    public function endedBySkip(string $id): bool
+    {
+        return ($this->storedOptions($id)[self::ENDED_BY_KEY] ?? null) === 'skip';
+    }
+
     /**
      * Fails a run the skipQueuedRunsUsing() callback skipped. Returns false, and changes nothing, when the row is
      * missing or already ended. Not failed(): a skip is not an error, so it logs nothing here.
@@ -477,7 +483,7 @@ class ExecutionRepository implements ExecutionStore
      */
     public function getStatus(string $id): ?string
     {
-        return InstrumentationGate::internal(fn () => $this->db->table($this->table)->where('id', $id)->value('status'));
+        return InstrumentationGate::internal(fn () => $this->db->table($this->table)->useWritePdo()->where('id', $id)->value('status'));
     }
 
     public function getCheckpointNodeCount(string $executionId): int

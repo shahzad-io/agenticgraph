@@ -9,15 +9,21 @@ use Shahzad\AgenticGraph\AgenticGraph;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\GraphExecutionFailed;
 use Shahzad\AgenticGraph\Events\GraphExecutionSkipped;
+use Shahzad\AgenticGraph\Events\InterruptExpired;
 use Shahzad\AgenticGraph\Exceptions\QueuedRunSkippedException;
+use Shahzad\AgenticGraph\Execution\ExecutionContext;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
 use Shahzad\AgenticGraph\Execution\ExecutionRepository;
 use Shahzad\AgenticGraph\Execution\ExecutionStore;
 use Shahzad\AgenticGraph\Execution\GraphExecutor;
+use Shahzad\AgenticGraph\Execution\LoopMetadata;
+use Shahzad\AgenticGraph\Execution\RunEndEvent;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
+use Shahzad\AgenticGraph\Graph\Graph;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\Streaming\Contracts\StreamStoreInterface;
 use Shahzad\AgenticGraph\Streaming\Events\StreamEventImpl;
+use Shahzad\AgenticGraph\Streaming\StreamContext;
 use Shahzad\AgenticGraph\Streaming\StreamEventEnvelope;
 use Shahzad\AgenticGraph\Streaming\StreamLifecycleEventTypes;
 use Shahzad\AgenticGraph\Streaming\StreamOptions;
@@ -26,7 +32,9 @@ use Shahzad\AgenticGraph\Streaming\StreamSinkFactory;
 use Shahzad\AgenticGraph\Streaming\StreamStatus;
 use Shahzad\AgenticGraph\Streaming\StreamTerminalStatus;
 use Shahzad\AgenticGraph\Tracing\Contracts\TracerExporter;
+use Shahzad\AgenticGraph\Tracing\ExecutionClock;
 use Shahzad\AgenticGraph\Tracing\Exporters\BufferedTraceExporter;
+use Shahzad\AgenticGraph\Tracing\TraceContext;
 
 /**
  * How a job or command ends a run from outside its coordinator: job failed() handling (ExecuteGraphJob,
@@ -40,7 +48,33 @@ use Shahzad\AgenticGraph\Tracing\Exporters\BufferedTraceExporter;
 trait EndsFailedExecution
 {
     /**
-     * A job's failed(). An exception from the event's listener goes to the caller; the run stays ended.
+     * Runs a job and then leaves the scope bindings as the job found them, on every path. A worker keeps instance()
+     * bindings between jobs and has none before one, so all are forgotten: a leftover one gives a later run another
+     * run's graph or loop counts. A job on the sync queue inside another run leaves that run its bindings.
+     *
+     * @param  \Closure(): void  $job
+     */
+    protected function withinJobScope(\Closure $job): void
+    {
+        $scope = [TraceContext::class, ExecutionClock::class, ExecutionContext::class, LoopMetadata::class, Graph::class, StreamContext::class];
+        $before = [];
+        foreach ($scope as $abstract) {
+            if (app()->bound($abstract)) {
+                $before[$abstract] = app($abstract);
+            }
+        }
+
+        try {
+            $job();
+        } finally {
+            foreach ($scope as $abstract) {
+                isset($before[$abstract]) ? app()->instance($abstract, $before[$abstract]) : app()->forgetInstance($abstract);
+            }
+        }
+    }
+
+    /**
+     * A job's failed(). An exception from the event's listener is reported, not thrown; the run stays ended.
      *
      * @param  array<string, mixed>  $stateData
      * @param  (\Closure(): mixed)|null  $onEnded  the caller's own part of the end, stored before the event fires
@@ -65,14 +99,58 @@ trait EndsFailedExecution
         }
 
         $changed = app(ExecutionRepository::class)->failed($executionId, $e->getMessage());
+        // The job failed after the run completed (a completion listener, or a timeout inside one): the run stays
+        // completed, with no failed frames, and the caller's part of a failed end does not apply.
+        if (! $changed && app(ExecutionRepository::class)->getStatus($executionId) === 'completed') {
+            return;
+        }
         $onEnded?->__invoke();
 
+        // A frame error is kept until the event has fired, which no later call would do.
+        $frameError = null;
         if ($streamId !== null && $streaming !== null && $streaming !== StreamingMode::NONE) {
-            $this->appendFailedTerminalIfMissing($e, $executionId, $stateData, $streamId, $streaming, $executionOptions ?? new ExecutionOptions, $fallbackSeq);
+            try {
+                // A skipped run's frames are written as the skip path writes them.
+                $skipped = app(ExecutionRepository::class)->endedBySkip($executionId);
+                $this->appendFailedTerminalIfMissing(
+                    $skipped ? new QueuedRunSkippedException($executionId) : $e,
+                    $executionId, $stateData, $streamId, $streaming, $executionOptions ?? new ExecutionOptions, $fallbackSeq,
+                    $skipped ? QueuedRunSkippedException::REASON : null,
+                    reasonOnTerminal: $skipped,
+                );
+            } catch (\Throwable $caught) {
+                $frameError = $caught;
+            }
         }
 
         if ($changed) {
-            event(new GraphExecutionFailed($executionId, $graphName, State::fromArray($stateData), $e, 0.0, $rootSpanId));
+            // The job has already failed with its own error: a second throw would take its place.
+            $this->fireAndReport(new GraphExecutionFailed($executionId, $graphName, State::fromArray($stateData), $e, 0.0, $rootSpanId));
+        }
+
+        if ($frameError !== null) {
+            throw $frameError;
+        }
+    }
+
+    /**
+     * For an error that left a run which is stored as completed: a retry would find the run ended and succeed, so the
+     * job is failed now, whatever its tries. The caller then throws the error.
+     */
+    protected function failJobOfCompletedRun(string $executionId, \Throwable $e): void
+    {
+        if (rescue(fn () => app(ExecutionRepository::class)->getStatus($executionId), null, false) === 'completed') {
+            $this->failJob($e);
+        }
+    }
+
+    /** What failed() throws here is reported: the caller throws the job's own error. */
+    private function failJob(\Throwable $e): void
+    {
+        try {
+            $this->fail($e);
+        } catch (\Throwable $failedError) {
+            RunEndEvent::report($failedError);
         }
     }
 
@@ -126,7 +204,16 @@ trait EndsFailedExecution
             rescue(fn () => $this->appendFailedTerminalIfMissing($e, $executionId, $stateData, $streamId, $streaming, $executionOptions ?? new ExecutionOptions, $fallbackSeq, $reason));
         }
 
-        rescue(fn () => event(new GraphExecutionFailed($executionId, $graphName, State::fromArray($stateData), $e, 0.0, $rootSpanId, $reason)));
+        rescue(fn () => $this->fireAndReport(new GraphExecutionFailed($executionId, $graphName, State::fromArray($stateData), $e, 0.0, $rootSpanId, $reason)));
+    }
+
+    /** For a caller that goes on: what a listener throws is reported. */
+    protected function fireAndReport(GraphExecutionFailed|InterruptExpired $event): void
+    {
+        $listenerError = RunEndEvent::fire($event);
+        if ($listenerError !== null) {
+            RunEndEvent::report($listenerError);
+        }
     }
 
     private function boundTraceExporter(): ?TracerExporter
@@ -162,6 +249,7 @@ trait EndsFailedExecution
         $repo = app(ExecutionRepository::class);
         $changed = $repo->skipped($executionId, $reason);
         $onEnded?->__invoke(); // The caller's own part of the end, stored before the event fires.
+        $frameError = null;
         if ($changed) {
             $record = app(ExecutionStore::class)->get($executionId);
             $options = $record !== null ? $record->executionOptions ?? new ExecutionOptions : new ExecutionOptions;
@@ -171,7 +259,11 @@ trait EndsFailedExecution
             }
             $streamId = $record->streamId ?? $streamId;
             if ($streamId !== null && $streaming !== StreamingMode::NONE) {
-                $this->appendFailedTerminalIfMissing(new QueuedRunSkippedException($executionId), $executionId, State::toStoragePayload($state), $streamId, $streaming, $options, $fallbackSeq, QueuedRunSkippedException::REASON, reasonOnTerminal: true);
+                try {
+                    $this->appendFailedTerminalIfMissing(new QueuedRunSkippedException($executionId), $executionId, State::toStoragePayload($state), $streamId, $streaming, $options, $fallbackSeq, QueuedRunSkippedException::REASON, reasonOnTerminal: true);
+                } catch (\Throwable $caught) {
+                    $frameError = $caught;
+                }
             }
         } elseif ($repo->getStatus($executionId) === 'failed') {
             $repo->markEndedBySkip($executionId); // Crash recovery of a failed run: it keeps its error and terminal.
@@ -180,8 +272,18 @@ trait EndsFailedExecution
         Log::info('AgenticGraph: queued run skipped', ['execution_id' => $executionId, 'graph_name' => $graphName, 'reason' => $reason]);
 
         if ($changed) {
-            // Like GraphExecutionFailed: after the row update and the stream frames, and a listener that throws fails the job.
-            event(new GraphExecutionSkipped($executionId, $graphName, $reason));
+            // After the row update and the stream frames. A frame or listener error fails the job, also with tries left:
+            // a retry would find the run ended and succeed.
+            $listenerError = RunEndEvent::fire(new GraphExecutionSkipped($executionId, $graphName, $reason));
+            if ($frameError !== null && $listenerError !== null) {
+                RunEndEvent::report($listenerError);
+            }
+            $error = $frameError ?? $listenerError;
+            if ($error !== null) {
+                $this->failJob($error);
+
+                throw $error;
+            }
         }
 
         return true;

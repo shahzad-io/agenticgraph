@@ -62,6 +62,11 @@ class ExecuteGraphJob implements ShouldBeUnique, ShouldQueue
 
     public function handle(GraphExecutor $executor, GraphRegistry $registry): void
     {
+        $this->withinJobScope(fn () => $this->run($executor, $registry));
+    }
+
+    private function run(GraphExecutor $executor, GraphRegistry $registry): void
+    {
         // A deleted run stays deleted.
         if (! app(ExecutionRepository::class)->exists($this->executionId)) {
             Log::info('AgenticGraph: job skipped, execution row is gone', ['execution_id' => $this->executionId]);
@@ -137,12 +142,10 @@ class ExecuteGraphJob implements ShouldBeUnique, ShouldQueue
         } catch (ExecutionEndedException) {
             // Ended elsewhere (for example expired) while this worker ran it: nothing more to write, not a failure.
             Log::info('AgenticGraph: worker stopped, execution already ended', ['execution_id' => $this->executionId]);
-        } finally {
-            // Clean up container instances
-            app()->forgetInstance(TraceContext::class);
-            app()->forgetInstance(ExecutionClock::class);
-            app()->forgetInstance(ExecutionContext::class);
-            app()->forgetInstance(StreamContext::class);
+        } catch (\Throwable $e) {
+            $this->failJobOfCompletedRun($this->executionId, $e);
+
+            throw $e;
         }
     }
 

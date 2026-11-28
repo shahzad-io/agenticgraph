@@ -52,6 +52,11 @@ class ContinueExecutionJob implements ShouldQueue
 
     public function handle(GraphExecutor $executor, GraphRegistry $registry): void
     {
+        $this->withinJobScope(fn () => $this->run($executor, $registry));
+    }
+
+    private function run(GraphExecutor $executor, GraphRegistry $registry): void
+    {
         // An execution that already ended (expired, skipped, or failed by another branch) stays ended: nothing runs and
         // nothing is written. Otherwise this is progress, so the expire command leaves the run alone.
         $repo = app(ExecutionRepository::class);
@@ -143,9 +148,10 @@ class ContinueExecutionJob implements ShouldQueue
         } catch (ExecutionEndedException) {
             // Ended elsewhere while this worker ran it: nothing more to write, not a failure.
             Log::info('AgenticGraph: worker stopped, execution already ended', ['execution_id' => $this->executionId]);
-        } finally {
-            app()->forgetInstance(TraceContext::class);
-            app()->forgetInstance(StreamContext::class);
+        } catch (\Throwable $e) {
+            $this->failJobOfCompletedRun($this->executionId, $e);
+
+            throw $e;
         }
     }
 }

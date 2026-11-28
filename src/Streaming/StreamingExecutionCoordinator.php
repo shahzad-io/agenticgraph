@@ -29,6 +29,7 @@ use Shahzad\AgenticGraph\Execution\LoopGuard;
 use Shahzad\AgenticGraph\Execution\LoopLimitExceededException;
 use Shahzad\AgenticGraph\Execution\LoopMetadata;
 use Shahzad\AgenticGraph\Execution\NodeMiddlewarePipeline;
+use Shahzad\AgenticGraph\Execution\RunEndEvent;
 use Shahzad\AgenticGraph\Graph\Graph;
 use Shahzad\AgenticGraph\State\State;
 use Shahzad\AgenticGraph\State\StateManager;
@@ -149,23 +150,29 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                 ['graph_name' => $graph->name]
             );
         } catch (\Throwable $e) {
-            $this->handleStreamingSetupFailure(
-                $graph,
-                $state,
-                $executionId,
-                $e,
-                $sink ?? $baseSink,
-                $session,
-                $traceContext,
-                $executionStartTime
-            );
-            $this->contextManager->exitWithException($scope, $e);
-            $this->cleanupStreamContext();
+            try {
+                $this->handleStreamingSetupFailure(
+                    $graph,
+                    $state,
+                    $executionId,
+                    $e,
+                    $sink ?? $baseSink,
+                    $session,
+                    $traceContext,
+                    $executionStartTime
+                );
+            } finally {
+                $this->contextManager->exitWithException($scope, $e);
+                $this->cleanupStreamContext();
+            }
             throw $e;
         }
 
+        $exitState = null;
+        $failure = null;
+
         try {
-            $handle = $this->performStreamingExecution(
+            [$handle, $completionError] = $this->performStreamingExecution(
                 $graph,
                 $state,
                 $graph->entryPoint,
@@ -181,15 +188,21 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
 
             $finalState = $handle->getFinalState();
             $exitState = $finalState->hasInterrupt() ? null : $finalState;
-            $this->contextManager->exit($scope, $exitState);
-
-            return $handle;
         } catch (\Throwable $e) {
-            $this->contextManager->exitWithException($scope, $e);
+            $failure = $e;
             throw $e;
         } finally {
+            $failure === null
+                ? $this->contextManager->exit($scope, $exitState)
+                : $this->contextManager->exitWithException($scope, $failure);
             $this->cleanupStreamContext();
         }
+
+        if ($completionError !== null) {
+            throw $completionError;
+        }
+
+        return $handle;
     }
 
     public function executeFromNode(
@@ -293,25 +306,30 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                 );
             }
         } catch (\Throwable $e) {
-            $this->handleStreamingSetupFailure(
-                $graph,
-                $state,
-                $executionId,
-                $e,
-                $sink ?? $baseSink,
-                $session,
-                $traceContext,
-                $setupStartTime
-            );
-            $this->contextManager->exitWithException($scope, $e);
-            $this->cleanupStreamContext();
+            try {
+                $this->handleStreamingSetupFailure(
+                    $graph,
+                    $state,
+                    $executionId,
+                    $e,
+                    $sink ?? $baseSink,
+                    $session,
+                    $traceContext,
+                    $setupStartTime
+                );
+            } finally {
+                $this->contextManager->exitWithException($scope, $e);
+                $this->cleanupStreamContext();
+            }
             throw $e;
         }
 
         $start = microtime(true);
+        $exitState = null;
+        $failure = null;
 
         try {
-            $handle = $this->performStreamingExecution(
+            [$handle, $completionError] = $this->performStreamingExecution(
                 $graph,
                 $state,
                 $startNode,
@@ -329,17 +347,27 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
 
             $finalState = $handle->getFinalState();
             $exitState = $finalState->hasInterrupt() ? null : $finalState;
-            $this->contextManager->exit($scope, $exitState);
-
-            return $handle;
         } catch (\Throwable $e) {
-            $this->contextManager->exitWithException($scope, $e);
+            $failure = $e;
             throw $e;
         } finally {
+            $failure === null
+                ? $this->contextManager->exit($scope, $exitState)
+                : $this->contextManager->exitWithException($scope, $failure);
             $this->cleanupStreamContext();
         }
+
+        if ($completionError !== null) {
+            throw $completionError;
+        }
+
+        return $handle;
     }
 
+    /**
+     * @return array{0: StreamHandle, 1: \Throwable|null} the handle, and what failed after the run was stored as
+     *                                                    completed: the caller cleans up and then throws it
+     */
     private function performStreamingExecution(
         Graph $graph,
         StateContract $state,
@@ -354,7 +382,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
         float $start,
         bool $skipInterruptGateForEntry = false,
         bool $entryAlreadyCounted = false
-    ): StreamHandle {
+    ): array {
         try {
             $interrupted = false;
             $skipEntryInterruptGate = $skipInterruptGateForEntry;
@@ -548,6 +576,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
             }
 
             $duration = microtime(true) - $start;
+            $completionError = null;
             if (! $interrupted) {
                 if (! $this->repo->completed($executionId, State::toStoragePayload($state), $duration)) {
                     // Ended elsewhere (for example expired): its terminal is already written.
@@ -555,25 +584,39 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
                 }
                 $completedAt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', microtime(true))) ?: new \DateTimeImmutable;
 
-                $this->emitLifecycleEvent(
-                    $sink,
-                    $session,
-                    null,
-                    $traceContext->getSpanId(),
-                    $traceContext->getParentSpanId(),
-                    StreamLifecycleEventTypes::GRAPH_COMPLETE,
-                    ['duration_ms' => $duration * 1000]
-                );
+                // The run is stored as completed: each frame is tried on its own, and the event always fires.
+                $frameError = null;
+                try {
+                    $this->emitLifecycleEvent(
+                        $sink,
+                        $session,
+                        null,
+                        $traceContext->getSpanId(),
+                        $traceContext->getParentSpanId(),
+                        StreamLifecycleEventTypes::GRAPH_COMPLETE,
+                        ['duration_ms' => $duration * 1000]
+                    );
+                } catch (\Throwable $e) {
+                    $frameError = $e;
+                }
 
-                $sink->close(StreamStatus::SUCCESS, [
-                    'final_state' => State::toStoragePayload($state),
-                ]);
+                try {
+                    $sink->close(StreamStatus::SUCCESS, [
+                        'final_state' => State::toStoragePayload($state),
+                    ]);
+                } catch (\Throwable $e) {
+                    $frameError ??= $e;
+                }
 
                 // After the terminal: a slow listener (for example a trace export) must not delay the client's end event.
-                $this->events->dispatch(new GraphExecutionCompleted($executionId, $graph->name, $state, $completedAt, $duration, [], $traceContext->getRootSpanId()));
+                $listenerError = RunEndEvent::fire(new GraphExecutionCompleted($executionId, $graph->name, $state, $completedAt, $duration, [], $traceContext->getRootSpanId()), $this->events);
+                if ($frameError !== null && $listenerError !== null) {
+                    RunEndEvent::report($listenerError);
+                }
+                $completionError = $frameError ?? $listenerError;
             }
 
-            return new StreamHandle($session, $baseSink, $state);
+            return [new StreamHandle($session, $baseSink, $state), $completionError];
         } catch (\Throwable $e) {
             // An execution that ended elsewhere keeps the status, events and terminal it already has.
             if ($e instanceof ExecutionEndedException || (! $this->repo->failed($executionId, $e->getMessage()) && ($this->repo->hasEnded($executionId) || $this->repo->isDeletedQueuedRun($executionId)))) {
@@ -582,7 +625,7 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
 
             $duration = microtime(true) - $start;
             $this->endFailedStream($sink, $session, $traceContext, $e, $state);
-            $this->events->dispatch(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000, $traceContext->getRootSpanId()));
+            $this->fireFailed(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000, $traceContext->getRootSpanId()));
 
             throw $e;
         }
@@ -677,7 +720,16 @@ class StreamingExecutionCoordinator implements StreamingExecutorInterface
         if ($sink !== null && $session !== null) {
             $this->endFailedStream($sink, $session, $traceContext, $e, $state);
         }
-        $this->events->dispatch(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000, $traceContext->getRootSpanId()));
+        $this->fireFailed(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000, $traceContext->getRootSpanId()));
+    }
+
+    /** A listener error is reported, so the caller gets the run's own error. */
+    private function fireFailed(GraphExecutionFailed $event): void
+    {
+        $listenerError = RunEndEvent::fire($event, $this->events);
+        if ($listenerError !== null) {
+            RunEndEvent::report($listenerError);
+        }
     }
 
     private function cleanupStreamContext(): void
