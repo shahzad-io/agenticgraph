@@ -50,6 +50,11 @@ class ExecuteNodeJob implements ShouldQueue
 
     public function handle(GraphRegistry $registry, NodeMiddlewarePipeline $pipeline): void
     {
+        $this->withinJobScope(fn () => $this->run($registry, $pipeline));
+    }
+
+    private function run(GraphRegistry $registry, NodeMiddlewarePipeline $pipeline): void
+    {
         if ($this->batch()?->cancelled()) {
             return;
         }
@@ -99,7 +104,6 @@ class ExecuteNodeJob implements ShouldQueue
         // Jobs queued before this property existed leave it uninitialized; ?? reads that as null
         // and the branch runs without a loop context, as before.
         $loopMetadata = $this->loopMetadata ?? null;
-        $previousLoopContext = app()->bound(ExecutionContext::class) ? app(ExecutionContext::class) : null;
         if ($loopMetadata !== null) {
             app()->instance(ExecutionContext::class, ExecutionContext::fromArray($loopMetadata, $this->executionId)->pushNode($this->nodeName));
         }
@@ -127,7 +131,6 @@ class ExecuteNodeJob implements ShouldQueue
 
         $node = $graph->getNode($this->nodeName);
         // Node annotations read the graph of the running execution.
-        $previousGraph = app()->bound(Graph::class) ? app(Graph::class) : null;
         app()->instance(Graph::class, $graph);
         $inputState = $state;
 
@@ -195,14 +198,6 @@ class ExecuteNodeJob implements ShouldQueue
             }
             if (app()->bound(HttpClientInstrumentation::class)) {
                 app(HttpClientInstrumentation::class)->cleanupExecution($this->executionId);
-            }
-            app()->forgetInstance(ExecutionClock::class);
-            app()->forgetInstance(TraceContext::class);
-            $previousGraph !== null ? app()->instance(Graph::class, $previousGraph) : app()->forgetInstance(Graph::class);
-            if ($loopMetadata !== null) {
-                $previousLoopContext !== null
-                    ? app()->instance(ExecutionContext::class, $previousLoopContext)
-                    : app()->forgetInstance(ExecutionContext::class);
             }
         }
     }

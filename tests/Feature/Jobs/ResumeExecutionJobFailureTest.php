@@ -4,6 +4,7 @@ use Illuminate\Contracts\Broadcasting\Broadcaster;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Exceptions;
 use Shahzad\AgenticGraph\Contracts\InterruptServiceInterface;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\GraphExecutionFailed;
@@ -233,7 +234,7 @@ it('resolves the interrupt as failed so a later resume returns already resolved'
     Bus::assertNotDispatched(ResumeExecutionJob::class);
 });
 
-it('resolves the interrupt when a GraphExecutionFailed listener throws in failed(), which still throws', function () {
+it('resolves the interrupt when a GraphExecutionFailed listener throws in failed(), which reports it', function () {
     $run = resumeFailureInterruptedRun('resume-fail-listener');
     app(GraphRegistry::class)->unregister('resume-fail-listener');
     Event::swap(Event::getFacadeRoot()->dispatcher); // undo the file's Event::fake(), so the listener runs
@@ -243,7 +244,9 @@ it('resolves the interrupt when a GraphExecutionFailed listener throws in failed
         throw new RuntimeException('listener broke');
     });
 
-    expect(fn () => resumeFailureRunJob($run['job']))->toThrow(RuntimeException::class, 'listener broke');
+    Exceptions::fake();
+    resumeFailureRunJob($run['job']);
+    Exceptions::assertReported(fn (RuntimeException $e) => $e->getMessage() === 'listener broke');
     $run['job']->failed(new RuntimeException('again'));
 
     $interrupt = InterruptRecord::find($run['job']->interruptId);

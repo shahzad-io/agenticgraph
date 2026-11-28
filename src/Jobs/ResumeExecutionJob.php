@@ -15,18 +15,22 @@ use Illuminate\Support\Facades\Log;
 use Shahzad\AgenticGraph\Contracts\InterruptHandlerInterface;
 use Shahzad\AgenticGraph\Contracts\InterruptServiceInterface;
 use Shahzad\AgenticGraph\Contracts\StorageInterface;
+use Shahzad\AgenticGraph\Events\GraphExecutionCompleted;
+use Shahzad\AgenticGraph\Events\GraphExecutionFailed;
 use Shahzad\AgenticGraph\Exceptions\ExecutionEndedException;
 use Shahzad\AgenticGraph\Execution\ExecutionOptions;
 use Shahzad\AgenticGraph\Execution\ExecutionRepository;
 use Shahzad\AgenticGraph\Execution\ExecutionStore;
 use Shahzad\AgenticGraph\Execution\InterruptRecord;
+use Shahzad\AgenticGraph\Execution\ResolvesFailedInterrupt;
+use Shahzad\AgenticGraph\Execution\RunEndEvent;
 use Shahzad\AgenticGraph\Execution\StreamingMode;
 use Shahzad\AgenticGraph\Streaming\StreamOptions;
 use Shahzad\AgenticGraph\Streaming\StreamResumption;
 
 class ResumeExecutionJob implements ShouldBeUnique, ShouldQueue
 {
-    use Batchable, Dispatchable, EndsFailedExecution, InteractsWithQueue, Queueable, SerializesModels;
+    use Batchable, Dispatchable, EndsFailedExecution, InteractsWithQueue, Queueable, ResolvesFailedInterrupt, SerializesModels;
 
     public int $tries;
 
@@ -50,6 +54,11 @@ class ResumeExecutionJob implements ShouldBeUnique, ShouldQueue
 
     public function handle(InterruptServiceInterface $interrupts, StreamResumption $streamResumption): void
     {
+        $this->withinJobScope(fn () => $this->run($interrupts, $streamResumption));
+    }
+
+    private function run(InterruptServiceInterface $interrupts, StreamResumption $streamResumption): void
+    {
         $interrupt = InterruptRecord::find($this->interruptId);
         if (! $interrupt || $interrupt->status() !== 'resolving') {
             return;
@@ -68,6 +77,11 @@ class ResumeExecutionJob implements ShouldBeUnique, ShouldQueue
             return;
         }
 
+        $executionId = (string) $interrupt->executionId();
+        $resolution = ['input' => $this->humanInput];
+        $completed = false; // This resume completed the run: set before its completion listeners run.
+        $handlerTold = false;
+
         try {
             if ($this->skipResume($interrupt, $checkpointId, $metadata)) {
                 return;
@@ -75,8 +89,7 @@ class ResumeExecutionJob implements ShouldBeUnique, ShouldQueue
 
             if (is_string($delivery) && $delivery !== '') {
                 $executionOptions = new ExecutionOptions;
-                $executionId = $interrupt->executionId();
-                if (is_string($executionId) && $executionId !== '') {
+                if ($executionId !== '') {
                     $record = app(ExecutionStore::class)->get($executionId);
                     if ($record !== null) {
                         $executionOptions = $record->executionOptions;
@@ -88,18 +101,29 @@ class ResumeExecutionJob implements ShouldBeUnique, ShouldQueue
                     delivery: $delivery,
                     resumeFromCheckpointId: $checkpointId,
                 );
-                ExecutionRepository::asQueuedRun((string) $interrupt->executionId(), fn () => $streamResumption->resumeStream($checkpointId, $this->humanInput, $streamOptions));
+                $resume = fn () => $streamResumption->resumeStream($checkpointId, $this->humanInput, $streamOptions);
             } else {
-                ExecutionRepository::asQueuedRun((string) $interrupt->executionId(), fn () => $interrupts->resumeWithInput($checkpointId, $this->humanInput));
+                $resume = fn () => $interrupts->resumeWithInput($checkpointId, $this->humanInput);
             }
 
-            $resolution = ['input' => $this->humanInput];
-            $interrupt->resolve($resolution, $metadata['user_id'] ?? null);
+            // The run's end is stored with its interrupt before any listener of that end runs.
+            RunEndEvent::beforeListeners(
+                $executionId,
+                function (GraphExecutionCompleted|GraphExecutionFailed $event) use ($interrupt, $resolution, $metadata, &$completed): void {
+                    if ($event instanceof GraphExecutionFailed) {
+                        $this->resolveAsFailed($interrupt, $event->exception);
 
-            $handler = $this->resolveInterruptHandler();
-            if ($handler) {
-                $handler->resolved($interrupt, $resolution);
-            }
+                        return;
+                    }
+                    $completed = true;
+                    $this->resolveWithInput($interrupt, $resolution, $metadata);
+                },
+                fn () => ExecutionRepository::asQueuedRun($executionId, $resume),
+            );
+
+            $this->resolveWithInput($interrupt, $resolution, $metadata); // The run paused again, with no end event.
+            $handlerTold = true;
+            $this->resolveInterruptHandler()?->resolved($interrupt, $resolution);
         } catch (ExecutionEndedException) {
             // The execution ended elsewhere (for example expired) while this worker ran it: nothing to write or retry.
             Log::info('AgenticGraph: worker stopped, execution already ended', ['interrupt_id' => $this->interruptId]);
@@ -110,13 +134,28 @@ class ResumeExecutionJob implements ShouldBeUnique, ShouldQueue
                 throw $e;
             }
 
-            $interrupt->markPending([
-                'last_error' => [
-                    'message' => $e->getMessage(),
-                    'type' => $e::class,
-                    'occurred_at' => now()->toIsoString(),
-                ],
-            ]);
+            // An ended run never gets a pending interrupt again.
+            $status = app(ExecutionRepository::class)->getStatus($executionId);
+            if ($status === 'completed') {
+                // What failed came after the end, for example a completion listener.
+                if ($completed) {
+                    rescue(function () use ($interrupt, $resolution, $metadata, $handlerTold): void {
+                        $this->resolveWithInput($interrupt, $resolution, $metadata);
+                        if (! $handlerTold) {
+                            $this->resolveInterruptHandler()?->resolved($interrupt, $resolution);
+                        }
+                    });
+                }
+                $this->logResumeFailure($interrupt, $checkpointId, $e);
+                $this->failJobOfCompletedRun($executionId, $e);
+
+                throw $e;
+            }
+            if ($status === 'failed') {
+                $this->resolveAsFailed($interrupt, $e);
+            } else {
+                $interrupt->markPending(['last_error' => $this->errorDetails($e)]);
+            }
 
             $handler = $this->resolveInterruptHandler();
             if ($handler) {
@@ -126,15 +165,31 @@ class ResumeExecutionJob implements ShouldBeUnique, ShouldQueue
                 ]);
             }
 
-            Log::warning('Interrupt resume job failed', [
-                'interrupt_id' => $interrupt->interruptId(),
-                'execution_id' => $interrupt->executionId(),
-                'checkpoint_id' => $checkpointId,
-                'error_type' => $e::class,
-                'message' => $e->getMessage(),
-            ]);
+            $this->logResumeFailure($interrupt, $checkpointId, $e);
 
             throw $e;
+        }
+    }
+
+    private function logResumeFailure(InterruptRecord $interrupt, string $checkpointId, \Throwable $e): void
+    {
+        Log::warning('Interrupt resume job failed', [
+            'interrupt_id' => $interrupt->interruptId(),
+            'execution_id' => $interrupt->executionId(),
+            'checkpoint_id' => $checkpointId,
+            'error_type' => $e::class,
+            'message' => $e->getMessage(),
+        ]);
+    }
+
+    /**
+     * @param  array{input: mixed}  $resolution
+     * @param  array<string, mixed>  $metadata
+     */
+    private function resolveWithInput(InterruptRecord $interrupt, array $resolution, array $metadata): void
+    {
+        if ($interrupt->status() !== 'resolved') {
+            $interrupt->resolve($resolution, $metadata['user_id'] ?? null);
         }
     }
 
@@ -217,16 +272,7 @@ class ResumeExecutionJob implements ShouldBeUnique, ShouldQueue
             fallbackSeq: is_int($lastSeq) ? $lastSeq : null,
             // The execution is failed, so the interrupt must not stay pending: a later resolve
             // attempt then gets the existing "already resolved" result instead of a new run.
-            onEnded: function () use ($interrupt, $metadata, $e): void {
-                if ($interrupt->status() !== 'resolved') {
-                    $interrupt->update(['metadata' => array_merge($metadata, ['resume_error' => [
-                        'type' => $e::class,
-                        'message' => $e->getMessage(),
-                        'occurred_at' => now()->toIsoString(),
-                    ]])]);
-                    $interrupt->resolve(['outcome' => 'failed']);
-                }
-            },
+            onEnded: fn () => $this->resolveAsFailed($interrupt, $e),
         );
     }
 }

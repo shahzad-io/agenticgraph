@@ -3,6 +3,7 @@
 use Illuminate\Contracts\Broadcasting\Broadcaster;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Exceptions;
 use Shahzad\AgenticGraph\Contracts\StateContract;
 use Shahzad\AgenticGraph\Events\GraphExecutionFailed;
 use Shahzad\AgenticGraph\Execution\ExecutionMode;
@@ -162,6 +163,7 @@ it('ends the row before GraphExecutionFailed when setup fails, so a throwing lis
     config()->set('agenticgraph.streaming.errors.store_fatal', true);
     bindSetupThrowingStreamStore();
     registerSetupFailureStreamGraph('stream-setup-listener');
+    Exceptions::fake();
     $seen = new ArrayObject;
     Event::listen(GraphExecutionFailed::class, function (GraphExecutionFailed $e) use ($seen): void {
         $seen[] = DB::table('agenticgraph_executions')->where('id', $e->executionId)->value('status');
@@ -169,7 +171,8 @@ it('ends the row before GraphExecutionFailed when setup fails, so a throwing lis
     });
 
     expect(fn () => AgenticGraph::execute('stream-setup-listener', new State, new ExecutionOptions(mode: ExecutionMode::SYNC, streaming: StreamingMode::ITERATOR)))
-        ->toThrow(RuntimeException::class, 'listener broke');
+        ->toThrow(RuntimeException::class, 'stream setup failed');
+    Exceptions::assertReported(fn (RuntimeException $e) => $e->getMessage() === 'listener broke');
 
     expect($seen->getArrayCopy())->toBe(['failed'])
         ->and(DB::table('agenticgraph_executions')->where('graph_name', 'stream-setup-listener')->value('status'))->toBe('failed');

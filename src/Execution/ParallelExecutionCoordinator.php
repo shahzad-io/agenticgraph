@@ -411,22 +411,7 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
             return;
         }
 
-        // Close the trace: the failed segment carries the root span and the error.
-        if ($graphName !== null) {
-            if ($this->container->bound(TracerExporter::class)) {
-                $this->container->make(TracerExporter::class)->resumeTrace($executionId, $graphName, 'continued');
-            }
-            $inputData = $this->storedBatchResults($executionId, [])[self::BATCH_INPUT] ?? null;
-            $this->events->dispatch(new GraphExecutionFailed(
-                $executionId,
-                $graphName,
-                is_array($inputData) ? State::fromArray($inputData) : new State,
-                $e,
-                0,
-                $rootSpanId
-            ));
-        }
-
+        // Before the event: a listener cannot skip this line.
         if ((bool) config('agenticgraph.logging.enabled', true)) {
             $this->logger->error('Batch execution failed', [
                 'execution_id' => $executionId,
@@ -436,6 +421,27 @@ final class ParallelExecutionCoordinator implements ParallelExecutorInterface
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
             ]);
+        }
+
+        if ($graphName === null) {
+            return;
+        }
+
+        // Close the trace: the failed segment carries the root span and the error.
+        $exporter = $this->container->bound(TracerExporter::class) ? $this->container->make(TracerExporter::class) : null;
+        $exporter?->resumeTrace($executionId, $graphName, 'continued');
+        $inputData = $this->storedBatchResults($executionId, [])[self::BATCH_INPUT] ?? null;
+        $listenerError = RunEndEvent::fire(new GraphExecutionFailed(
+            $executionId,
+            $graphName,
+            is_array($inputData) ? State::fromArray($inputData) : new State,
+            $e,
+            0,
+            $rootSpanId
+        ), $this->events);
+        $exporter?->flush($executionId); // A listener that throws can keep the tracing listener from closing it.
+        if ($listenerError !== null) {
+            RunEndEvent::report($listenerError);
         }
     }
 

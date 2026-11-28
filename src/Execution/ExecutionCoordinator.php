@@ -134,26 +134,37 @@ class ExecutionCoordinator
         $state->validate();
 
         $executionId = ExecutionId::resolve($executionId);
+        // The scope takes over a trace the caller has bound, and its exit forgets it.
+        $callerTrace = $this->container->bound(TraceContext::class) ? $this->container->make(TraceContext::class) : null;
         $scope = $this->enterScope($executionId, $graph, $options);
         $traceContext = $scope->traceContext;
         $executionContext = $scope->context;
 
-        if (! $this->repo->get($executionId)) {
-            $this->repo->queued($executionId, $graph->name, State::toStoragePayload($state), null, $options);
-        }
-        if (! $this->repo->started($executionId, $graph->name, State::toStoragePayload($state), null, $options)) {
-            $e = new ExecutionEndedException($executionId); // Ended elsewhere: write nothing.
+        try {
+            if (! $this->repo->get($executionId)) {
+                $this->repo->queued($executionId, $graph->name, State::toStoragePayload($state), null, $options);
+            }
+            if (! $this->repo->started($executionId, $graph->name, State::toStoragePayload($state), null, $options)) {
+                throw new ExecutionEndedException($executionId); // Ended elsewhere: write nothing.
+            }
+            $rootSpanId = $traceContext->getRootSpanId();
+            $executionStartTime = microtime(true);
+            $executionStartDt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $executionStartTime)) ?: new \DateTimeImmutable;
+            $this->events->dispatch(new GraphExecutionStarted($executionId, $graph->name, $state, $executionStartDt, $rootSpanId));
+        } catch (\Throwable $e) {
             $this->contextManager->exitWithException($scope, $e);
+            if ($callerTrace !== null) {
+                $this->container->instance(TraceContext::class, $callerTrace);
+            }
 
             throw $e;
         }
-        $rootSpanId = $traceContext->getRootSpanId();
-        $executionStartTime = microtime(true);
-        $executionStartDt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', $executionStartTime)) ?: new \DateTimeImmutable;
-        $this->events->dispatch(new GraphExecutionStarted($executionId, $graph->name, $state, $executionStartDt, $rootSpanId));
         $current = $graph->entryPoint;
         $start = $executionStartTime;
         $interrupted = false;
+        $exitState = null;
+        $failure = null;
+        $completionError = null;
 
         try {
             while (true) {
@@ -229,7 +240,6 @@ class ExecutionCoordinator
                             );
 
                             $traceContext->endSpan();
-                            $this->contextManager->exit($scope);
 
                             return $state;
                         }
@@ -260,25 +270,35 @@ class ExecutionCoordinator
                     throw new ExecutionEndedException($executionId); // Ended elsewhere, for example expired.
                 }
                 $completedAt = \DateTimeImmutable::createFromFormat('U.u', sprintf('%.6F', microtime(true))) ?: new \DateTimeImmutable;
-                $this->events->dispatch(new GraphExecutionCompleted($executionId, $graph->name, $state, $completedAt, $duration, [], $traceContext->getRootSpanId()));
+                $completionError = RunEndEvent::fire(new GraphExecutionCompleted($executionId, $graph->name, $state, $completedAt, $duration, [], $traceContext->getRootSpanId()), $this->events);
             }
 
             $exitState = ($interrupted || $state->hasInterrupt()) ? null : $state;
-            $this->contextManager->exit($scope, $exitState);
-
-            return $state;
         } catch (\Throwable $e) {
+            $failure = $e;
             // An execution that ended elsewhere keeps the status and events it already has.
             if ($e instanceof ExecutionEndedException || (! $this->repo->failed($executionId, $e->getMessage()) && ($this->repo->hasEnded($executionId) || $this->repo->isDeletedQueuedRun($executionId)))) {
-                $this->contextManager->exitWithException($scope, $e);
                 throw $e instanceof ExecutionEndedException ? $e : new ExecutionEndedException($executionId, $e);
             }
 
             $duration = microtime(true) - $start;
-            $this->events->dispatch(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000, $traceContext->getRootSpanId()));
-            $this->contextManager->exitWithException($scope, $e);
+            $listenerError = RunEndEvent::fire(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000, $traceContext->getRootSpanId()), $this->events);
+            if ($listenerError !== null) {
+                RunEndEvent::report($listenerError); // The caller gets the run's own error.
+            }
             throw $e;
+        } finally {
+            // After the listeners: the tracing listener needs the open trace.
+            $failure === null
+                ? $this->contextManager->exit($scope, $exitState)
+                : $this->contextManager->exitWithException($scope, $failure);
         }
+
+        if ($completionError !== null) {
+            throw $completionError;
+        }
+
+        return $state;
     }
 
     public function executeWithOptions(Graph $graph, StateContract $state, ExecutionOptions $options, ?string $executionId = null): ExecutionHandle
@@ -555,6 +575,9 @@ class ExecutionCoordinator
         $iterations = 0;
         $skipEntryInterruptGate = $skipInterruptGateForEntry;
         $interrupted = false;
+        $exitState = null;
+        $failure = null;
+        $completionError = null;
 
         try {
             do {
@@ -635,7 +658,6 @@ class ExecutionCoordinator
                             );
 
                             $traceContext->endSpan();
-                            $this->contextManager->exit($scope);
 
                             return $state;
                         }
@@ -666,25 +688,35 @@ class ExecutionCoordinator
                 if (! $this->repo->completed($executionId, State::toStoragePayload($state), $duration)) {
                     throw new ExecutionEndedException($executionId); // Ended elsewhere, for example expired.
                 }
-                $this->events->dispatch(new GraphExecutionCompleted($executionId, $graph->name, $state, TraceTime::fromMicrotime($segmentEnd), $duration, [], $traceContext->getRootSpanId()));
+                $completionError = RunEndEvent::fire(new GraphExecutionCompleted($executionId, $graph->name, $state, TraceTime::fromMicrotime($segmentEnd), $duration, [], $traceContext->getRootSpanId()), $this->events);
             }
 
             $exitState = ($interrupted || $state->hasInterrupt()) ? null : $state;
-            $this->contextManager->exit($scope, $exitState);
-
-            return $state;
         } catch (\Throwable $e) {
+            $failure = $e;
             // An execution that ended elsewhere keeps the status and events it already has.
             if ($e instanceof ExecutionEndedException || (! $this->repo->failed($executionId, $e->getMessage()) && ($this->repo->hasEnded($executionId) || $this->repo->isDeletedQueuedRun($executionId)))) {
-                $this->contextManager->exitWithException($scope, $e);
                 throw $e instanceof ExecutionEndedException ? $e : new ExecutionEndedException($executionId, $e);
             }
 
             $duration = microtime(true) - $segmentStart;
-            $this->events->dispatch(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000, $traceContext->getRootSpanId()));
-            $this->contextManager->exitWithException($scope, $e);
+            $listenerError = RunEndEvent::fire(new GraphExecutionFailed($executionId, $graph->name, $state, $e, $duration * 1000, $traceContext->getRootSpanId()), $this->events);
+            if ($listenerError !== null) {
+                RunEndEvent::report($listenerError); // The caller gets the run's own error.
+            }
             throw $e;
+        } finally {
+            // After the listeners: the tracing listener needs the open trace.
+            $failure === null
+                ? $this->contextManager->exit($scope, $exitState)
+                : $this->contextManager->exitWithException($scope, $failure);
         }
+
+        if ($completionError !== null) {
+            throw $completionError;
+        }
+
+        return $state;
     }
 
     /**
